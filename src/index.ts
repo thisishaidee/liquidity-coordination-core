@@ -899,6 +899,18 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
       return json({ error: "telegram_commands_setup_failed", message: commandResult.description ?? "Telegram rejected the command list." }, 502);
     }
 
+    const descriptionResponse = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setMyDescription`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        description: "Welcome to NERITH. Monitor business liquidity, agents and operations, create liquidity requests, and let authorised approvers review prepared requests. Decisions are recorded against the exact operation. Wallet signing and transaction execution remain separately secured."
+      })
+    });
+    const descriptionResult = await descriptionResponse.json() as { ok?: boolean; description?: string };
+    if (!descriptionResponse.ok || !descriptionResult.ok) {
+      return json({ error: "telegram_description_setup_failed", message: descriptionResult.description ?? "Telegram rejected the bot description." }, 502);
+    }
+
     return json({
       configured: true,
       botUsername: identity.result.username,
