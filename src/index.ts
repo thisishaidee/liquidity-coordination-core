@@ -879,7 +879,7 @@ async function prepareSwapTransaction(request: Request, env: Env): Promise<Respo
       }
     } catch {
       await env.DB.prepare(
-        "UPDATE operations SET status = 'awaiting_conversion', source_reservation_id = NULL, provider_key = NULL WHERE id = ? AND status = 'preparing_conversion' AND source_reservation_id = ?"
+        "UPDATE operations SET status = 'awaiting_conversion', source_reservation_id = NULL, provider_key = NULL, build_quote_id = NULL WHERE id = ? AND status = 'preparing_conversion' AND source_reservation_id = ?"
       ).bind(context.operationId, reservationId).run();
       await env.DB.prepare(
         "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?"
