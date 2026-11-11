@@ -5,7 +5,9 @@ describe("amount precision", () => {
   it("parses USDC amounts into exact six-decimal atoms", () => {
     expect(parseTokenAmount("10")).toBe(10_000_000n);
     expect(parseTokenAmount("0.000001")).toBe(1n);
+    expect(parseTokenAmount("0.1", 9)).toBe(100_000_000n);
     expect(formatTokenAmount(8_250_000n)).toBe("8.25");
+    expect(formatTokenAmount(100_000_000n, 9)).toBe("0.1");
   });
 
   it("rejects non-string, zero, negative and excessive precision amounts", () => {
