@@ -309,9 +309,9 @@ async function startTelegramLiquidityRequest(env: Env, chatId: string, userId: s
 }
 
 async function continueTelegramLiquidityRequest(env: Env, chatId: string, userId: string, businessId: string, answer: string): Promise<boolean> {
-  const draft = await env.DB.prepare("SELECT step, agent_id, agent_choices, amount, purpose, expires_at FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? LIMIT 1").bind(businessId, chatId, userId).first<{ step: string; agent_id: string | null; agent_choices: string; amount: string | null; purpose: string | null; expires_at: string }>();
+  const draft = await env.DB.prepare("SELECT step, agent_id, agent_choices, amount, purpose, expires_at, CASE WHEN julianday(expires_at) <= julianday('now') THEN 1 ELSE 0 END AS expired FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? LIMIT 1").bind(businessId, chatId, userId).first<{ step: string; agent_id: string | null; agent_choices: string; amount: string | null; purpose: string | null; expires_at: string; expired: number }>();
   if (!draft) return false;
-  if (Date.parse(draft.expires_at) <= Date.now()) {
+  if (draft.expired === 1) {
     await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(businessId, chatId, userId).run();
     await sendTelegramMessage(env, chatId, "Your request draft expired. Send /request to start again.");
     return true;
