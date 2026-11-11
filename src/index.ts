@@ -1207,6 +1207,100 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
   });
 }
 
+async function getAgentLiquidity(request: Request, env: Env): Promise<Response> {
+  const agent = await authenticate(request, env.DB);
+  if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
+
+  const rows = await env.DB.prepare(`
+    SELECT w.id AS wallet_id, w.address, w.scope, b.token, b.confirmed_atoms,
+           b.reserved_atoms, b.observed_at, b.source
+    FROM wallets w
+    JOIN wallet_balances b ON b.wallet_id = w.id
+    WHERE w.business_id = ? AND w.status = 'active' AND w.purpose = 'operating'
+      AND w.network = 'solana'
+      AND (
+        (w.scope = 'agent' AND w.agent_id = ?) OR
+        (w.scope = 'business' AND ? = 1)
+      )
+    ORDER BY w.scope, w.address, b.token
+  `).bind(agent.business_id, agent.id, agent.can_use_business_treasury).all<{
+    wallet_id: string;
+    address: string;
+    scope: string;
+    token: string;
+    confirmed_atoms: string;
+    reserved_atoms: string;
+    observed_at: string;
+    source: string;
+  }>();
+
+  const balances = (rows.results ?? []).map((row) => {
+    const decimals = row.token === "SOL" ? 9 : 6;
+    const confirmed = BigInt(row.confirmed_atoms);
+    const reserved = BigInt(row.reserved_atoms);
+    const available = confirmed > reserved ? confirmed - reserved : 0n;
+    const ageMs = Date.now() - Date.parse(row.observed_at);
+    return {
+      walletId: row.wallet_id,
+      address: row.address,
+      scope: row.scope,
+      token: row.token,
+      confirmed: formatTokenAmount(confirmed, decimals),
+      reserved: formatTokenAmount(reserved, decimals),
+      available: formatTokenAmount(available, decimals),
+      observedAt: row.observed_at,
+      source: row.source,
+      fresh: Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= 5 * 60 * 1000
+    };
+  });
+
+  return json({ network: "solana", balances });
+}
+
+async function listAgentOperations(request: Request, env: Env): Promise<Response> {
+  const agent = await authenticate(request, env.DB);
+  if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
+
+  const rows = await env.DB.prepare(`
+    SELECT id, task_id, token, amount_atoms, status, action, available_atoms,
+           shortfall_atoms, transaction_hash, received_output_atoms, created_at
+    FROM operations
+    WHERE agent_id = ?
+    ORDER BY created_at DESC
+    LIMIT 50
+  `).bind(agent.id).all<{
+    id: string;
+    task_id: string;
+    token: string;
+    amount_atoms: string;
+    status: string;
+    action: string;
+    available_atoms: string;
+    shortfall_atoms: string;
+    transaction_hash: string | null;
+    received_output_atoms: string | null;
+    created_at: string;
+  }>();
+
+  return json({
+    operations: (rows.results ?? []).map((row) => ({
+      operationId: row.id,
+      taskId: row.task_id,
+      token: row.token,
+      amount: formatTokenAmount(BigInt(row.amount_atoms), 6),
+      status: row.status,
+      action: row.action,
+      available: formatTokenAmount(BigInt(row.available_atoms), 6),
+      shortfall: formatTokenAmount(BigInt(row.shortfall_atoms), 6),
+      transactionHash: row.transaction_hash,
+      receivedUSDC: row.received_output_atoms
+        ? formatTokenAmount(BigInt(row.received_output_atoms), 6)
+        : null,
+      createdAt: row.created_at
+    }))
+  });
+}
+
 async function getOperation(request: Request, env: Env, operationId: string): Promise<Response> {
   const agent = await authenticate(request, env.DB);
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
@@ -1268,6 +1362,8 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/admin/balances/sync") return syncSolanaBalances(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/reservations/expire") return expireReservationsAdmin(request, env);
     if (request.method === "POST" && url.pathname === "/v1/liquidity/requests") return createLiquidityRequest(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/liquidity") return getAgentLiquidity(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/operations") return listAgentOperations(request, env);
     if (request.method === "POST" && url.pathname === "/v1/conversions/quote") return requestSwapQuote(request, env);
     if (request.method === "POST" && url.pathname === "/v1/conversions/prepare") return prepareSwapTransaction(request, env);
     if (request.method === "POST" && url.pathname === "/v1/conversions/track") return trackSwapTransaction(request, env);
