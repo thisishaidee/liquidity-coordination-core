@@ -806,6 +806,139 @@ async function expireReservationsAdmin(request: Request, env: Env): Promise<Resp
   return json({ ...result, message: "Expired reservations were released from the internal ledger." });
 }
 
+async function trackSwapTransaction(request: Request, env: Env): Promise<Response> {
+  const agent = await authenticate(request, env.DB);
+  if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
+  const body = await readJson(request);
+  if (!body) return json({ error: "invalid_json" }, 400);
+
+  const { operationId, transactionHash } = body;
+  if (
+    typeof operationId !== "string" ||
+    typeof transactionHash !== "string" ||
+    !/^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(transactionHash)
+  ) {
+    return json({ error: "invalid_request", message: "Provide operationId and a valid Solana transaction signature." }, 400);
+  }
+
+  const operation = await env.DB.prepare(
+    "SELECT id, status, source_reservation_id FROM operations WHERE id = ? AND agent_id = ?"
+  ).bind(operationId, agent.id).first<{ id: string; status: string; source_reservation_id: string | null }>();
+  if (!operation) return json({ error: "operation_not_found" }, 404);
+  if (operation.status !== "preparing_conversion" || !operation.source_reservation_id) {
+    return json({ error: "operation_not_ready_to_track", status: operation.status }, 409);
+  }
+
+  const reservation = await env.DB.prepare(
+    "SELECT id FROM reservations WHERE id = ? AND status = 'active'"
+  ).bind(operation.source_reservation_id).first<{ id: string }>();
+  if (!reservation) return json({ error: "active_source_reservation_not_found" }, 409);
+
+  const update = await env.DB.prepare(
+    "UPDATE operations SET status = 'conversion_submitted', transaction_hash = ? WHERE id = ? AND status = 'preparing_conversion'"
+  ).bind(transactionHash, operationId).run();
+  if ((update.meta?.changes ?? 0) !== 1) return json({ error: "operation_state_changed" }, 409);
+
+  return json({
+    operationId,
+    status: "conversion_submitted",
+    transactionHash,
+    message: "Transaction recorded. Poll the operation status until finalized or failed."
+  }, 202);
+}
+
+async function getSwapStatus(request: Request, env: Env, operationId: string): Promise<Response> {
+  const agent = await authenticate(request, env.DB);
+  if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
+
+  const operation = await env.DB.prepare(
+    "SELECT id, status, transaction_hash, source_reservation_id FROM operations WHERE id = ? AND agent_id = ?"
+  ).bind(operationId, agent.id).first<{
+    id: string;
+    status: string;
+    transaction_hash: string | null;
+    source_reservation_id: string | null;
+  }>();
+  if (!operation) return json({ error: "operation_not_found" }, 404);
+  if (operation.status === "conversion_settled" || operation.status === "conversion_failed") {
+    return json({ operationId, status: operation.status, transactionHash: operation.transaction_hash });
+  }
+  if (operation.status !== "conversion_submitted" || !operation.transaction_hash || !operation.source_reservation_id) {
+    return json({ error: "transaction_not_submitted", status: operation.status }, 409);
+  }
+
+  let upstream: Response;
+  try {
+    const url = new URL("https://hermes.swap.io/v1/swap/status");
+    url.searchParams.set("chainKey", "sol");
+    url.searchParams.set("id", operation.transaction_hash);
+    upstream = await fetch(url.toString(), { method: "GET" });
+  } catch {
+    return json({ error: "swap_status_unavailable" }, 502);
+  }
+  if (!upstream.ok) return json({ error: "swap_status_upstream_error", upstreamStatus: upstream.status }, 502);
+
+  const payload = await upstream.json() as Record<string, unknown>;
+  const swapStatus = payload.status;
+  if (swapStatus !== "finalized" && swapStatus !== "failed") {
+    return json({ operationId, transactionHash: operation.transaction_hash, swapStatus, operationStatus: operation.status });
+  }
+
+  const reservation = await env.DB.prepare(
+    "SELECT id, wallet_balance_id, amount_atoms, token FROM reservations WHERE id = ? AND status = 'active'"
+  ).bind(operation.source_reservation_id).first<{
+    id: string;
+    wallet_balance_id: string;
+    amount_atoms: string;
+    token: string;
+  }>();
+  if (!reservation) return json({ error: "source_reservation_not_active" }, 409);
+
+  const finalReservationState = swapStatus === "finalized" ? "consumed" : "released";
+  const claim = await env.DB.prepare(
+    "UPDATE reservations SET status = ?, released_at = datetime('now') WHERE id = ? AND status = 'active'"
+  ).bind(finalReservationState, reservation.id).run();
+  if ((claim.meta?.changes ?? 0) !== 1) return json({ error: "reservation_already_reconciled" }, 409);
+
+  const amount = BigInt(reservation.amount_atoms);
+  const debit = await env.DB.prepare(\`
+    UPDATE wallet_balances
+    SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?
+    WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?
+  \`).bind(amount.toString(), reservation.wallet_balance_id, amount.toString()).run();
+
+  if ((debit.meta?.changes ?? 0) !== 1) {
+    await env.DB.prepare(
+      "UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = ?"
+    ).bind(reservation.id, finalReservationState).run();
+    return json({ error: "reservation_ledger_mismatch" }, 409);
+  }
+
+  if (swapStatus === "finalized") {
+    const walletId = await env.DB.prepare(
+      "SELECT wallet_id FROM wallet_balances WHERE id = ?"
+    ).bind(reservation.wallet_balance_id).first<{ wallet_id: string }>();
+    if (walletId) {
+      await env.DB.prepare(
+        "UPDATE wallet_balances SET observed_at = datetime('now', '-10 minutes') WHERE wallet_id = ?"
+      ).bind(walletId.wallet_id).run();
+    }
+  }
+
+  const nextStatus = swapStatus === "finalized" ? "conversion_settled" : "conversion_failed";
+  await env.DB.prepare(
+    "UPDATE operations SET status = ? WHERE id = ? AND status = 'conversion_submitted'"
+  ).bind(nextStatus, operationId).run();
+
+  return json({
+    operationId,
+    transactionHash: operation.transaction_hash,
+    swapStatus,
+    operationStatus: nextStatus,
+    balanceRefreshRequired: swapStatus === "finalized"
+  });
+}
+
 async function getOperation(request: Request, env: Env, operationId: string): Promise<Response> {
   const agent = await authenticate(request, env.DB);
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
@@ -861,6 +994,9 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/liquidity/requests") return createLiquidityRequest(request, env);
     if (request.method === "POST" && url.pathname === "/v1/conversions/quote") return requestSwapQuote(request, env);
     if (request.method === "POST" && url.pathname === "/v1/conversions/prepare") return prepareSwapTransaction(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/conversions/track") return trackSwapTransaction(request, env);
+    const swapStatusMatch = url.pathname.match(/^\/v1\/conversions\/status\/([a-zA-Z0-9_-]+)$/);
+    if (request.method === "GET" && swapStatusMatch) return getSwapStatus(request, env, swapStatusMatch[1]);
     const releaseMatch = url.pathname.match(/^\/v1\/operations\/([a-zA-Z0-9_-]+)\/release$/);
     if (request.method === "POST" && releaseMatch) return releaseOperation(request, env, releaseMatch[1]);
     const operationMatch = url.pathname.match(/^\/v1\/operations\/([a-zA-Z0-9_-]+)$/);
