@@ -386,8 +386,12 @@ async function validateConversionContext(
   if (!paymentWallet) return json({ error: "api_payment_wallet_not_configured" }, 409);
   const paymentAgeMs = Date.now() - Date.parse(paymentWallet.observed_at);
   const paymentAvailable = BigInt(paymentWallet.confirmed_atoms) - BigInt(paymentWallet.reserved_atoms);
-  if (!Number.isFinite(paymentAgeMs) || paymentAgeMs < 0 || paymentAgeMs > 5 * 60 * 1000 || paymentAvailable <= 0n) {
-    return json({ error: "api_payment_reserve_unavailable", message: "The dedicated x402 payment wallet needs a fresh, positive USDC balance." }, 409);
+  if (!Number.isFinite(paymentAgeMs) || paymentAgeMs < 0 || paymentAgeMs > 5 * 60 * 1000 || paymentAvailable < 10_000n) {
+    return json({
+      error: "api_payment_reserve_unavailable",
+      message: "The dedicated x402 payment wallet needs a fresh balance of at least 0.01 USDC for quote and build calls.",
+      minimumReserveUSDC: "0.01"
+    }, 409);
   }
   const ageMs = Date.now() - Date.parse(wallet.observed_at);
   if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > 5 * 60 * 1000) {
