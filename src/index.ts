@@ -97,7 +97,7 @@ async function sendTelegramMessage(env: Env, chatId: string, text: string): Prom
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         chat_id: chatId,
-        text: text.length > 3900 ? text.slice(0, 3880) + "\\n… message truncated" : text,
+        text: text.length > 3900 ? text.slice(0, 3880) + "\n… message truncated" : text,
         disable_web_page_preview: true
       })
     });
