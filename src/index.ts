@@ -35,7 +35,7 @@ async function sha256(value: string): Promise<string> {
 }
 
 async function authenticate(request: Request, db: D1Database): Promise<AgentRow | null> {
-  const key = request.headers.get("authorization")?.replace(/^Bearer\\s+/i, "");
+  const key = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
   if (!key) return null;
   const hash = await sha256(key);
   return await db.prepare(
@@ -170,7 +170,7 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/liquidity/requests") {
       return createLiquidityRequest(request, env);
     }
-    const operationMatch = url.pathname.match(/^\\/v1\\/operations\\/([a-zA-Z0-9_-]+)$/);
+    const operationMatch = url.pathname.match(/^\/v1\/operations\/([a-zA-Z0-9_-]+)$/);
     if (request.method === "GET" && operationMatch) return getOperation(request, env, operationMatch[1]);
     return json({ error: "not_found" }, 404);
   }
