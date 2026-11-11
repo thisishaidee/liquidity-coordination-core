@@ -473,6 +473,7 @@ type ConversionContext = {
   shortfallAtoms: bigint;
   walletBalanceId: string;
   sourceReservationId: string | null;
+  buildQuoteId: string | null;
 };
 
 async function validateConversionContext(
@@ -499,13 +500,14 @@ async function validateConversionContext(
   }
 
   const operation = await env.DB.prepare(
-    "SELECT id, status, shortfall_atoms, source_reservation_id, source_wallet_id FROM operations WHERE id = ? AND agent_id = ? AND action = 'conversion_required' LIMIT 1"
+    "SELECT id, status, shortfall_atoms, source_reservation_id, source_wallet_id, build_quote_id FROM operations WHERE id = ? AND agent_id = ? AND action = 'conversion_required' LIMIT 1"
   ).bind(operationId, agent.id).first<{
     id: string;
     status: string;
     shortfall_atoms: string;
     source_reservation_id: string | null;
     source_wallet_id: string | null;
+    build_quote_id: string | null;
   }>();
   if (!operation) return json({ error: "conversion_operation_not_found" }, 404);
 
@@ -605,7 +607,8 @@ async function validateConversionContext(
     sourceAtoms,
     shortfallAtoms: BigInt(operation.shortfall_atoms),
     walletBalanceId: wallet.wallet_id,
-    sourceReservationId: operation.source_reservation_id
+    sourceReservationId: operation.source_reservation_id,
+    buildQuoteId: operation.build_quote_id
   };
 }
 
@@ -826,6 +829,12 @@ async function prepareSwapTransaction(request: Request, env: Env): Promise<Respo
   if (context.walletBalanceId !== quote.source_wallet_id || context.sourceAtoms.toString() !== quote.source_amount_atoms) {
     return json({ error: "quote_context_mismatch" }, 409);
   }
+  if (context.buildQuoteId && context.buildQuoteId !== quote.id) {
+    return json({ error: "operation_quote_locked", message: "This operation is already preparing a different quote." }, 409);
+  }
+  if (context.sourceReservationId && context.buildQuoteId !== quote.id) {
+    return json({ error: "operation_quote_lock_missing" }, 409);
+  }
 
   if (quote.build_response_json) {
     const cachedHeaders = new Headers({
@@ -858,14 +867,16 @@ async function prepareSwapTransaction(request: Request, env: Env): Promise<Respo
         `).bind(reservationId, context.operationId, context.walletBalanceId, context.sourceAtoms.toString(), expiresAt),
         env.DB.prepare(`
           UPDATE operations
-          SET status = 'preparing_conversion', source_reservation_id = ?, provider_key = ?
-          WHERE id = ? AND status = 'awaiting_conversion'
-        `).bind(reservationId, provider, context.operationId)
+          SET status = 'preparing_conversion', source_reservation_id = ?, provider_key = ?, build_quote_id = ?
+          WHERE id = ? AND status = 'awaiting_conversion' AND build_quote_id IS NULL
+        `).bind(reservationId, provider, quote.id, context.operationId)
       ]);
       const refreshed = await env.DB.prepare(
-        "SELECT source_reservation_id FROM operations WHERE id = ? AND status = 'preparing_conversion'"
-      ).bind(context.operationId).first<{ source_reservation_id: string | null }>();
-      if (refreshed?.source_reservation_id !== reservationId) throw new Error("Operation was claimed by another prepare request");
+        "SELECT source_reservation_id, build_quote_id FROM operations WHERE id = ? AND status = 'preparing_conversion'"
+      ).bind(context.operationId).first<{ source_reservation_id: string | null; build_quote_id: string | null }>();
+      if (refreshed?.source_reservation_id !== reservationId || refreshed.build_quote_id !== quote.id) {
+        throw new Error("Operation was claimed by another prepare request");
+      }
     } catch {
       await env.DB.prepare(
         "UPDATE operations SET status = 'awaiting_conversion', source_reservation_id = NULL, provider_key = NULL WHERE id = ? AND status = 'preparing_conversion' AND source_reservation_id = ?"
