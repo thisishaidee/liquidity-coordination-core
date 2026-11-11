@@ -414,6 +414,58 @@ async function releaseOperation(request: Request, env: Env, operationId: string)
   return json({ operationId, status: "released", releasedAmount: formatTokenAmount(amount), token: "USDC" });
 }
 
+async function expireReservations(env: Env): Promise<{ expired: number; skipped: number }> {
+  const due = await env.DB.prepare(`
+    SELECT id, operation_id, wallet_balance_id, amount_atoms
+    FROM reservations
+    WHERE status = 'active' AND julianday(expires_at) <= julianday('now')
+    ORDER BY expires_at ASC
+    LIMIT 100
+  `).all<{ id: string; operation_id: string; wallet_balance_id: string; amount_atoms: string }>();
+
+  let expired = 0;
+  let skipped = 0;
+  for (const reservation of due.results ?? []) {
+    const claim = await env.DB.prepare(`
+      UPDATE reservations
+      SET status = 'expired', released_at = datetime('now')
+      WHERE id = ? AND status = 'active' AND julianday(expires_at) <= julianday('now')
+    `).bind(reservation.id).run();
+
+    if ((claim.meta?.changes ?? 0) !== 1) {
+      skipped++;
+      continue;
+    }
+
+    const amount = BigInt(reservation.amount_atoms);
+    const debit = await env.DB.prepare(`
+      UPDATE wallet_balances
+      SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?
+      WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?
+    `).bind(amount.toString(), reservation.wallet_balance_id, amount.toString()).run();
+
+    if ((debit.meta?.changes ?? 0) !== 1) {
+      await env.DB.prepare(
+        "UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = 'expired'"
+      ).bind(reservation.id).run();
+      skipped++;
+      continue;
+    }
+
+    await env.DB.prepare(
+      "UPDATE operations SET status = 'expired' WHERE id = ? AND status = 'reserved'"
+    ).bind(reservation.operation_id).run();
+    expired++;
+  }
+  return { expired, skipped };
+}
+
+async function expireReservationsAdmin(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const result = await expireReservations(env);
+  return json({ ...result, message: "Expired reservations were released from the internal ledger." });
+}
+
 async function getOperation(request: Request, env: Env, operationId: string): Promise<Response> {
   const agent = await authenticate(request, env.DB);
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
@@ -452,6 +504,9 @@ async function getOperation(request: Request, env: Env, operationId: string): Pr
 }
 
 export default {
+  async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+    await expireReservations(env);
+  },
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") {
@@ -460,6 +515,7 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/admin/bootstrap") return bootstrapBusiness(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/wallets") return registerWallet(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/balances") return upsertBalanceSnapshot(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/admin/reservations/expire") return expireReservationsAdmin(request, env);
     if (request.method === "POST" && url.pathname === "/v1/liquidity/requests") return createLiquidityRequest(request, env);
     const releaseMatch = url.pathname.match(/^\/v1\/operations\/([a-zA-Z0-9_-]+)\/release$/);
     if (request.method === "POST" && releaseMatch) return releaseOperation(request, env, releaseMatch[1]);
