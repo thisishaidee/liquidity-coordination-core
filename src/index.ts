@@ -323,26 +323,38 @@ async function releaseOperation(request: Request, env: Env, operationId: string)
   if (!reservation) return json({ error: "active_reservation_not_found" }, 409);
 
   const amount = BigInt(reservation.amount_atoms);
+
+  // Claim the reservation first. Only one concurrent release can change active -> released.
+  const claim = await env.DB.prepare(
+    "UPDATE reservations SET status = 'released', released_at = datetime('now') WHERE id = ? AND status = 'active'"
+  ).bind(reservation.id).run();
+  if ((claim.meta?.changes ?? 0) !== 1) {
+    return json({ error: "reservation_already_released" }, 409);
+  }
+
+  const operationClaim = await env.DB.prepare(
+    "UPDATE operations SET status = 'released' WHERE id = ? AND status = 'reserved'"
+  ).bind(operationId).run();
+  if ((operationClaim.meta?.changes ?? 0) !== 1) {
+    await env.DB.prepare("UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = 'released'")
+      .bind(reservation.id).run();
+    return json({ error: "operation_state_changed" }, 409);
+  }
+
   const debit = await env.DB.prepare(`
     UPDATE wallet_balances
     SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?
     WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?
   `).bind(amount.toString(), reservation.wallet_balance_id, amount.toString()).run();
 
-  if ((debit.meta?.changes ?? 0) !== 1) return json({ error: "reservation_ledger_mismatch" }, 409);
-
-  try {
+  if ((debit.meta?.changes ?? 0) !== 1) {
     await env.DB.batch([
-      env.DB.prepare("UPDATE reservations SET status = 'released', released_at = datetime('now') WHERE id = ? AND status = 'active'")
+      env.DB.prepare("UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = 'released'")
         .bind(reservation.id),
-      env.DB.prepare("UPDATE operations SET status = 'released' WHERE id = ? AND status = 'reserved'")
+      env.DB.prepare("UPDATE operations SET status = 'reserved' WHERE id = ? AND status = 'released'")
         .bind(operationId)
     ]);
-  } catch {
-    await env.DB.prepare(
-      "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) + ? WHERE id = ?"
-    ).bind(amount.toString(), reservation.wallet_balance_id).run();
-    return json({ error: "release_persistence_failed" }, 500);
+    return json({ error: "reservation_ledger_mismatch" }, 409);
   }
 
   return json({ operationId, status: "released", releasedAmount: formatTokenAmount(amount), token: "USDC" });
