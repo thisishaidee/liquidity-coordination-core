@@ -94,13 +94,13 @@
 
       <section class="panel">
         <div class="section-head">
-          <div><h2>Authorized liquidity</h2><div class="muted">Wallet-level balances; API payment reserves are excluded.</div></div>
+          <div><h2>Authorized liquidity</h2><div class="muted">Operating liquidity and the separate x402 payment reserve.</div></div>
           <button id="refreshButton" type="button">Refresh</button>
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Wallet</th><th>Scope</th><th>Asset</th><th>Confirmed</th><th>Reserved</th><th>Available</th><th>Snapshot</th></tr></thead>
-            <tbody id="balanceRows"><tr><td colspan="7" class="empty">Connect an agent to load balances.</td></tr></tbody>
+            <thead><tr><th>Wallet</th><th>Scope</th><th>Purpose</th><th>Asset</th><th>Confirmed</th><th>Reserved</th><th>Available</th><th>Snapshot</th></tr></thead>
+            <tbody id="balanceRows"><tr><td colspan="8" class="empty">Connect an agent to load balances.</td></tr></tbody>
           </table>
         </div>
       </section>
@@ -182,12 +182,13 @@
           <tr>
             <td class="mono">${escapeHtml(shortAddress(b.address))}</td>
             <td>${escapeHtml(b.scope)}</td>
+            <td>${escapeHtml(b.purpose === "api_payment" ? "x402 reserve" : "operating")}</td>
             <td><strong>${escapeHtml(b.token)}</strong></td>
             <td>${escapeHtml(money(b.confirmed,b.token))}</td>
             <td>${escapeHtml(money(b.reserved,b.token))}</td>
             <td>${escapeHtml(money(b.available,b.token))}</td>
             <td><span class="pill ${b.fresh ? "good" : "warn"}">${b.fresh ? "Fresh" : "Stale"}</span></td>
-          </tr>`).join("") : '<tr><td colspan="7" class="empty">No authorized operating wallet balances found.</td></tr>';
+          </tr>`).join("") : '<tr><td colspan="8" class="empty">No authorized wallet balances found.</td></tr>';
         $("forecastRows").innerHTML = obligations.length ? obligations.map((o) => `
           <tr>
             <td>${escapeHtml(o.taskId)}</td>
