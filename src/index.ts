@@ -161,10 +161,10 @@ async function readJson(request: Request): Promise<Record<string, unknown> | nul
   }
 }
 
-async function sendTelegramMessage(env: Env, chatId: string, text: string): Promise<void> {
-  if (!env.TELEGRAM_BOT_TOKEN) return;
+async function sendTelegramMessage(env: Env, chatId: string, text: string): Promise<boolean> {
+  if (!env.TELEGRAM_BOT_TOKEN) return false;
   try {
-    await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+    const response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -173,9 +173,62 @@ async function sendTelegramMessage(env: Env, chatId: string, text: string): Prom
         disable_web_page_preview: true
       })
     });
+    const result = await response.json() as { ok?: boolean };
+    return response.ok && result.ok === true;
   } catch {
-    // Notifications are best-effort and must never roll back a liquidity operation.
+    return false;
   }
+}
+
+async function deliverTelegramOutbox(env: Env): Promise<{ delivered: number; retried: number }> {
+  if (!env.TELEGRAM_BOT_TOKEN) return { delivered: 0, retried: 0 };
+  const due = await env.DB.prepare(`
+    SELECT id, chat_id, message, attempts
+    FROM telegram_notification_outbox
+    WHERE (status = 'pending' AND next_attempt_at <= datetime('now'))
+       OR (status = 'sending' AND locked_until <= datetime('now'))
+    ORDER BY created_at ASC
+    LIMIT 20
+  `).all<{ id: string; chat_id: string; message: string; attempts: number }>();
+
+  let delivered = 0;
+  let retried = 0;
+  const retryDelays = [60, 300, 900, 3600, 21600, 43200, 86400];
+
+  for (const item of due.results ?? []) {
+    const claim = await env.DB.prepare(`
+      UPDATE telegram_notification_outbox
+      SET status = 'sending', locked_until = datetime('now', '+2 minutes')
+      WHERE id = ?
+        AND ((status = 'pending' AND next_attempt_at <= datetime('now'))
+          OR (status = 'sending' AND locked_until <= datetime('now')))
+    `).bind(item.id).run();
+    if ((claim.meta?.changes ?? 0) !== 1) continue;
+
+    const attempt = item.attempts + 1;
+    const sent = await sendTelegramMessage(env, item.chat_id, item.message);
+    if (sent) {
+      await env.DB.prepare(`
+        UPDATE telegram_notification_outbox
+        SET status = 'sent', attempts = ?, sent_at = datetime('now'),
+            locked_until = NULL, last_error = NULL
+        WHERE id = ? AND status = 'sending'
+      `).bind(attempt, item.id).run();
+      delivered++;
+      continue;
+    }
+
+    const exhausted = attempt >= 8;
+    const delay = retryDelays[Math.min(attempt - 1, retryDelays.length - 1)];
+    await env.DB.prepare(`
+      UPDATE telegram_notification_outbox
+      SET status = ?, attempts = ?, next_attempt_at = datetime('now', ?),
+          locked_until = NULL, last_error = 'telegram_delivery_failed'
+      WHERE id = ? AND status = 'sending'
+    `).bind(exhausted ? "failed" : "pending", attempt, `+${delay} seconds`, item.id).run();
+    retried++;
+  }
+  return { delivered, retried };
 }
 
 async function notifyBusiness(env: Env, businessId: string, message: string): Promise<void> {
@@ -184,11 +237,19 @@ async function notifyBusiness(env: Env, businessId: string, message: string): Pr
     const connections = await env.DB.prepare(
       "SELECT chat_id FROM telegram_connections WHERE business_id = ? AND status = 'active'"
     ).bind(businessId).all<{ chat_id: string }>();
-    await Promise.all((connections.results ?? []).map((connection) =>
-      sendTelegramMessage(env, connection.chat_id, message)
-    ));
+    const statements = (connections.results ?? []).map((connection) =>
+      env.DB.prepare(`
+        INSERT INTO telegram_notification_outbox
+          (id, business_id, chat_id, message, status, attempts, next_attempt_at)
+        VALUES (?, ?, ?, ?, 'pending', 0, datetime('now'))
+      `).bind("tn_" + crypto.randomUUID().replaceAll("-", ""), businessId, connection.chat_id, message)
+    );
+    if (statements.length) {
+      await env.DB.batch(statements);
+      await deliverTelegramOutbox(env);
+    }
   } catch {
-    // Telegram is an optional notification channel, not part of transaction correctness.
+    // Alert delivery must never roll back a liquidity operation.
   }
 }
 
@@ -2469,6 +2530,11 @@ async function updateObligationStatus(request: Request, env: Env, taskId: string
     "UPDATE liquidity_obligations SET status = ?, updated_at = datetime('now') WHERE agent_id = ? AND task_id = ? AND status = 'planned'"
   ).bind(status, agent.id, taskId).run();
   if ((result.meta?.changes ?? 0) !== 1) return json({ error: "planned_obligation_not_found" }, 404);
+  await notifyBusiness(
+    env,
+    agent.business_id,
+    `Planned obligation ${taskId} marked ${status} by agent ${agent.id}.`
+  );
   return json({ taskId, status });
 }
 
@@ -2620,6 +2686,7 @@ async function getOperation(request: Request, env: Env, operationId: string): Pr
 export default {
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
     await expireReservations(env);
+    await deliverTelegramOutbox(env);
   },
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
