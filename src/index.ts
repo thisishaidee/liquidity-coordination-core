@@ -705,7 +705,7 @@ async function requestSwapQuote(request: Request, env: Env): Promise<Response> {
   }
 
   const quoteId = "qte_" + crypto.randomUUID().replaceAll("-", "");
-  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
   try {
     await env.DB.prepare(`
       INSERT INTO swap_quotes
@@ -1416,18 +1416,71 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
     return json({ error: "transaction_not_submitted", status: operation.status }, 409);
   }
 
+  const paymentWalletAddress = new URL(request.url).searchParams.get("paymentWalletAddress") ?? "";
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(paymentWalletAddress)) {
+    return json({ error: "payment_wallet_required" }, 400);
+  }
+  const paymentWallet = await env.DB.prepare(`
+    SELECT b.confirmed_atoms, b.reserved_atoms, b.observed_at
+    FROM wallets w
+    JOIN wallet_balances b ON b.wallet_id = w.id AND b.token = 'USDC'
+    WHERE w.business_id = ? AND w.network = 'solana' AND w.address = ?
+      AND w.scope = 'business' AND w.purpose = 'api_payment' AND w.status = 'active'
+    LIMIT 1
+  `).bind(agent.business_id, paymentWalletAddress).first<{
+    confirmed_atoms: string;
+    reserved_atoms: string;
+    observed_at: string;
+  }>();
+  if (!paymentWallet) return json({ error: "api_payment_wallet_not_configured" }, 409);
+  const paymentAgeMs = Date.now() - Date.parse(paymentWallet.observed_at);
+  const paymentAvailable = BigInt(paymentWallet.confirmed_atoms) - BigInt(paymentWallet.reserved_atoms);
+  if (!Number.isFinite(paymentAgeMs) || paymentAgeMs < 0 || paymentAgeMs > 5 * 60 * 1000 || paymentAvailable < 10_000n) {
+    return json({ error: "api_payment_reserve_unavailable", minimumReserveUSDC: "0.01" }, 409);
+  }
+
   let upstream: Response;
   try {
     const url = new URL("https://hermes.swap.io/v1/swap/status");
     url.searchParams.set("chainKey", "sol");
     url.searchParams.set("id", operation.transaction_hash);
-    upstream = await fetch(url.toString(), { method: "GET" });
+    const headers = new Headers();
+    const payment = request.headers.get("x-payment");
+    const paymentSignature = request.headers.get("payment-signature");
+    if (payment) headers.set("X-PAYMENT", payment);
+    if (paymentSignature) headers.set("PAYMENT-SIGNATURE", paymentSignature);
+    upstream = await fetch(url.toString(), { method: "GET", headers });
   } catch {
     return json({ error: "swap_status_unavailable" }, 502);
   }
-  if (!upstream.ok) return json({ error: "swap_status_upstream_error", upstreamStatus: upstream.status }, 502);
 
-  const payload = await upstream.json() as Record<string, unknown>;
+  const paymentHeaders = new Headers({
+    "content-type": upstream.headers.get("content-type") ?? "application/json",
+    "cache-control": "no-store"
+  });
+  for (const name of ["x-payment-required", "payment-required", "x-payment-response", "payment-response"]) {
+    const value = upstream.headers.get(name);
+    if (value) paymentHeaders.set(name, value);
+  }
+  const upstreamBody = await upstream.arrayBuffer();
+  if (upstream.status === 402) return new Response(upstreamBody, { status: 402, headers: paymentHeaders });
+  if (upstream.status !== 200) return json({ error: "swap_status_upstream_error", upstreamStatus: upstream.status }, 502);
+
+  const receiptHeader = upstream.headers.get("x-payment-response") ?? upstream.headers.get("payment-response");
+  let receipt: { success?: boolean } | null = null;
+  try {
+    if (receiptHeader) receipt = JSON.parse(atob(receiptHeader)) as { success?: boolean };
+  } catch {
+    receipt = null;
+  }
+  if (!receipt?.success) return json({ error: "swap_status_payment_receipt_invalid" }, 502);
+
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(new TextDecoder().decode(upstreamBody)) as Record<string, unknown>;
+  } catch {
+    return json({ error: "invalid_swap_status_response" }, 502);
+  }
   const swapStatus = payload.status;
   if (swapStatus !== "finalized" && swapStatus !== "failed") {
     return json({ operationId, transactionHash: operation.transaction_hash, swapStatus, operationStatus: operation.status });
