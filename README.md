@@ -12,6 +12,7 @@ API-first infrastructure for coordinating authorized liquidity across AI agents.
 | POST | `/v1/admin/bootstrap` | Create a business and its first agent |
 | POST | `/v1/admin/wallets` | Register an authorized Solana wallet |
 | POST | `/v1/admin/balances` | Record a controlled manual balance snapshot |
+| POST | `/v1/admin/reservations/expire` | Manually sweep expired reservations |
 | POST | `/v1/liquidity/requests` | Submit a task funding request |
 | GET | `/v1/operations/:id` | Read an agent's operation |
 | POST | `/v1/operations/:id/release` | Release an active internal reservation |
@@ -39,7 +40,7 @@ This is still an early backend, not a production funds executor.
 - V1 only fulfills directly from one eligible USDC wallet. It deliberately does not combine multiple wallets until split reservations can be made atomically.
 - Alternative-token detection is a decision only. Swap.io quote/build/submit is not connected yet.
 - The admin balance endpoint accepts operator-entered snapshots for controlled testing only. These are not live on-chain balances. Production decisions must use a trusted balance observer/indexer; never accept balances from agent requests.
-- Expired reservations are not yet automatically swept. Until a scheduled expiry worker is added, use the release endpoint or administrative reconciliation.
+- A scheduled Worker runs reservation expiry cleanup every minute. The admin expiry endpoint is also available for manual reconciliation. Verify the cron trigger is active after deployment.
 - API-key rotation, user login, business-level dashboard authorization and rate limiting remain future work.
 - No wallet private keys or signing secrets belong in this Worker.
 
