@@ -14,6 +14,8 @@ API-first infrastructure for coordinating authorized liquidity across AI agents.
 | POST | `/v1/admin/balances` | Record a controlled manual balance snapshot |
 | POST | `/v1/admin/balances/sync` | Refresh registered wallet balances from Solana RPC |
 | POST | `/v1/admin/reservations/expire` | Manually sweep expired reservations |
+| POST | `/v1/admin/telegram/link-codes` | Create a one-time private Telegram linking invitation |
+| POST | `/v1/telegram/webhook` | Receive verified Telegram bot updates |
 | POST | `/v1/liquidity/requests` | Submit a task funding request |
 | POST | `/v1/conversions/quote` | Request a paid Swap.io quote through x402 |
 | POST | `/v1/conversions/prepare` | Build an unsigned Swap.io transaction through x402 |
@@ -215,6 +217,37 @@ const quoteResponse = await client.fetch("https://YOUR_API/v1/conversions/quote"
 ```
 
 The x402 client wallet must match the registered `api_payment` wallet and needs a fresh balance of at least 0.01 USDC for quote and build calls. Before preparing a transaction, compare the quote's minimum output with the `X-Liquidity-Required-USDC` response header; do not build a quote that cannot cover the task shortfall. That reserve is distinct from the operating wallet's SOL being converted. The build endpoint reserves the requested SOL amount before preparing the unsigned transaction. After the business-controlled signer broadcasts it, call `POST /v1/conversions/track` with the operation ID and Solana signature, then poll `GET /v1/conversions/status/:operationId`. The status handler checks Hermes status and independently verifies the finalized Solana transaction: the registered wallet must have spent the reserved SOL and received USDC. It marks the wallet snapshots stale after terminal settlement so they must be refreshed before further liquidity decisions. No paid API request has been made by this repository's implementation.
+
+## Telegram business alerts
+
+Telegram is an optional notification surface; the API remains the source of truth. V1 supports private-chat linking and notifications for liquidity shortfalls, reservations, releases, expiries and conversion settlement. It does not approve or sign transactions in Telegram.
+
+Configure the bot secrets:
+
+```bash
+npx wrangler secret put TELEGRAM_BOT_TOKEN
+npx wrangler secret put TELEGRAM_BOT_USERNAME
+npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
+```
+
+Set the Telegram webhook to the deployed Worker URL:
+
+```bash
+curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+  -d "url=https://YOUR_WORKER/v1/telegram/webhook" \
+  -d "secret_token=$TELEGRAM_WEBHOOK_SECRET"
+```
+
+Create a one-time invitation for a business:
+
+```bash
+curl -X POST https://YOUR_WORKER/v1/admin/telegram/link-codes \
+  -H "Authorization: Bearer YOUR_ADMIN_BOOTSTRAP_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"businessId":"biz_..."}'
+```
+
+Send the returned deep link privately to the authorized business user. The link expires in 15 minutes and can only be used once. Group chats are not accepted. Telegram delivery is best-effort and cannot roll back or authorize a financial operation.
 
 ## Next milestones
 
