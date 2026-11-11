@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="title">
+  <title id="title">NERITH convergence mark</title>
+  <g fill="none" stroke="#101312" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M50 8 C65 8 67 27 59 41 C55 48 51 50 50 57"/>
+    <path d="M9 78 C2 65 17 55 31 50 C40 46 46 49 50 57"/>
+    <path d="M91 78 C98 65 83 55 69 50 C60 46 54 49 50 57"/>
+  </g>
+  <path d="M50 40 L55 51 L50 57 L45 51 Z" fill="#C7F23A"/>
+</svg>
