@@ -52,6 +52,15 @@ a{color:inherit}.shell{max-width:1020px;margin:0 auto;padding:28px 24px 44px}.to
 <div id="inviteBox" class="keybox hidden"><small>PRIVATE TELEGRAM INVITATION · EXPIRES IN 15 MINUTES · ONE USE</small><div id="botName" class="keyvalue"></div><div class="btnrow"><a class="btn" id="openBot" href="#" target="_blank" rel="noreferrer" style="text-decoration:none">Open Telegram bot</a><button class="btn secondary" id="copyInvite" type="button">Copy invitation link</button></div></div>
 </section>
 
+<section id="telegramAccessSection" class="hidden">
+<div class="divider"></div>
+<h2>Telegram permissions</h2>
+<p class="sub">Every linked Telegram account starts as a viewer. You can explicitly grant approver permission to people authorised to review business operations. This permission does not sign transactions or move funds.</p>
+<div class="btnrow"><button class="btn secondary" id="refreshTelegramAccess" type="button">Refresh Telegram access</button></div>
+<div id="telegramAccessList" class="keybox"></div>
+<div id="telegramAccessStatus" class="status"></div>
+</section>
+
 <section id="walletSection" class="hidden">
 <div class="divider"></div>
 <h2>Business wallets</h2>
@@ -104,7 +113,62 @@ function hideStatus(id){const el=byId(id);el.textContent="";el.className="status
 async function call(path,body){const response=await fetch(path,{method:"POST",headers:{"content-type":"application/json","authorization":"Bearer "+adminToken},body:JSON.stringify(body||{})});let data={};try{data=await response.json();}catch{}if(!response.ok)throw new Error(data.message||data.error||("Request failed ("+response.status+")"));return data;}
 async function establishSession(){const response=await fetch("/v1/admin/session",{method:"POST",headers:{"authorization":"Bearer "+adminToken}});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.message||data.error||"Could not establish a secure workspace session.");return data;}
 async function loadWorkspaceReview(id){const response=await fetch("/v1/admin/workspace?businessId="+encodeURIComponent(id));const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.message||data.error||"Workspace details could not be loaded.");businessName=data.business.name;byId("workspaceReview").classList.remove("hidden");byId("workspaceSummary").replaceChildren();const add=(label,value)=>{const p=document.createElement("p");p.className="workspace";p.textContent=label+": "+value;byId("workspaceSummary").appendChild(p);};add("Business",data.business.name);add("Business ID",data.business.id);add("Created",data.business.created_at);add("Agents",data.agents.length+" total · "+data.agents.filter(a=>a.status==="active").length+" active");for(const agent of data.agents)add("Agent",agent.name+" · "+agent.status);add("Operating wallets",data.wallets.active+" active · "+data.wallets.total+" total");add("Telegram connections",data.telegramConnections+" active");byId("bootstrapSection").classList.add("hidden");byId("existingSection").classList.add("hidden");byId("selectedWorkspace").textContent="Connected workspace: "+businessName+" · "+businessId;return data;}
-function activateWorkspace(id,name){businessId=id;businessName=name||"Business workspace";try{localStorage.setItem("nerith_business_id",id);}catch{}byId("workspaceReview").classList.remove("hidden");loadWorkspaceReview(id).catch(error=>showStatus("workspaceStatus",error.message,"err"));byId("telegramSection").classList.remove("hidden");byId("walletSection").classList.remove("hidden");byId("selectedWorkspace").textContent="Connected workspace: "+businessName+" · "+businessId;byId("makeInvite").disabled=!botUsername;hideStatus("telegramStatus");loadBusinessWallets();}
+function activateWorkspace(id,name){businessId=id;businessName=name||"Business workspace";try{localStorage.setItem("nerith_business_id",id);}catch{}byId("workspaceReview").classList.remove("hidden");loadWorkspaceReview(id).catch(error=>showStatus("workspaceStatus",error.message,"err"));byId("telegramSection").classList.remove("hidden");byId("walletSection").classList.remove("hidden");byId("selectedWorkspace").textContent="Connected workspace: "+businessName+" · "+businessId;byId("makeInvite").disabled=!botUsername;hideStatus("telegramStatus");loadBusinessWallets();loadTelegramAccess();}
+async function loadTelegramAccess(){
+  if(!businessId)return;
+  byId("telegramAccessSection").classList.remove("hidden");
+  const list=byId("telegramAccessList");
+  list.textContent="Loading linked Telegram accounts…";
+  try{
+    const response=await fetch("/v1/admin/telegram/connections?businessId="+encodeURIComponent(businessId),{credentials:"same-origin"});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(data.message||data.error||"Telegram access could not be loaded.");
+    list.replaceChildren();
+    const connections=data.connections||[];
+    if(!connections.length){
+      list.textContent="No Telegram accounts are linked yet. Create a private invitation and link an account first.";
+      return;
+    }
+    for(const connection of connections){
+      const row=document.createElement("div");
+      row.style.cssText="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:12px 0;border-bottom:1px solid var(--line)";
+      const details=document.createElement("div");
+      details.style.cssText="min-width:0;flex:1";
+      const title=document.createElement("strong");
+      title.style.cssText="display:block;font-size:12px";
+      title.textContent="Telegram user "+connection.telegramUserId;
+      const meta=document.createElement("p");
+      meta.className="workspace";
+      meta.textContent="Chat "+connection.chatId+" · "+connection.status+" · linked "+connection.linkedAt;
+      details.append(title,meta);
+      const controls=document.createElement("div");
+      controls.style.cssText="display:flex;gap:7px;align-items:center;flex-wrap:wrap";
+      const select=document.createElement("select");
+      select.setAttribute("aria-label","Telegram permission");
+      select.style.cssText="border:1px solid var(--line);border-radius:7px;padding:9px;background:#fff;color:var(--ink);font:inherit;font-size:11px";
+      for(const [value,label] of [["viewer","Viewer"],["approver","Approver"]]){
+        const option=document.createElement("option");option.value=value;option.textContent=label;select.appendChild(option);
+      }
+      select.value=connection.permission;
+      select.disabled=connection.status!=="active";
+      const save=document.createElement("button");
+      save.className="btn secondary";save.type="button";save.textContent="Save access";
+      save.disabled=select.disabled;
+      save.addEventListener("click",async()=>{
+        save.disabled=true;save.textContent="Saving…";
+        try{
+          const update=await fetch("/v1/admin/telegram/permissions",{method:"POST",credentials:"same-origin",headers:{"content-type":"application/json"},body:JSON.stringify({businessId:businessId,chatId:connection.chatId,telegramUserId:connection.telegramUserId,permission:select.value})});
+          const result=await update.json().catch(()=>({}));
+          if(!update.ok)throw new Error(result.message||result.error||"Permission update failed.");
+          showStatus("telegramAccessStatus","Access updated for Telegram user "+connection.telegramUserId+".","ok");
+          await loadTelegramAccess();
+        }catch(error){showStatus("telegramAccessStatus",error.message,"err");save.disabled=false;save.textContent="Save access";}
+      });
+      controls.append(select,save);row.append(details,controls);list.appendChild(row);
+    }
+  }catch(error){list.textContent="Could not load Telegram accounts.";showStatus("telegramAccessStatus",error.message,"err");}
+}
+
 
 async function loadBusinessWallets(){try{const response=await fetch("/v1/admin/wallets?businessId="+encodeURIComponent(businessId));const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.message||data.error||"Wallet list could not be loaded.");const list=byId("walletList");list.replaceChildren();const active=(data.wallets||[]).filter(wallet=>wallet.scope==="business"&&wallet.status==="active"&&(wallet.purpose==="operating"||wallet.purpose==="api_payment"));businessWalletIds=active.map(wallet=>wallet.walletId);byId("syncWalletBtn").disabled=businessWalletIds.length===0;byId("registerWalletBtn").disabled=false;byId("registerPaymentWalletBtn").disabled=false;if(!active.length){list.classList.add("hidden");return;}list.classList.remove("hidden");const title=document.createElement("strong");title.textContent=active.length+" active business wallet"+(active.length===1?"":"s");list.appendChild(title);for(const wallet of active){const card=document.createElement("div");card.className="divider";const heading=document.createElement("p");heading.className="workspace";heading.textContent=(wallet.purpose==="api_payment"?"X402 PAYMENT WALLET":"OPERATING WALLET")+" · "+wallet.network.toUpperCase();card.appendChild(heading);const address=document.createElement("p");address.className="workspace";address.textContent=wallet.address;card.appendChild(address);if(!(wallet.balances||[]).length){const pending=document.createElement("p");pending.className="workspace";pending.textContent="No balance snapshot yet. Sync to read confirmed SOL and USDC.";card.appendChild(pending);}for(const balance of wallet.balances||[]){const row=document.createElement("p");row.className="workspace";row.textContent=balance.token+" · "+balance.available+" available · "+balance.confirmed+" confirmed · "+balance.reserved+" reserved · "+(balance.fresh?"Fresh":"Out of date")+" · "+balance.source;card.appendChild(row);}list.appendChild(card);}}catch(error){showStatus("walletStatus",error.message,"err");}}
 byId("walletForm").addEventListener("submit",async function(event){event.preventDefault();hideStatus("walletStatus");const address=byId("walletAddress").value.trim();const button=byId("registerWalletBtn");button.disabled=true;button.textContent="Registering wallet…";try{await call("/v1/admin/wallets",{businessId:businessId,network:"solana",address:address,scope:"business",purpose:"operating"});byId("walletAddress").value="";showStatus("walletStatus","Operating wallet registered. Sync balances to verify its on-chain assets.","ok");await loadBusinessWallets();}catch(error){showStatus("walletStatus",error.message==="wallet_not_registered"?"This address may already be registered. Check the wallet list or address.":error.message,"err");}finally{button.disabled=false;button.textContent="Register operating wallet";}});
@@ -113,6 +177,7 @@ byId("syncWalletBtn").addEventListener("click",async function(){hideStatus("wall
 byId("bootstrapForm").addEventListener("submit",async function(event){event.preventDefault();hideStatus("bootstrapStatus");adminToken=byId("adminToken").value.trim();if(!adminToken){showStatus("bootstrapStatus","Enter the business admin token configured in Cloudflare.", "err");return;}const button=byId("createBtn");button.disabled=true;button.textContent="Creating workspace…";try{const data=await call("/v1/admin/bootstrap",{businessName:byId("businessName").value.trim(),agentName:byId("agentName").value.trim()});businessId=data.business.id;businessName=data.business.name;await establishSession();try{localStorage.setItem("nerith_business_id",businessId);}catch{}byId("apiKeyValue").textContent=data.apiKey;byId("workspaceInfo").textContent="Workspace ID: "+businessId+" · Agent: "+data.agent.name+". "+data.warning;byId("keyBox").classList.remove("hidden");showStatus("bootstrapStatus","Workspace created. Save the agent key before leaving this page.","ok");activateWorkspace(businessId,businessName);byId("existingBusinessId").value=businessId;}catch(error){showStatus("bootstrapStatus",error.message,"err");}finally{button.disabled=false;button.textContent="Create business workspace";}});
 byId("existingForm").addEventListener("submit",async function(event){event.preventDefault();hideStatus("existingStatus");adminToken=byId("existingAdminToken").value.trim();if(!adminToken){showStatus("existingStatus","Enter your business admin token to reconnect. It will not be saved in browser storage.","err");return;}const id=byId("existingBusinessId").value.trim();const button=byId("loadBusinessBtn");button.disabled=true;button.textContent="Checking workspace…";try{await establishSession();const response=await fetch("/v1/admin/workspace?businessId="+encodeURIComponent(id));const data=await response.json();if(!response.ok)throw new Error(data.message||data.error||"Workspace could not be verified. Check the business ID and reconnect.");businessId=id;businessName=data.business.name;byId("existingAdminToken").value="";activateWorkspace(id,businessName);showStatus("existingStatus","Workspace verified. Your secure browser session is active.","ok");}catch(error){adminToken="";await fetch("/v1/admin/session",{method:"DELETE"}).catch(()=>{});const message=error.message==="unauthorized"?"The admin token was rejected. Use the current ADMIN_BOOTSTRAP_TOKEN Worker secret, not a Cloudflare API token.":error.message;showStatus("existingStatus",message,"err");}finally{button.disabled=false;button.textContent="Use existing workspace";}});
 byId("configureBot").addEventListener("click",async function(){hideStatus("telegramStatus");if(!adminToken){showStatus("telegramStatus","Your admin token is no longer available. Refresh the page and enter it again.","err");return;}const button=byId("configureBot");button.disabled=true;button.textContent="Configuring bot…";try{const data=await call("/v1/admin/telegram/setup");botUsername=data.botUsername;byId("makeInvite").disabled=false;showStatus("telegramStatus","Bot @"+botUsername+" verified. Webhook and Telegram command menu are configured.","ok");}catch(error){showStatus("telegramStatus",error.message,"err");}finally{button.disabled=false;button.textContent="Configure Telegram bot";}});
+byId("refreshTelegramAccess").addEventListener("click",loadTelegramAccess);
 byId("testTelegram").addEventListener("click",async function(){hideStatus("telegramStatus");const button=byId("testTelegram");button.disabled=true;button.textContent="Sending test alert…";try{const response=await fetch("/v1/admin/telegram/test",{method:"POST",headers:{"content-type":"application/json"},credentials:"same-origin",body:JSON.stringify({businessId:businessId})});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.message||data.error||("Request failed ("+response.status+")"));showStatus("telegramStatus","Test alert: "+data.delivered+" delivered, "+data.pending+" pending, "+data.failed+" failed. "+data.message,data.pending||data.failed?"err":"ok");}catch(error){showStatus("telegramStatus",error.message,"err");}finally{button.disabled=false;button.textContent="Send test alert";}});
 byId("makeInvite").addEventListener("click",async function(){hideStatus("telegramStatus");const button=byId("makeInvite");button.disabled=true;button.textContent="Creating invitation…";try{const data=await call("/v1/admin/telegram/link-codes",{businessId:businessId});inviteUrl=data.deepLink;byId("botName").textContent="@"+botUsername+" · Expires "+data.expiresAt;byId("openBot").href=inviteUrl;byId("inviteBox").classList.remove("hidden");showStatus("telegramStatus","Private invitation created. Open it from the Telegram account that should receive business alerts.","ok");}catch(error){showStatus("telegramStatus",error.message,"err");}finally{button.disabled=false;button.textContent="Create private invitation";}});
 byId("copyKey").addEventListener("click",async function(){try{await navigator.clipboard.writeText(byId("apiKeyValue").textContent);showStatus("bootstrapStatus","Agent API key copied. Store it securely; it cannot be retrieved again.","ok");}catch{showStatus("bootstrapStatus","Clipboard unavailable. Select and copy the key shown above.","err");}});
