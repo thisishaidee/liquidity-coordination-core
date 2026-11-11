@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS telegram_request_drafts (
   business_id TEXT NOT NULL REFERENCES businesses(id),
   chat_id TEXT NOT NULL,
   telegram_user_id TEXT NOT NULL,
-  step TEXT NOT NULL CHECK (step IN ('agent', 'amount', 'purpose')),
+  step TEXT NOT NULL CHECK (step IN ('agent', 'amount', 'purpose', 'confirm')),
   agent_id TEXT REFERENCES agents(id),
   amount TEXT,
   purpose TEXT,
