@@ -129,11 +129,14 @@ async function registerWallet(request: Request, env: Env): Promise<Response> {
   if (!body) return json({ error: "invalid_json" }, 400);
 
   const { businessId, agentId, network, address, scope } = body;
+  const purpose = body.purpose === undefined ? "operating" : body.purpose;
   if (
     typeof businessId !== "string" ||
     network !== "solana" ||
     typeof address !== "string" || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address) ||
     (scope !== "agent" && scope !== "business") ||
+    (purpose !== "operating" && purpose !== "api_payment") ||
+    (purpose === "api_payment" && scope !== "business") ||
     (scope === "agent" && typeof agentId !== "string") ||
     (scope === "business" && agentId !== undefined && agentId !== null)
   ) {
@@ -153,13 +156,13 @@ async function registerWallet(request: Request, env: Env): Promise<Response> {
   const walletId = "wal_" + crypto.randomUUID().replaceAll("-", "");
   try {
     await env.DB.prepare(
-      "INSERT INTO wallets (id, business_id, agent_id, network, address, scope) VALUES (?, ?, ?, ?, ?, ?)"
-    ).bind(walletId, businessId, scope === "agent" ? agentId : null, network, address, scope).run();
+      "INSERT INTO wallets (id, business_id, agent_id, network, address, scope, purpose) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).bind(walletId, businessId, scope === "agent" ? agentId : null, network, address, scope, purpose).run();
   } catch {
     return json({ error: "wallet_not_registered", message: "Wallet may already be registered." }, 409);
   }
 
-  return json({ walletId, businessId, agentId: scope === "agent" ? agentId : null, network, address, scope }, 201);
+  return json({ walletId, businessId, agentId: scope === "agent" ? agentId : null, network, address, scope, purpose }, 201);
 }
 
 async function upsertBalanceSnapshot(request: Request, env: Env): Promise<Response> {
@@ -350,7 +353,7 @@ async function validateConversionContext(
     SELECT w.id AS wallet_id, w.address, b.confirmed_atoms, b.reserved_atoms, b.observed_at
     FROM wallets w
     JOIN wallet_balances b ON b.wallet_id = w.id AND b.token = 'SOL'
-    WHERE w.business_id = ? AND w.network = 'solana' AND w.address = ? AND w.status = 'active'
+    WHERE w.business_id = ? AND w.network = 'solana' AND w.address = ? AND w.status = 'active' AND w.purpose = 'operating'
       AND (
         (w.scope = 'agent' AND w.agent_id = ?) OR
         (w.scope = 'business' AND ? = 1)
@@ -577,7 +580,7 @@ async function createLiquidityRequest(request: Request, env: Env): Promise<Respo
            w.status AS wallet_status
     FROM wallet_balances b
     JOIN wallets w ON w.id = b.wallet_id
-    WHERE w.business_id = ? AND w.network = 'solana' AND w.status = 'active'
+    WHERE w.business_id = ? AND w.network = 'solana' AND w.status = 'active' AND w.purpose = 'operating'
   `).bind(agent.business_id).all<BalanceRow>();
 
   const eligibleRows = (balances.results ?? []).filter((row) => {
