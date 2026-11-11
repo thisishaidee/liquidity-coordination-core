@@ -1,8 +1,12 @@
-# Liquidity Coordination Core
+# NERITH
 
-API-first infrastructure for coordinating authorized liquidity across AI agents.
+**Liquidity coordination for autonomous agents.**
+
+NERITH is an API-first infrastructure layer that anticipates agent funding needs, coordinates authorized liquidity across business wallets, and prepares asset conversions when a task requires them. It helps autonomous systems get the right assets in the right place before work is blocked.
 
 **Current milestone:** Cloudflare Workers + D1, initially Solana and six-decimal USDC accounting.
+
+NERITH keeps business custody in the business's hands. Agents use scoped API credentials; wallet signing remains with the business-controlled signer. The platform coordinates liquidity and prepares transactions, but does not hold private keys or autonomously move funds.
 
 ## Current API
 
