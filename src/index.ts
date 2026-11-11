@@ -906,7 +906,7 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
   }>();
   if (!reservation) return json({ error: "source_reservation_not_found" }, 409);
 
-  let effectiveStatus = swapStatus;
+  let effectiveStatus: "finalized" | "failed" | "unverified" | "shortfall" = swapStatus;
   let outputAtoms = 0n;
   let settlementNote: string | null = null;
 
