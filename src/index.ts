@@ -1486,10 +1486,6 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
       const keyIndex = keys.findIndex((entry) =>
         (typeof entry === "string" ? entry : entry.pubkey) === wallet.address
       );
-      const keys = transaction.transaction?.message?.accountKeys ?? [];
-      const keyIndex = keys.findIndex((entry) =>
-        (typeof entry === "string" ? entry : entry.pubkey) === wallet.address
-      );
       const preLamports = transaction.meta.preBalances?.[keyIndex];
       const postLamports = transaction.meta.postBalances?.[keyIndex];
       const feeLamports = BigInt(transaction.meta.fee ?? 0);
