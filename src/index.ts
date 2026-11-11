@@ -2212,13 +2212,24 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") {
-      return json({
-        service: "liquidity-coordination-api",
-        status: "ok",
-        version: "0.3.0",
-        dashboard: true,
-        telegramConfigured: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_WEBHOOK_SECRET)
-      });
+      try {
+        const database = await env.DB.prepare("SELECT 1 AS ok").first<{ ok: number }>();
+        if (database?.ok !== 1) throw new Error("D1 health query returned no result");
+        return json({
+          service: "liquidity-coordination-api",
+          status: "ok",
+          version: "0.3.0",
+          database: "connected",
+          dashboard: Boolean(env.ASSETS),
+          telegramConfigured: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_WEBHOOK_SECRET)
+        });
+      } catch {
+        return json({
+          service: "liquidity-coordination-api",
+          status: "degraded",
+          database: "unavailable"
+        }, 503);
+      }
     }
     if (request.method === "POST" && url.pathname === "/v1/admin/bootstrap") return bootstrapBusiness(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/agents") return provisionAgent(request, env);
