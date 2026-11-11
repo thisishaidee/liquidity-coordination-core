@@ -11,3 +11,14 @@ migrations_dir = "migrations"
 
 [triggers]
 crons = ["*/1 * * * *"]
+
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 0.1
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.01

@@ -51,10 +51,10 @@ async function sha256(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function constantTimeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let difference = 0;
-  for (let i = 0; i < a.length; i++) difference |= a.charCodeAt(i) ^ b.charCodeAt(i);
+async function constantTimeEqual(a: string, b: string): Promise<boolean> {
+  const [left, right] = await Promise.all([sha256(a), sha256(b)]);
+  let difference = a.length ^ b.length;
+  for (let i = 0; i < 64; i++) difference |= left.charCodeAt(i) ^ right.charCodeAt(i);
   return difference === 0;
 }
 
@@ -62,7 +62,7 @@ async function isAdmin(request: Request, env: Env): Promise<boolean> {
   const configured = env.ADMIN_BOOTSTRAP_TOKEN;
   const supplied = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
   if (!configured || !supplied) return false;
-  return constantTimeEqual(await sha256(configured), await sha256(supplied));
+  return constantTimeEqual(configured, supplied);
 }
 
 async function authenticate(request: Request, db: D1Database): Promise<AgentRow | null> {
@@ -201,7 +201,7 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      `NERITH · ${connection.business_name}\n\n/status — business overview\n/liquidity — available and reserved operating balances\n/forecast — upcoming planned obligations\n/agents — connected agent status\n/operations — recent liquidity operations\n/disconnect — disconnect this Telegram chat\n\nThis bot is read-only. It cannot sign transactions or authorize spending.`
+      `NERITH · ${connection.business_name}\n\n/status  Business overview\n/liquidity  Available and reserved balances\n/forecast  Upcoming planned obligations\n/agents  Agent status\n/operations  Recent liquidity activity\n/disconnect  Disconnect this chat\n\nThis bot is read-only. It cannot sign transactions or authorize spending.`
     );
     return;
   }
@@ -243,7 +243,7 @@ async function handleTelegramCommand(
     });
     const body = command === "/status"
       ? `NERITH · ${connection.business_name}\n\nAgents: ${agents?.active ?? 0}/${agents?.total ?? 0} active\nOpen operations: ${operations?.pending ?? 0}\n\nOperating liquidity:\n${balanceLines.length ? balanceLines.join("\n") : "No operating balance snapshots are available."}\n\nUse /forecast for upcoming obligations.`
-      : `Operating liquidity · ${connection.business_name}\n\n${balanceLines.length ? balanceLines.join("\n") : "No operating balance snapshots are available."}\n\nAvailable = confirmed balance minus internal reservations. Snapshots can be stale; check the observation status before acting.`;
+      : `Operating liquidity · ${connection.business_name}\n\n${balanceLines.length ? balanceLines.join("\n") : "No operating balance snapshots are available."}\n\nAvailable liquidity is the confirmed balance after internal reservations are deducted.\nBalance snapshots can become outdated. Check freshness before acting.`;
     await sendTelegramMessage(env, chatId, body);
     return;
   }
@@ -279,7 +279,7 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      `Agents · ${connection.business_name}\n\n${agents.length ? agents.map((agent) => `• ${agent.name} — ${agent.status}`).join("\n") : "No agents have been provisioned."}`
+      `Agents · ${connection.business_name}\n\n${agents.length ? agents.map((agent) => `• ${agent.name} · ${agent.status === "active" ? "Active" : "Disabled"}`).join("\n") : "No agents have been provisioned."}`
     );
     return;
   }
@@ -374,7 +374,7 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
 async function telegramWebhook(request: Request, env: Env): Promise<Response> {
   const secret = env.TELEGRAM_WEBHOOK_SECRET;
   const supplied = request.headers.get("x-telegram-bot-api-secret-token") ?? "";
-  if (!secret || !constantTimeEqual(secret, supplied)) return json({ error: "unauthorized" }, 401);
+  if (!secret || !(await constantTimeEqual(secret, supplied))) return json({ error: "unauthorized" }, 401);
 
   const update = await readJson(request);
   if (!update) return json({ error: "invalid_update" }, 400);
@@ -618,6 +618,55 @@ async function registerWallet(request: Request, env: Env): Promise<Response> {
   return json({ walletId, businessId, agentId: scope === "agent" ? agentId : null, network, address, scope, purpose }, 201);
 }
 
+
+async function listBusinessWallets(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const url = new URL(request.url);
+  const businessId = url.searchParams.get("businessId");
+  if (!businessId) return json({ error: "business_id_required" }, 400);
+  const business = await env.DB.prepare("SELECT id FROM businesses WHERE id = ?")
+    .bind(businessId).first<{ id: string }>();
+  if (!business) return json({ error: "business_not_found" }, 404);
+  const rows = await env.DB.prepare(`
+    SELECT w.id, w.address, w.network, w.scope, w.purpose, w.status,
+           b.token, b.confirmed_atoms, b.reserved_atoms, b.observed_at, b.source
+    FROM wallets w
+    LEFT JOIN wallet_balances b ON b.wallet_id = w.id
+    WHERE w.business_id = ?
+    ORDER BY w.status ASC, w.purpose ASC, w.address ASC, b.token ASC
+  `).bind(businessId).all<{
+    id: string; address: string; network: string; scope: string; purpose: string; status: string;
+    token: string | null; confirmed_atoms: string | null; reserved_atoms: string | null;
+    observed_at: string | null; source: string | null;
+  }>();
+  const wallets = new Map<string, {
+    walletId: string; address: string; network: string; scope: string; purpose: string; status: string;
+    balances: Array<{ token: string; confirmed: string; reserved: string; available: string; observedAt: string; source: string; fresh: boolean }>;
+  }>();
+  for (const row of rows.results ?? []) {
+    if (!wallets.has(row.id)) wallets.set(row.id, {
+      walletId: row.id, address: row.address, network: row.network, scope: row.scope,
+      purpose: row.purpose, status: row.status, balances: []
+    });
+    if (row.token && row.confirmed_atoms !== null && row.reserved_atoms !== null && row.observed_at && row.source) {
+      const decimals = row.token === "SOL" ? 9 : 6;
+      const confirmed = BigInt(row.confirmed_atoms);
+      const reserved = BigInt(row.reserved_atoms);
+      const ageMs = Date.now() - Date.parse(row.observed_at);
+      wallets.get(row.id)!.balances.push({
+        token: row.token,
+        confirmed: formatTokenAmount(confirmed, decimals),
+        reserved: formatTokenAmount(reserved, decimals),
+        available: formatTokenAmount(confirmed > reserved ? confirmed - reserved : 0n, decimals),
+        observedAt: row.observed_at,
+        source: row.source,
+        fresh: Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= 5 * 60 * 1000
+      });
+    }
+  }
+  return json({ businessId, wallets: [...wallets.values()] });
+}
+
 async function upsertBalanceSnapshot(request: Request, env: Env): Promise<Response> {
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
   const body = await readJson(request);
@@ -681,12 +730,17 @@ async function solanaRpc<T>(rpcUrl: string, method: string, params: unknown[]): 
 
 async function syncSolanaBalances(request: Request, env: Env): Promise<Response> {
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const body = await readJson(request);
+  if (!body || typeof body.businessId !== "string") return json({ error: "business_id_required" }, 400);
+  const business = await env.DB.prepare("SELECT id FROM businesses WHERE id = ?")
+    .bind(body.businessId).first<{ id: string }>();
+  if (!business) return json({ error: "business_not_found" }, 404);
   const rpcUrl = env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
   const usdcMint = env.SOLANA_USDC_MINT || "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
   const wallets = await env.DB.prepare(
-    "SELECT id, address FROM wallets WHERE network = 'solana' AND status = 'active'"
-  ).all<{ id: string; address: string }>();
+    "SELECT id, address FROM wallets WHERE business_id = ? AND network = 'solana' AND status = 'active'"
+  ).bind(body.businessId).all<{ id: string; address: string }>();
 
   const synced: Array<{ walletId: string; address: string; usdc: string; sol: string }> = [];
   const errors: Array<{ walletId: string; error: string }> = [];
@@ -743,6 +797,7 @@ async function syncSolanaBalances(request: Request, env: Env): Promise<Response>
   }
 
   return json({
+    businessId: body.businessId,
     source: "solana_rpc",
     commitment: "confirmed",
     synced,
@@ -2486,6 +2541,7 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/admin/telegram/setup") return configureTelegramWebhook(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/telegram/link-codes") return createTelegramLinkCode(request, env);
     if (request.method === "POST" && url.pathname === "/v1/telegram/webhook") return telegramWebhook(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/admin/wallets") return listBusinessWallets(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/wallets") return registerWallet(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/balances") return upsertBalanceSnapshot(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/balances/sync") return syncSolanaBalances(request, env);
