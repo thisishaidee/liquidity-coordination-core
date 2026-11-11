@@ -139,7 +139,7 @@ async function createTelegramLinkCode(request: Request, env: Env): Promise<Respo
     linkId,
     code,
     expiresAt,
-    deepLink: `https://t.me/${env.TELEGRAM_BOT_USERNAME}?start=${code}`,
+    deepLink: `https://t.me/${env.TELEGRAM_BOT_USERNAME.replace(/^@/, "")}?start=${code}`,
     instruction: "Open the bot link from the Telegram account that should receive business alerts. This code works once and expires in 15 minutes."
   }, 201);
 }
