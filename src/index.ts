@@ -1439,8 +1439,13 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
     return acc;
   }, { covered: 0, conversionRequired: 0, blocked: 0, totalShortfallAtoms: 0n });
 
+  const balanceDataFresh = wallets.size > 0 &&
+    [...wallets.values()].every((wallet) => wallet.usdcFresh && wallet.solFresh);
+
   return {
     windowDays: 30,
+    balanceDataFresh,
+    walletsObserved: wallets.size,
     obligations: forecast,
     summary: {
       planned: forecast.length,
@@ -1449,7 +1454,7 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
       blocked: summary.blocked,
       totalShortfallUSDC: formatTokenAmount(summary.totalShortfallAtoms, 6)
     },
-    note: "Forecasts simulate one-wallet allocation per obligation. Conversion availability is indicative until a live Swap.io quote is obtained; no future funds are reserved."
+    note: "Forecasts simulate one-wallet allocation per obligation. Conversion availability is indicative until a live Swap.io quote is obtained; no future funds are reserved. Refresh any stale wallet snapshots before relying on the projection."
   };
 }
 
