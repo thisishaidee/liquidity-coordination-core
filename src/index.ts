@@ -1844,9 +1844,9 @@ async function getOperation(request: Request, env: Env, operationId: string): Pr
   `).bind(operationId, agent.id).first<Record<string, string>>();
   if (!operation) return json({ error: "operation_not_found" }, 404);
 
-  const reservation = await env.DB.prepare(
-    "SELECT id, amount_atoms, status, expires_at, token FROM reservations WHERE operation_id = ? ORDER BY created_at DESC LIMIT 1"
-  ).bind(operationId).first<{ id: string; amount_atoms: string; status: string; expires_at: string; token: string }>();
+  const reservations = await env.DB.prepare(
+    "SELECT id, amount_atoms, status, expires_at, token FROM reservations WHERE operation_id = ? ORDER BY created_at ASC"
+  ).bind(operationId).all<{ id: string; amount_atoms: string; status: string; expires_at: string; token: string }>();
 
   return json({
     operationId: operation.id,
@@ -1866,13 +1866,13 @@ async function getOperation(request: Request, env: Env, operationId: string): Pr
       ? formatTokenAmount(BigInt(operation.received_output_atoms), 6)
       : null,
     settlementNote: operation.settlement_note ?? null,
-    reservation: reservation ? {
+    reservations: (reservations.results ?? []).map((reservation) => ({
       id: reservation.id,
       amount: formatTokenAmount(BigInt(reservation.amount_atoms), reservation.token === "SOL" ? 9 : 6),
       token: reservation.token,
       status: reservation.status,
       expiresAt: reservation.expires_at
-    } : null,
+    })),
     createdAt: operation.created_at
   });
 }
