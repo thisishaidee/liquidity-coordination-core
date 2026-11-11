@@ -39,11 +39,23 @@ describe("liquidity decisions", () => {
   it("detects a conversion path when an eligible alternative token exists", () => {
     const result = evaluateLiquidity("USDC", 10_000_000n, [
       { walletId: "w1", token: "USDC", availableAtoms: 2_000_000n, eligible: true },
-      { walletId: "w2", token: "SOL", availableAtoms: 500_000_000n, eligible: true }
+      { walletId: "w1", token: "SOL", availableAtoms: 500_000_000n, eligible: true }
     ]);
     expect(result.action).toBe("conversion_required");
     expect(result.shortfallAtoms).toBe(8_000_000n);
     expect(result.eligibleSourceTokens).toEqual(["SOL"]);
+    expect(result.sourceWalletId).toBe("w1");
+  });
+
+  it("does not combine USDC and SOL from different wallets", () => {
+    const result = evaluateLiquidity("USDC", 10_000_000n, [
+      { walletId: "w1", token: "USDC", availableAtoms: 2_000_000n, eligible: true },
+      { walletId: "w2", token: "SOL", availableAtoms: 500_000_000n, eligible: true }
+    ]);
+    expect(result.action).toBe("conversion_required");
+    expect(result.availableAtoms).toBe(0n);
+    expect(result.shortfallAtoms).toBe(10_000_000n);
+    expect(result.sourceWalletId).toBe("w2");
   });
 
   it("ignores unauthorized balances", () => {
