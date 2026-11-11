@@ -8,6 +8,7 @@ API-first infrastructure for coordinating authorized liquidity across AI agents.
 
 | Method | Route | Purpose |
 |---|---|---|
+| GET | `/` | Read-only browser dashboard |
 | GET | `/health` | Service health |
 | POST | `/v1/admin/bootstrap` | Create a business and its first agent |
 | POST | `/v1/admin/wallets` | Register an authorized Solana wallet |
@@ -218,6 +219,10 @@ const quoteResponse = await client.fetch("https://YOUR_API/v1/conversions/quote"
 
 The x402 client wallet must match the registered `api_payment` wallet and needs a fresh balance of at least 0.01 USDC for quote and build calls. Before preparing a transaction, compare the quote's minimum output with the `X-Liquidity-Required-USDC` response header; do not build a quote that cannot cover the task shortfall. That reserve is distinct from the operating wallet's SOL being converted. The build endpoint reserves the requested SOL amount before preparing the unsigned transaction. After the business-controlled signer broadcasts it, call `POST /v1/conversions/track` with the operation ID and Solana signature, then poll `GET /v1/conversions/status/:operationId`. The status handler checks Hermes status and independently verifies the finalized Solana transaction: the registered wallet must have spent the reserved SOL and received USDC. It marks the wallet snapshots stale after terminal settlement so they must be refreshed before further liquidity decisions. No paid API request has been made by this repository's implementation.
 
+## Browser dashboard
+
+The Worker serves a responsive read-only dashboard at `/`. Connect with an agent API key to inspect authorized operating-wallet balances and the agent's latest 50 operations. The key is held in page memory only and is not written to local or session storage. The dashboard cannot sign transactions, move funds, or change permissions.
+
 ## Telegram business alerts
 
 Telegram is an optional notification surface; the API remains the source of truth. V1 supports private-chat linking and notifications for liquidity shortfalls, reservations, releases, expiries and conversion settlement. It does not approve or sign transactions in Telegram.
@@ -251,9 +256,8 @@ Send the returned deep link privately to the authorized business user. The link 
 
 ## Next milestones
 
-1. Trusted on-chain balance observer for Solana.
-2. Reservation expiry worker and reconciliation.
-3. Swap.io x402 quote/build integration with explicit API-payment reserve.
-4. Approval policy and isolated signer integration.
-5. Telegram notifications and secure approval actions.
-6. Business dashboard and audit history.
+1. Business-level authentication, scoped admin roles and agent key rotation.
+2. Approval policies and isolated wallet signer integration.
+3. Multi-wallet split reservations and direct task-completion reconciliation.
+4. Quote schema validation and automated minimum-output selection.
+5. More robust monitoring, rate limits and integration tests.
