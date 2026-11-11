@@ -26,6 +26,7 @@ type BalanceRow = {
   wallet_scope: string;
   wallet_agent_id: string | null;
   wallet_status: string;
+  observed_at: string;
 };
 
 const json = (data: unknown, status = 200) =>
@@ -159,6 +160,55 @@ async function registerWallet(request: Request, env: Env): Promise<Response> {
   return json({ walletId, businessId, agentId: scope === "agent" ? agentId : null, network, address, scope }, 201);
 }
 
+async function upsertBalanceSnapshot(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const body = await readJson(request);
+  if (!body) return json({ error: "invalid_json" }, 400);
+
+  const { walletId, token, amount } = body;
+  if (
+    typeof walletId !== "string" ||
+    (token !== "USDC" && token !== "SOL") ||
+    typeof amount !== "string" ||
+    !/^(0|[1-9]\\d*)(\\.\\d+)?$/.test(amount)
+  ) {
+    return json({ error: "invalid_request", message: "Provide walletId, token=USDC|SOL and a non-negative decimal amount." }, 400);
+  }
+
+  const decimals = token === "USDC" ? 6 : 9;
+  let atoms: bigint;
+  try {
+    atoms = amount === "0" ? 0n : parseTokenAmount(amount, decimals);
+  } catch (error) {
+    return json({ error: "invalid_amount", message: error instanceof Error ? error.message : "Invalid amount" }, 400);
+  }
+
+  const wallet = await env.DB.prepare(
+    "SELECT id FROM wallets WHERE id = ? AND network = 'solana' AND status = 'active'"
+  ).bind(walletId).first<{ id: string }>();
+  if (!wallet) return json({ error: "wallet_not_found" }, 404);
+
+  const balanceId = "bal_" + crypto.randomUUID().replaceAll("-", "");
+  await env.DB.prepare(`
+    INSERT INTO wallet_balances (id, wallet_id, token, confirmed_atoms, reserved_atoms, observed_at, source)
+    VALUES (?, ?, ?, ?, '0', datetime('now'), 'manual_admin')
+    ON CONFLICT(wallet_id, token) DO UPDATE SET
+      confirmed_atoms = excluded.confirmed_atoms,
+      observed_at = excluded.observed_at,
+      source = 'manual_admin'
+  `).bind(balanceId, walletId, token, atoms.toString()).run();
+
+  return json({
+    walletId,
+    token,
+    amount,
+    decimals,
+    source: "manual_admin",
+    observedAt: new Date().toISOString(),
+    warning: "This is an operator-entered snapshot for controlled testing, not a live on-chain balance."
+  }, 201);
+}
+
 async function createLiquidityRequest(request: Request, env: Env): Promise<Response> {
   const agent = await authenticate(request, env.DB);
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
@@ -190,17 +240,21 @@ async function createLiquidityRequest(request: Request, env: Env): Promise<Respo
 
   const balances = await env.DB.prepare(`
     SELECT b.id AS balance_id, w.id AS wallet_id, b.token, b.confirmed_atoms,
-           b.reserved_atoms, w.scope AS wallet_scope, w.agent_id AS wallet_agent_id,
+           b.reserved_atoms, b.observed_at, w.scope AS wallet_scope, w.agent_id AS wallet_agent_id,
            w.status AS wallet_status
     FROM wallet_balances b
     JOIN wallets w ON w.id = b.wallet_id
     WHERE w.business_id = ? AND w.network = 'solana' AND w.status = 'active'
   `).bind(agent.business_id).all<BalanceRow>();
 
-  const eligibleRows = (balances.results ?? []).filter((row) =>
-    (row.wallet_scope === "agent" && row.wallet_agent_id === agent.id) ||
-    (row.wallet_scope === "business" && agent.can_use_business_treasury === 1)
-  );
+  const eligibleRows = (balances.results ?? []).filter((row) => {
+    const ageMs = Date.now() - Date.parse(row.observed_at);
+    const fresh = Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= 5 * 60 * 1000;
+    const authorized =
+      (row.wallet_scope === "agent" && row.wallet_agent_id === agent.id) ||
+      (row.wallet_scope === "business" && agent.can_use_business_treasury === 1);
+    return fresh && authorized;
+  });
 
   const evaluated = eligibleRows.map((row) => {
     const confirmed = BigInt(row.confirmed_atoms);
@@ -405,6 +459,7 @@ export default {
     }
     if (request.method === "POST" && url.pathname === "/v1/admin/bootstrap") return bootstrapBusiness(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/wallets") return registerWallet(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/admin/balances") return upsertBalanceSnapshot(request, env);
     if (request.method === "POST" && url.pathname === "/v1/liquidity/requests") return createLiquidityRequest(request, env);
     const releaseMatch = url.pathname.match(/^\/v1\/operations\/([a-zA-Z0-9_-]+)\/release$/);
     if (request.method === "POST" && releaseMatch) return releaseOperation(request, env, releaseMatch[1]);
