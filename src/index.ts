@@ -8,6 +8,8 @@ import {
 interface Env {
   DB: D1Database;
   ADMIN_BOOTSTRAP_TOKEN?: string;
+  SOLANA_RPC_URL?: string;
+  SOLANA_USDC_MINT?: string;
 }
 
 type AgentRow = {
@@ -207,6 +209,90 @@ async function upsertBalanceSnapshot(request: Request, env: Env): Promise<Respon
     observedAt: new Date().toISOString(),
     warning: "This is an operator-entered snapshot for controlled testing, not a live on-chain balance."
   }, 201);
+}
+
+async function solanaRpc<T>(rpcUrl: string, method: string, params: unknown[]): Promise<T> {
+  const response = await fetch(rpcUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })
+  });
+  if (!response.ok) throw new Error(`Solana RPC HTTP ${response.status}`);
+  const payload = await response.json() as { result?: T; error?: { message?: string } };
+  if (payload.error || payload.result === undefined) throw new Error(payload.error?.message ?? "Solana RPC returned no result");
+  return payload.result;
+}
+
+async function syncSolanaBalances(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const rpcUrl = env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
+  const usdcMint = env.SOLANA_USDC_MINT || "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+  const wallets = await env.DB.prepare(
+    "SELECT id, address FROM wallets WHERE network = 'solana' AND status = 'active'"
+  ).all<{ id: string; address: string }>();
+
+  const synced: Array<{ walletId: string; address: string; usdc: string; sol: string }> = [];
+  const errors: Array<{ walletId: string; error: string }> = [];
+
+  for (const wallet of wallets.results ?? []) {
+    try {
+      const [solResult, tokenResult] = await Promise.all([
+        solanaRpc<{ value: number }>(rpcUrl, "getBalance", [wallet.address, { commitment: "confirmed" }]),
+        solanaRpc<{ value: Array<{ account: { data: { parsed?: { info?: { tokenAmount?: { amount?: string } } } } } }> }>(
+          rpcUrl,
+          "getTokenAccountsByOwner",
+          [wallet.address, { mint: usdcMint }, { encoding: "jsonParsed", commitment: "confirmed" }]
+        )
+      ]);
+
+      const usdcAtoms = tokenResult.value.reduce((sum, account) => {
+        const raw = account.account.data.parsed?.info?.tokenAmount?.amount ?? "0";
+        return sum + BigInt(raw);
+      }, 0n);
+      const solLamports = BigInt(solResult.value);
+      const balanceId = "bal_" + crypto.randomUUID().replaceAll("-", "");
+
+      await env.DB.batch([
+        env.DB.prepare(`
+          INSERT INTO wallet_balances (id, wallet_id, token, confirmed_atoms, reserved_atoms, observed_at, source)
+          VALUES (?, ?, 'USDC', ?, '0', datetime('now'), 'solana_rpc')
+          ON CONFLICT(wallet_id, token) DO UPDATE SET
+            confirmed_atoms = excluded.confirmed_atoms,
+            observed_at = excluded.observed_at,
+            source = 'solana_rpc'
+        `).bind(balanceId, wallet.id, usdcAtoms.toString()),
+        env.DB.prepare(`
+          INSERT INTO wallet_balances (id, wallet_id, token, confirmed_atoms, reserved_atoms, observed_at, source)
+          VALUES (?, ?, 'SOL', ?, '0', datetime('now'), 'solana_rpc')
+          ON CONFLICT(wallet_id, token) DO UPDATE SET
+            confirmed_atoms = excluded.confirmed_atoms,
+            observed_at = excluded.observed_at,
+            source = 'solana_rpc'
+        `).bind("bal_" + crypto.randomUUID().replaceAll("-", ""), wallet.id, solLamports.toString())
+      ]);
+
+      synced.push({
+        walletId: wallet.id,
+        address: wallet.address,
+        usdc: formatTokenAmount(usdcAtoms, 6),
+        sol: formatTokenAmount(solLamports, 9)
+      });
+    } catch (error) {
+      errors.push({
+        walletId: wallet.id,
+        error: error instanceof Error ? error.message : "Balance sync failed"
+      });
+    }
+  }
+
+  return json({
+    source: "solana_rpc",
+    commitment: "confirmed",
+    synced,
+    errors,
+    observedAt: new Date().toISOString()
+  }, errors.length && !synced.length ? 502 : 200);
 }
 
 async function createLiquidityRequest(request: Request, env: Env): Promise<Response> {
@@ -515,6 +601,7 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/admin/bootstrap") return bootstrapBusiness(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/wallets") return registerWallet(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/balances") return upsertBalanceSnapshot(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/admin/balances/sync") return syncSolanaBalances(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/reservations/expire") return expireReservationsAdmin(request, env);
     if (request.method === "POST" && url.pathname === "/v1/liquidity/requests") return createLiquidityRequest(request, env);
     const releaseMatch = url.pathname.match(/^\/v1\/operations\/([a-zA-Z0-9_-]+)\/release$/);
