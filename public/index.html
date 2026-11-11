@@ -173,7 +173,7 @@
         const items = operations.operations || [];
         const obligations = forecast.obligations || [];
         $("walletCount").textContent = new Set(balances.map((x) => x.walletId)).size;
-        $("openCount").textContent = items.filter((x) => !["released","expired","conversion_failed","conversion_settled","conversion_unverified","conversion_settled_shortfall"].includes(x.status)).length;
+        $("openCount").textContent = items.filter((x) => !["released","expired","completed","conversion_failed","conversion_settled","conversion_unverified","conversion_settled_shortfall"].includes(x.status)).length;
         $("conversionCount").textContent = items.filter((x) => ["awaiting_conversion","preparing_conversion","conversion_submitted"].includes(x.status)).length;
         $("forecastShortfall").textContent = money(forecast.businessSummary?.totalShortfallUSDC || "0", "USDC");
         $("forecastFreshness").textContent = forecast.businessBalanceDataFresh ? "Business wallet snapshots fresh" : "Some business wallet snapshots stale or missing";
