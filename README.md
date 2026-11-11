@@ -107,6 +107,25 @@ curl -X POST http://localhost:8787/v1/admin/wallets \
 
 Business-scope wallets omit `agentId`. An agent can use a business operating wallet only when `canUseBusinessTreasury` was explicitly enabled at provisioning. Register a separate business-scope wallet with `"purpose": "api_payment"` for the x402 USDC payment reserve; API-payment wallets are excluded from operating liquidity calculations.
 
+### Register the dedicated x402 payment wallet
+
+Use a separate business wallet for API fees. Do not register this wallet as an operating wallet.
+
+```bash
+curl -X POST http://localhost:8787/v1/admin/wallets \
+  -H "Authorization: Bearer YOUR_ADMIN_BOOTSTRAP_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "businessId": "biz_...",
+    "scope": "business",
+    "purpose": "api_payment",
+    "network": "solana",
+    "address": "X402_PAYMENT_WALLET_ADDRESS"
+  }'
+```
+
+After funding it with USDC, sync balances. Conversion quote/build requests require this dedicated wallet to have a fresh balance of at least 0.01 USDC.
+
 ## Record a test balance snapshot
 
 This admin-only endpoint is for controlled development/testing. It does not verify the wallet's on-chain balance.
@@ -195,7 +214,7 @@ const quoteResponse = await client.fetch("https://YOUR_API/v1/conversions/quote"
 });
 ```
 
-The x402 client wallet must match the registered `api_payment` wallet and needs a fresh balance of at least 0.01 USDC for quote and build calls. That reserve is distinct from the operating wallet's SOL being converted. The build endpoint reserves the requested SOL amount before preparing the unsigned transaction. After the business-controlled signer broadcasts it, call `POST /v1/conversions/track` with the operation ID and Solana signature, then poll `GET /v1/conversions/status/:operationId`. The status handler checks Hermes status and independently verifies the finalized Solana transaction: the registered wallet must have spent the reserved SOL and received USDC. It marks the wallet snapshots stale after terminal settlement so they must be refreshed before further liquidity decisions. No paid API request has been made by this repository's implementation.
+The x402 client wallet must match the registered `api_payment` wallet and needs a fresh balance of at least 0.01 USDC for quote and build calls. Before preparing a transaction, compare the quote's minimum output with the `X-Liquidity-Required-USDC` response header; do not build a quote that cannot cover the task shortfall. That reserve is distinct from the operating wallet's SOL being converted. The build endpoint reserves the requested SOL amount before preparing the unsigned transaction. After the business-controlled signer broadcasts it, call `POST /v1/conversions/track` with the operation ID and Solana signature, then poll `GET /v1/conversions/status/:operationId`. The status handler checks Hermes status and independently verifies the finalized Solana transaction: the registered wallet must have spent the reserved SOL and received USDC. It marks the wallet snapshots stale after terminal settlement so they must be refreshed before further liquidity decisions. No paid API request has been made by this repository's implementation.
 
 ## Next milestones
 
