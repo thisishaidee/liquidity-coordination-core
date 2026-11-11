@@ -1462,6 +1462,8 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
   );
   const balanceDataFresh = relevantWallets.length > 0 &&
     relevantWallets.every((wallet) => wallet.usdcFresh && wallet.solFresh);
+  const businessBalanceDataFresh = wallets.size > 0 &&
+    [...wallets.values()].every((wallet) => wallet.usdcFresh && wallet.solFresh);
 
   const toSummary = (summary: ReturnType<typeof summarize>) => ({
     planned: summary.covered + summary.conversionRequired + summary.blocked,
@@ -1474,6 +1476,7 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
   return {
     windowDays: 30,
     balanceDataFresh,
+    businessBalanceDataFresh,
     walletsObserved: relevantWallets.length,
     obligations: ownForecast.map(({ agentId: _agentId, ...item }) => item),
     summary: toSummary(ownSummary),
