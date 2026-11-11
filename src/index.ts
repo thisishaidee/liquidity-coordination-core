@@ -161,17 +161,19 @@ async function readJson(request: Request): Promise<Record<string, unknown> | nul
   }
 }
 
-async function sendTelegramMessage(env: Env, chatId: string, text: string): Promise<boolean> {
+async function sendTelegramMessage(env: Env, chatId: string, text: string, replyMarkup?: Record<string, unknown>): Promise<boolean> {
   if (!env.TELEGRAM_BOT_TOKEN) return false;
   try {
+    const payload: Record<string, unknown> = {
+      chat_id: chatId,
+      text: text.length > 3900 ? text.slice(0, 3880) + "\n… message truncated" : text,
+      disable_web_page_preview: true
+    };
+    if (replyMarkup) payload.reply_markup = replyMarkup;
     const response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: text.length > 3900 ? text.slice(0, 3880) + "\n… message truncated" : text,
-        disable_web_page_preview: true
-      })
+      body: JSON.stringify(payload)
     });
     const result = await response.json() as { ok?: boolean };
     return response.ok && result.ok === true;
@@ -311,13 +313,13 @@ async function handleTelegramCommand(
   }
 
   const connection = await env.DB.prepare(`
-    SELECT c.business_id, b.name AS business_name
+    SELECT c.business_id, c.permission, b.name AS business_name
     FROM telegram_connections c
     JOIN businesses b ON b.id = c.business_id
     WHERE c.chat_id = ? AND c.telegram_user_id = ? AND c.status = 'active'
     ORDER BY c.linked_at DESC
     LIMIT 1
-  `).bind(chatId, userId).first<{ business_id: string; business_name: string }>();
+  `).bind(chatId, userId).first<{ business_id: string; business_name: string; permission: string }>();
 
   if (!connection) {
     await sendTelegramMessage(
@@ -333,7 +335,7 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      `NERITH · ${connection.business_name}\n\n/status  Business overview\n/liquidity  Available and reserved balances\n/forecast  Upcoming planned obligations\n/agents  Agent status\n/operations  Recent liquidity activity\n/disconnect  Disconnect this chat\n\nThis bot is read-only. It cannot sign transactions or authorize spending.`
+      `NERITH · ${connection.business_name}\n\n/status  Business overview\n/liquidity  Available and reserved balances\n/forecast  Upcoming planned obligations\n/agents  Agent status\n/operations  Recent liquidity activity\n/requests  Review prepared liquidity requests\n/disconnect  Disconnect this chat\n\nApprovals record a business decision only. This bot cannot sign or broadcast transactions.`
     );
     return;
   }
@@ -416,6 +418,12 @@ async function handleTelegramCommand(
     return;
   }
 
+
+  if (command === "/requests") {
+    await listTelegramRequests(env, chatId, userId, businessId, connection.business_name, connection.permission);
+    return;
+  }
+
   if (command === "/operations") {
     const rows = await env.DB.prepare(`
       SELECT a.name AS agent_name, o.task_id, o.token, o.amount_atoms, o.status, o.action, o.created_at
@@ -435,6 +443,173 @@ async function handleTelegramCommand(
   }
 
   await sendTelegramMessage(env, chatId, "I don't recognise that command. Send /help to see available commands.");
+}
+
+
+async function telegramOperationSnapshot(env: Env, operationId: string, businessId: string) {
+  const operation = await env.DB.prepare(
+    "SELECT o.id, o.business_id, o.agent_id, o.task_id, o.network, o.token, o.amount_atoms, o.purpose, o.status, o.action, o.source_wallet_id, o.created_at, a.name AS agent_name FROM operations o JOIN agents a ON a.id = o.agent_id WHERE o.id = ? AND o.business_id = ? LIMIT 1"
+  ).bind(operationId, businessId).first<{
+    id: string; business_id: string; agent_id: string; task_id: string;
+    network: string; token: string; amount_atoms: string; purpose: string;
+    status: string; action: string; source_wallet_id: string | null;
+    created_at: string; agent_name: string;
+  }>();
+  if (!operation) return null;
+  const reservations = await env.DB.prepare(
+    "SELECT id, wallet_balance_id, amount_atoms, status, expires_at FROM reservations WHERE operation_id = ? ORDER BY id ASC"
+  ).bind(operationId).all<{
+    id: string; wallet_balance_id: string; amount_atoms: string; status: string; expires_at: string;
+  }>();
+  const activeReservations = reservations.results ?? [];
+  const snapshot = {
+    id: operation.id,
+    businessId: operation.business_id,
+    agentId: operation.agent_id,
+    taskId: operation.task_id,
+    network: operation.network,
+    token: operation.token,
+    amountAtoms: operation.amount_atoms,
+    purpose: operation.purpose,
+    status: operation.status,
+    action: operation.action,
+    sourceWalletId: operation.source_wallet_id,
+    createdAt: operation.created_at,
+    reservations: activeReservations.map(item => ({
+      id: item.id, walletBalanceId: item.wallet_balance_id,
+      amountAtoms: item.amount_atoms, status: item.status, expiresAt: item.expires_at
+    }))
+  };
+  return { operation, reservations: activeReservations, snapshot, snapshotHash: await sha256(JSON.stringify(snapshot)) };
+}
+
+async function listTelegramRequests(env: Env, chatId: string, userId: string, businessId: string, businessName: string, permission: string): Promise<void> {
+  const rows = await env.DB.prepare(
+    "SELECT id FROM operations WHERE business_id = ? AND status = 'reserved' AND action = 'direct_fulfillment' ORDER BY created_at ASC LIMIT 10"
+  ).bind(businessId).all<{ id: string }>();
+  const eligible = [];
+  for (const row of rows.results ?? []) {
+    const details = await telegramOperationSnapshot(env, row.id, businessId);
+    if (!details || !details.reservations.some(item => item.status === "active" && Date.parse(item.expires_at) > Date.now())) continue;
+    const existing = await env.DB.prepare(
+      "SELECT decision FROM telegram_operation_approvals WHERE operation_id = ? LIMIT 1"
+    ).bind(row.id).first<{ decision: string }>();
+    if (!existing) eligible.push(details);
+  }
+  if (!eligible.length) {
+    await sendTelegramMessage(env, chatId, "There are no active, prepared liquidity requests waiting for a decision.");
+    return;
+  }
+  for (const details of eligible.slice(0, 5)) {
+    const op = details.operation;
+    const amount = formatTokenAmount(BigInt(op.amount_atoms), op.token === "SOL" ? 9 : 6);
+    const expiry = details.reservations.map(item => item.expires_at).sort()[0];
+    const lines = [
+      "Prepared liquidity request",
+      "",
+      "Business: " + businessName,
+      "Agent: " + op.agent_name,
+      "Task: " + op.task_id,
+      "Amount: " + amount + " " + op.token,
+      "Network: " + op.network,
+      "Purpose: " + op.purpose,
+      "Reservation expires: " + expiry,
+      "Operation: " + op.id,
+      "",
+      "This records a business decision only. It does not sign, broadcast or transfer funds."
+    ];
+    let markup: Record<string, unknown> | undefined;
+    if (permission === "approver") {
+      const approveToken = newSecret("").slice(0, 48);
+      const rejectToken = newSecret("").slice(0, 48);
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO telegram_approval_actions (token_hash, business_id, operation_id, telegram_chat_id, telegram_user_id, decision, snapshot_hash, expires_at) VALUES (?, ?, ?, ?, ?, 'approved', ?, ?)")
+          .bind(await sha256(approveToken), businessId, op.id, chatId, userId, details.snapshotHash, expiresAt),
+        env.DB.prepare("INSERT INTO telegram_approval_actions (token_hash, business_id, operation_id, telegram_chat_id, telegram_user_id, decision, snapshot_hash, expires_at) VALUES (?, ?, ?, ?, ?, 'rejected', ?, ?)")
+          .bind(await sha256(rejectToken), businessId, op.id, chatId, userId, details.snapshotHash, expiresAt)
+      ]);
+      markup = { inline_keyboard: [[
+        { text: "Approve", callback_data: "na:" + approveToken },
+        { text: "Reject", callback_data: "nr:" + rejectToken }
+      ]] };
+    } else {
+      lines.push("", "Viewer access only. Ask the business administrator to grant approver permission.");
+    }
+    await sendTelegramMessage(env, chatId, lines.join("\n"), markup);
+  }
+}
+
+async function answerTelegramCallback(env: Env, callbackId: string, message: string): Promise<void> {
+  if (!env.TELEGRAM_BOT_TOKEN) return;
+  try {
+    await fetch("https://api.telegram.org/bot" + env.TELEGRAM_BOT_TOKEN + "/answerCallbackQuery", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ callback_query_id: callbackId, text: message, show_alert: false })
+    });
+  } catch {
+    // The durable database decision remains authoritative if Telegram acknowledgement fails.
+  }
+}
+
+async function handleTelegramApprovalCallback(env: Env, callback: {
+  id?: string;
+  data?: string;
+  from?: { id?: number | string };
+  message?: { chat?: { id?: number | string; type?: string } };
+}): Promise<void> {
+  const callbackId = callback.id ?? "";
+  const chatId = callback.message?.chat?.id === undefined ? "" : String(callback.message.chat.id);
+  const userId = callback.from?.id === undefined ? "" : String(callback.from.id);
+  const match = (callback.data ?? "").match(/^(na|nr):([a-f0-9]{48})$/i);
+  if (!callbackId || !chatId || !userId || callback.message?.chat?.type !== "private" || !match) {
+    if (callbackId) await answerTelegramCallback(env, callbackId, "This action is invalid.");
+    return;
+  }
+  const decision = match[1].toLowerCase() === "na" ? "approved" : "rejected";
+  const tokenHash = await sha256(match[2]);
+  const action = await env.DB.prepare(
+    "SELECT business_id, operation_id, telegram_chat_id, telegram_user_id, decision, snapshot_hash FROM telegram_approval_actions WHERE token_hash = ? AND decision = ? AND telegram_chat_id = ? AND telegram_user_id = ? AND consumed_at IS NULL AND julianday(expires_at) > julianday('now') LIMIT 1"
+  ).bind(tokenHash, decision, chatId, userId).first<{
+    business_id: string; operation_id: string; telegram_chat_id: string;
+    telegram_user_id: string; decision: string; snapshot_hash: string;
+  }>();
+  if (!action) {
+    await answerTelegramCallback(env, callbackId, "This action has expired or was already used.");
+    return;
+  }
+  const permission = await env.DB.prepare(
+    "SELECT id FROM telegram_connections WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? AND status = 'active' AND permission = 'approver' LIMIT 1"
+  ).bind(action.business_id, chatId, userId).first<{ id: string }>();
+  if (!permission) {
+    await answerTelegramCallback(env, callbackId, "Approver permission is no longer active.");
+    return;
+  }
+  const details = await telegramOperationSnapshot(env, action.operation_id, action.business_id);
+  const eligible = Boolean(details &&
+    details.operation.status === "reserved" &&
+    details.operation.action === "direct_fulfillment" &&
+    details.reservations.some(item => item.status === "active" && Date.parse(item.expires_at) > Date.now()));
+  if (!eligible || !details || details.snapshotHash !== action.snapshot_hash) {
+    await env.DB.prepare("UPDATE telegram_approval_actions SET consumed_at = datetime('now') WHERE token_hash = ? AND consumed_at IS NULL")
+      .bind(tokenHash).run();
+    await answerTelegramCallback(env, callbackId, "Request details or reservation changed. Run /requests again.");
+    return;
+  }
+  const inserted = await env.DB.prepare(
+    "INSERT OR IGNORE INTO telegram_operation_approvals (id, business_id, operation_id, decision, snapshot_hash, telegram_chat_id, telegram_user_id) SELECT ?, a.business_id, a.operation_id, a.decision, a.snapshot_hash, a.telegram_chat_id, a.telegram_user_id FROM telegram_approval_actions a WHERE a.token_hash = ? AND a.decision = ? AND a.consumed_at IS NULL AND julianday(a.expires_at) > julianday('now') AND EXISTS (SELECT 1 FROM telegram_connections c WHERE c.business_id = a.business_id AND c.chat_id = a.telegram_chat_id AND c.telegram_user_id = a.telegram_user_id AND c.status = 'active' AND c.permission = 'approver')"
+  ).bind("tap_" + crypto.randomUUID().replaceAll("-", ""), tokenHash, decision).run();
+  if ((inserted.meta?.changes ?? 0) !== 1) {
+    await answerTelegramCallback(env, callbackId, "A decision has already been recorded for this request.");
+    return;
+  }
+  await env.DB.prepare("UPDATE telegram_approval_actions SET consumed_at = datetime('now') WHERE business_id = ? AND operation_id = ? AND consumed_at IS NULL")
+    .bind(action.business_id, action.operation_id).run();
+  await answerTelegramCallback(env, callbackId, "Request " + decision + ".");
+  await sendTelegramMessage(env, chatId,
+    "Request " + decision + ". The decision is recorded against the exact reserved operation. No transaction was signed, broadcast or transferred."
+  );
 }
 
 async function sendTelegramTestAlert(request: Request, env: Env): Promise<Response> {
@@ -554,7 +729,7 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
       body: JSON.stringify({
         url: webhookUrl,
         secret_token: env.TELEGRAM_WEBHOOK_SECRET,
-        allowed_updates: ["message"]
+        allowed_updates: ["message", "callback_query"]
       })
     });
     const webhook = await webhookResponse.json() as { ok?: boolean; description?: string };
@@ -574,6 +749,7 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
           { command: "forecast", description: "Upcoming planned obligations" },
           { command: "agents", description: "Agent status" },
           { command: "operations", description: "Recent liquidity operations" },
+          { command: "requests", description: "Review prepared liquidity requests" },
           { command: "disconnect", description: "Disconnect this Telegram chat" }
         ]
       })
@@ -601,6 +777,16 @@ async function telegramWebhook(request: Request, env: Env): Promise<Response> {
 
   const update = await readJson(request);
   if (!update) return json({ error: "invalid_update" }, 400);
+  const callback = update.callback_query as {
+    id?: string;
+    data?: string;
+    from?: { id?: number | string };
+    message?: { chat?: { id?: number | string; type?: string } };
+  } | undefined;
+  if (callback) {
+    await handleTelegramApprovalCallback(env, callback);
+    return json({ ok: true });
+  }
   const message = update.message as {
     text?: string;
     chat?: { id?: number | string; type?: string };
