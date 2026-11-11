@@ -302,13 +302,14 @@ async function startTelegramLiquidityRequest(env: Env, chatId: string, userId: s
     await sendTelegramMessage(env, chatId, "There are no active agents in this workspace. Add or activate an agent before creating a request.");
     return;
   }
-  await env.DB.prepare("INSERT INTO telegram_request_drafts (business_id, chat_id, telegram_user_id, step, expires_at) VALUES (?, ?, ?, 'agent', datetime('now', '+15 minutes')) ON CONFLICT(business_id, chat_id, telegram_user_id) DO UPDATE SET agent_id = NULL, amount = NULL, purpose = NULL, task_id = NULL, step = 'agent', expires_at = datetime('now', '+15 minutes'), updated_at = datetime('now')").bind(businessId, chatId, userId).run();
+  const agentChoices = JSON.stringify(available.map(agent => agent.id));
+  await env.DB.prepare("INSERT INTO telegram_request_drafts (business_id, chat_id, telegram_user_id, step, agent_choices, expires_at) VALUES (?, ?, ?, 'agent', ?, datetime('now', '+15 minutes')) ON CONFLICT(business_id, chat_id, telegram_user_id) DO UPDATE SET agent_id = NULL, agent_choices = excluded.agent_choices, amount = NULL, purpose = NULL, task_id = NULL, step = 'agent', expires_at = datetime('now', '+15 minutes'), updated_at = datetime('now')").bind(businessId, chatId, userId, agentChoices).run();
   const choices = available.map((agent, index) => (index + 1) + ". " + agent.name).join("\n");
   await sendTelegramMessage(env, chatId, "New liquidity request · Step 1 of 3\n\nWhich agent needs the funds? Reply with its number:\n\n" + choices + "\n\nSend /cancel at any time to stop.");
 }
 
 async function continueTelegramLiquidityRequest(env: Env, chatId: string, userId: string, businessId: string, answer: string): Promise<boolean> {
-  const draft = await env.DB.prepare("SELECT step, agent_id, amount, purpose, expires_at FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? LIMIT 1").bind(businessId, chatId, userId).first<{ step: string; agent_id: string | null; amount: string | null; purpose: string | null; expires_at: string }>();
+  const draft = await env.DB.prepare("SELECT step, agent_id, agent_choices, amount, purpose, expires_at FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? LIMIT 1").bind(businessId, chatId, userId).first<{ step: string; agent_id: string | null; agent_choices: string; amount: string | null; purpose: string | null; expires_at: string }>();
   if (!draft) return false;
   if (Date.parse(draft.expires_at) <= Date.now()) {
     await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(businessId, chatId, userId).run();
@@ -316,14 +317,24 @@ async function continueTelegramLiquidityRequest(env: Env, chatId: string, userId
     return true;
   }
   if (draft.step === "agent") {
-    const agents = await env.DB.prepare("SELECT id, name FROM agents WHERE business_id = ? AND status = 'active' ORDER BY name ASC LIMIT 8").bind(businessId).all<{ id: string; name: string }>();
-    const available = agents.results ?? [];
+    let choices: string[] = [];
+    try {
+      const parsed: unknown = JSON.parse(draft.agent_choices);
+      if (Array.isArray(parsed) && parsed.every(item => typeof item === "string")) choices = parsed;
+    } catch {
+      choices = [];
+    }
     const index = Number(answer.trim());
-    if (!Number.isInteger(index) || index < 1 || index > available.length) {
+    if (!Number.isInteger(index) || index < 1 || index > choices.length) {
       await sendTelegramMessage(env, chatId, "Reply with one of the agent numbers shown, or send /cancel.");
       return true;
     }
-    const agent = available[index - 1];
+    const agent = await env.DB.prepare("SELECT id, name FROM agents WHERE id = ? AND business_id = ? AND status = 'active' LIMIT 1").bind(choices[index - 1], businessId).first<{ id: string; name: string }>();
+    if (!agent) {
+      await sendTelegramMessage(env, chatId, "That agent is no longer active. Send /request to choose again.");
+      await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(businessId, chatId, userId).run();
+      return true;
+    }
     await env.DB.prepare("UPDATE telegram_request_drafts SET agent_id = ?, step = 'amount', updated_at = datetime('now') WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(agent.id, businessId, chatId, userId).run();
     await sendTelegramMessage(env, chatId, "Agent selected: " + agent.name + "\n\nStep 2 of 3 · How much USDC is required? Reply with a positive amount, for example 25 or 12.50.");
     return true;
