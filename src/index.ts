@@ -885,33 +885,38 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
   }
 
   const reservation = await env.DB.prepare(
-    "SELECT id, wallet_balance_id, amount_atoms, token FROM reservations WHERE id = ? AND status = 'active'"
+    "SELECT id, wallet_balance_id, amount_atoms, token, status FROM reservations WHERE id = ?"
   ).bind(operation.source_reservation_id).first<{
     id: string;
     wallet_balance_id: string;
     amount_atoms: string;
     token: string;
+    status: string;
   }>();
-  if (!reservation) return json({ error: "source_reservation_not_active" }, 409);
+  if (!reservation) return json({ error: "source_reservation_not_found" }, 409);
 
   const finalReservationState = swapStatus === "finalized" ? "consumed" : "released";
-  const claim = await env.DB.prepare(
-    "UPDATE reservations SET status = ?, released_at = datetime('now') WHERE id = ? AND status = 'active'"
-  ).bind(finalReservationState, reservation.id).run();
-  if ((claim.meta?.changes ?? 0) !== 1) return json({ error: "reservation_already_reconciled" }, 409);
+  if (reservation.status === "active") {
+    const claim = await env.DB.prepare(
+      "UPDATE reservations SET status = ?, released_at = datetime('now') WHERE id = ? AND status = 'active'"
+    ).bind(finalReservationState, reservation.id).run();
+    if ((claim.meta?.changes ?? 0) !== 1) return json({ error: "reservation_already_reconciled" }, 409);
 
-  const amount = BigInt(reservation.amount_atoms);
-  const debit = await env.DB.prepare(`
-    UPDATE wallet_balances
-    SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?
-    WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?
-  `).bind(amount.toString(), reservation.wallet_balance_id, amount.toString()).run();
+    const amount = BigInt(reservation.amount_atoms);
+    const debit = await env.DB.prepare(\`
+      UPDATE wallet_balances
+      SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?
+      WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?
+    \`).bind(amount.toString(), reservation.wallet_balance_id, amount.toString()).run();
 
-  if ((debit.meta?.changes ?? 0) !== 1) {
-    await env.DB.prepare(
-      "UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = ?"
-    ).bind(reservation.id, finalReservationState).run();
-    return json({ error: "reservation_ledger_mismatch" }, 409);
+    if ((debit.meta?.changes ?? 0) !== 1) {
+      await env.DB.prepare(
+        "UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = ?"
+      ).bind(reservation.id, finalReservationState).run();
+      return json({ error: "reservation_ledger_mismatch" }, 409);
+    }
+  } else if (reservation.status !== finalReservationState) {
+    return json({ error: "source_reservation_already_reconciled", reservationStatus: reservation.status }, 409);
   }
 
   if (swapStatus === "finalized") {
