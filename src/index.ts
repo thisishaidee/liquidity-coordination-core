@@ -1197,21 +1197,19 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
       const keyIndex = keys.findIndex((entry) =>
         (typeof entry === "string" ? entry : entry.pubkey) === wallet.address
       );
-      const preLamports = transaction.meta.preBalances?.[keyIndex];
-      const postLamports = transaction.meta.postBalances?.[keyIndex];
-      const nativeSpent = keyIndex >= 0 && preLamports !== undefined && postLamports !== undefined
-        ? BigInt(preLamports) - BigInt(postLamports)
-        : 0n;
-
-      const sumOwnerUsdc = (entries: ParsedTokenBalance[] | undefined) =>
-        (entries ?? []).filter((entry) => entry.owner === wallet.address && entry.mint === USDC_MINT)
+      const sumOwnerMint = (entries: ParsedTokenBalance[] | undefined, mint: string) =>
+        (entries ?? []).filter((entry) => entry.owner === wallet.address && entry.mint === mint)
           .reduce((sum, entry) => sum + BigInt(entry.uiTokenAmount?.amount ?? "0"), 0n);
 
-      const beforeUsdc = sumOwnerUsdc(transaction.meta.preTokenBalances);
-      const afterUsdc = sumOwnerUsdc(transaction.meta.postTokenBalances);
+      const beforeWsol = sumOwnerMint(transaction.meta.preTokenBalances, SOL_MINT);
+      const afterWsol = sumOwnerMint(transaction.meta.postTokenBalances, SOL_MINT);
+      const sourceSpentAtoms = beforeWsol > afterWsol ? beforeWsol - afterWsol : 0n;
+
+      const beforeUsdc = sumOwnerMint(transaction.meta.preTokenBalances, USDC_MINT);
+      const afterUsdc = sumOwnerMint(transaction.meta.postTokenBalances, USDC_MINT);
       outputAtoms = afterUsdc > beforeUsdc ? afterUsdc - beforeUsdc : 0n;
 
-      if (nativeSpent < BigInt(reservation.amount_atoms) || outputAtoms === 0n) {
+      if (sourceSpentAtoms < BigInt(reservation.amount_atoms) || outputAtoms === 0n) {
         effectiveStatus = "unverified";
         settlementNote = "The finalized transaction could not be verified as the expected SOL-to-USDC conversion for the registered wallet.";
       } else if (outputAtoms < BigInt(operation.shortfall_atoms)) {
