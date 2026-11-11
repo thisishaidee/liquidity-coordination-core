@@ -304,12 +304,15 @@ type ConversionContext = {
   sourceAmount: string;
   sourceAtoms: bigint;
   shortfallAtoms: bigint;
+  walletBalanceId: string;
+  sourceReservationId: string | null;
 };
 
 async function validateConversionContext(
   agent: AgentRow,
   body: Record<string, unknown>,
-  env: Env
+  env: Env,
+  allowPreparing = false
 ): Promise<ConversionContext | Response> {
   const { operationId, userAddress, sourceAmount } = body;
   if (
@@ -328,10 +331,18 @@ async function validateConversionContext(
   }
 
   const operation = await env.DB.prepare(
-    "SELECT id, status, shortfall_atoms FROM operations WHERE id = ? AND agent_id = ? AND action = 'conversion_required' LIMIT 1"
-  ).bind(operationId, agent.id).first<{ id: string; status: string; shortfall_atoms: string }>();
+    "SELECT id, status, shortfall_atoms, source_reservation_id FROM operations WHERE id = ? AND agent_id = ? AND action = 'conversion_required' LIMIT 1"
+  ).bind(operationId, agent.id).first<{
+    id: string;
+    status: string;
+    shortfall_atoms: string;
+    source_reservation_id: string | null;
+  }>();
   if (!operation) return json({ error: "conversion_operation_not_found" }, 404);
-  if (operation.status !== "awaiting_conversion") {
+
+  const isAwaiting = operation.status === "awaiting_conversion";
+  const isPreparing = allowPreparing && operation.status === "preparing_conversion";
+  if (!isAwaiting && !isPreparing) {
     return json({ error: "operation_not_ready_for_conversion", status: operation.status }, 409);
   }
 
@@ -359,13 +370,35 @@ async function validateConversionContext(
     return json({ error: "source_balance_stale", message: "Refresh Solana balances before requesting a conversion." }, 409);
   }
 
+  let ownReservationAtoms = 0n;
+  if (isPreparing) {
+    if (!operation.source_reservation_id) {
+      return json({ error: "source_reservation_missing" }, 409);
+    }
+    const reservation = await env.DB.prepare(
+      "SELECT amount_atoms, wallet_balance_id, token, status FROM reservations WHERE id = ? AND operation_id = ?"
+    ).bind(operation.source_reservation_id, operationId).first<{
+      amount_atoms: string;
+      wallet_balance_id: string;
+      token: string;
+      status: string;
+    }>();
+    if (
+      !reservation || reservation.status !== "active" || reservation.token !== "SOL" ||
+      reservation.wallet_balance_id !== wallet.wallet_id || BigInt(reservation.amount_atoms) !== sourceAtoms
+    ) {
+      return json({ error: "source_reservation_mismatch" }, 409);
+    }
+    ownReservationAtoms = sourceAtoms;
+  }
+
   const confirmed = BigInt(wallet.confirmed_atoms);
   const reserved = BigInt(wallet.reserved_atoms);
   const available = confirmed > reserved ? confirmed - reserved : 0n;
-  if (available < sourceAtoms) {
+  if (available + ownReservationAtoms < sourceAtoms) {
     return json({
       error: "insufficient_source_balance",
-      availableSOL: formatTokenAmount(available, 9),
+      availableSOL: formatTokenAmount(available + ownReservationAtoms, 9),
       requestedSOL: sourceAmount
     }, 409);
   }
@@ -375,7 +408,9 @@ async function validateConversionContext(
     userAddress,
     sourceAmount,
     sourceAtoms,
-    shortfallAtoms: BigInt(operation.shortfall_atoms)
+    shortfallAtoms: BigInt(operation.shortfall_atoms),
+    walletBalanceId: wallet.wallet_id,
+    sourceReservationId: operation.source_reservation_id
   };
 }
 
