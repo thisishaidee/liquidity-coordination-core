@@ -912,7 +912,7 @@ async function releaseOperation(request: Request, env: Env, operationId: string)
 
 async function expireReservations(env: Env): Promise<{ expired: number; skipped: number }> {
   const due = await env.DB.prepare(`
-    SELECT r.id, r.operation_id, r.wallet_balance_id, r.amount_atoms, r.token
+    SELECT r.id, r.operation_id, r.wallet_balance_id, r.amount_atoms, r.token, o.business_id
     FROM reservations r
     JOIN operations o ON o.id = r.operation_id
     WHERE r.status = 'active'
@@ -920,7 +920,7 @@ async function expireReservations(env: Env): Promise<{ expired: number; skipped:
       AND julianday(r.expires_at) <= julianday('now')
     ORDER BY r.expires_at ASC
     LIMIT 100
-  `).all<{ id: string; operation_id: string; wallet_balance_id: string; amount_atoms: string; token: string }>();
+  `).all<{ id: string; operation_id: string; wallet_balance_id: string; amount_atoms: string; token: string; business_id: string }>();
 
   let expired = 0;
   let skipped = 0;
@@ -954,6 +954,11 @@ async function expireReservations(env: Env): Promise<{ expired: number; skipped:
     await env.DB.prepare(
       "UPDATE operations SET status = 'expired' WHERE id = ? AND status IN ('reserved', 'preparing_conversion')"
     ).bind(reservation.operation_id).run();
+    await notifyBusiness(
+      env,
+      reservation.business_id,
+      `Reservation expired for operation ${reservation.operation_id}. The held ${formatTokenAmount(amount, reservation.token === "SOL" ? 9 : 6)} ${reservation.token} is available again.`
+    );
     expired++;
   }
   return { expired, skipped };
