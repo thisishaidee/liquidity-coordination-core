@@ -12,6 +12,7 @@ API-first infrastructure for coordinating authorized liquidity across AI agents.
 | POST | `/v1/admin/bootstrap` | Create a business and its first agent |
 | POST | `/v1/admin/wallets` | Register an authorized Solana wallet |
 | POST | `/v1/admin/balances` | Record a controlled manual balance snapshot |
+| POST | `/v1/admin/balances/sync` | Refresh registered wallet balances from Solana RPC |
 | POST | `/v1/admin/reservations/expire` | Manually sweep expired reservations |
 | POST | `/v1/liquidity/requests` | Submit a task funding request |
 | GET | `/v1/operations/:id` | Read an agent's operation |
@@ -39,7 +40,7 @@ This is still an early backend, not a production funds executor.
 - Reservations are internal ledger holds. They do not transfer or spend funds.
 - V1 only fulfills directly from one eligible USDC wallet. It deliberately does not combine multiple wallets until split reservations can be made atomically.
 - Alternative-token detection is a decision only. Swap.io quote/build/submit is not connected yet.
-- The admin balance endpoint accepts operator-entered snapshots for controlled testing only. These are not live on-chain balances. Production decisions must use a trusted balance observer/indexer; never accept balances from agent requests.
+- The manual admin balance endpoint accepts operator-entered snapshots for controlled testing only. The admin sync endpoint reads SOL and USDC balances from Solana RPC at confirmed commitment. Never accept balances from agent requests.
 - A scheduled Worker runs reservation expiry cleanup every minute. The admin expiry endpoint is also available for manual reconciliation. Verify the cron trigger is active after deployment.
 - API-key rotation, user login, business-level dashboard authorization and rate limiting remain future work.
 - No wallet private keys or signing secrets belong in this Worker.
@@ -117,6 +118,17 @@ curl -X POST http://localhost:8787/v1/admin/balances \
 ```
 
 USDC snapshots use six decimals; SOL snapshots use nine decimals. Snapshots older than five minutes are excluded from liquidity decisions.
+
+## Sync registered wallets from Solana
+
+The sync endpoint reads native SOL and the canonical Solana USDC mint for every active registered wallet. It uses the public mainnet RPC by default; configure `SOLANA_RPC_URL` for a dedicated provider if needed.
+
+```bash
+curl -X POST http://localhost:8787/v1/admin/balances/sync \
+  -H "Authorization: Bearer YOUR_ADMIN_BOOTSTRAP_TOKEN"
+```
+
+Snapshots older than five minutes are excluded from liquidity decisions.
 
 ## Submit a liquidity request
 
