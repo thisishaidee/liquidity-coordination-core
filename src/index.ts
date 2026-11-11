@@ -1283,6 +1283,8 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
 type ForecastWallet = {
   walletId: string;
   address: string;
+  scope: string;
+  agentId: string | null;
   usdc: bigint;
   sol: bigint;
   usdcFresh: boolean;
@@ -1291,19 +1293,17 @@ type ForecastWallet = {
 
 async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record<string, unknown>> {
   const balanceRows = await env.DB.prepare(`
-    SELECT w.id AS wallet_id, w.address, b.token, b.confirmed_atoms,
-           b.reserved_atoms, b.observed_at
+    SELECT w.id AS wallet_id, w.address, w.scope, w.agent_id, b.token,
+           b.confirmed_atoms, b.reserved_atoms, b.observed_at
     FROM wallets w
     JOIN wallet_balances b ON b.wallet_id = w.id
     WHERE w.business_id = ? AND w.status = 'active' AND w.purpose = 'operating'
       AND w.network = 'solana'
-      AND (
-        (w.scope = 'agent' AND w.agent_id = ?) OR
-        (w.scope = 'business' AND ? = 1)
-      )
-  `).bind(agent.business_id, agent.id, agent.can_use_business_treasury).all<{
+  `).bind(agent.business_id).all<{
     wallet_id: string;
     address: string;
+    scope: string;
+    agent_id: string | null;
     token: string;
     confirmed_atoms: string;
     reserved_atoms: string;
@@ -1316,6 +1316,8 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
       wallets.set(row.wallet_id, {
         walletId: row.wallet_id,
         address: row.address,
+        scope: row.scope,
+        agentId: row.agent_id,
         usdc: 0n,
         sol: 0n,
         usdcFresh: false,
@@ -1338,26 +1340,35 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
   }
 
   const obligations = await env.DB.prepare(`
-    SELECT task_id, amount_atoms, due_at, purpose
-    FROM liquidity_obligations
-    WHERE agent_id = ? AND status = 'planned'
-      AND julianday(due_at) > julianday('now')
-      AND julianday(due_at) <= julianday('now', '+30 days')
-    ORDER BY due_at ASC
-    LIMIT 100
-  `).bind(agent.id).all<{
+    SELECT o.agent_id, o.task_id, o.amount_atoms, o.due_at, o.purpose,
+           a.can_use_business_treasury
+    FROM liquidity_obligations o
+    JOIN agents a ON a.id = o.agent_id
+    WHERE o.business_id = ? AND o.status = 'planned'
+      AND a.status = 'active'
+      AND julianday(o.due_at) > julianday('now')
+      AND julianday(o.due_at) <= julianday('now', '+30 days')
+    ORDER BY o.due_at ASC
+    LIMIT 200
+  `).bind(agent.business_id).all<{
+    agent_id: string;
     task_id: string;
     amount_atoms: string;
     due_at: string;
     purpose: string;
+    can_use_business_treasury: number;
   }>();
 
   const remaining = new Map([...wallets.values()].map((wallet) => [wallet.walletId, wallet.usdc]));
   const conversionUsedWallets = new Set<string>();
-  const forecast = (obligations.results ?? []).map((obligation) => {
+  const allForecast = (obligations.results ?? []).map((obligation) => {
     const amount = BigInt(obligation.amount_atoms);
-    const candidates = [...wallets.values()];
-    const coveredWallet = candidates
+    const eligibleWallets = [...wallets.values()].filter((wallet) =>
+      (wallet.scope === "agent" && wallet.agentId === obligation.agent_id) ||
+      (wallet.scope === "business" && obligation.can_use_business_treasury === 1)
+    );
+
+    const coveredWallet = eligibleWallets
       .filter((wallet) => (remaining.get(wallet.walletId) ?? 0n) >= amount)
       .sort((a, b) => {
         const aRemain = remaining.get(a.walletId) ?? 0n;
@@ -1369,6 +1380,7 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
       const available = remaining.get(coveredWallet.walletId) ?? 0n;
       remaining.set(coveredWallet.walletId, available - amount);
       return {
+        agentId: obligation.agent_id,
         taskId: obligation.task_id,
         dueAt: obligation.due_at,
         purpose: obligation.purpose,
@@ -1381,7 +1393,7 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
       };
     }
 
-    const conversionWallet = candidates
+    const conversionWallet = eligibleWallets
       .filter((wallet) => wallet.sol > 0n && wallet.solFresh && !conversionUsedWallets.has(wallet.walletId))
       .sort((a, b) => {
         const aRemain = remaining.get(a.walletId) ?? 0n;
@@ -1395,6 +1407,7 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
       const allocated = available < amount ? available : amount;
       remaining.set(conversionWallet.walletId, available - allocated);
       return {
+        agentId: obligation.agent_id,
         taskId: obligation.task_id,
         dueAt: obligation.due_at,
         purpose: obligation.purpose,
@@ -1409,52 +1422,66 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
       };
     }
 
-    const bestWallet = candidates.sort((a, b) => {
+    const bestWallet = eligibleWallets.sort((a, b) => {
       const aRemain = remaining.get(a.walletId) ?? 0n;
       const bRemain = remaining.get(b.walletId) ?? 0n;
       return aRemain > bRemain ? -1 : aRemain < bRemain ? 1 : 0;
     })[0];
     const available = bestWallet ? remaining.get(bestWallet.walletId) ?? 0n : 0n;
-    if (bestWallet && available > 0n) remaining.set(bestWallet.walletId, 0n);
+    const allocated = available < amount ? available : amount;
+    if (bestWallet && allocated > 0n) remaining.set(bestWallet.walletId, available - allocated);
     return {
+      agentId: obligation.agent_id,
       taskId: obligation.task_id,
       dueAt: obligation.due_at,
       purpose: obligation.purpose,
       amountUSDC: formatTokenAmount(amount, 6),
       availableUSDC: formatTokenAmount(available, 6),
-      shortfallUSDC: formatTokenAmount(amount - (available < amount ? available : amount), 6),
+      shortfallUSDC: formatTokenAmount(amount - allocated, 6),
       status: "blocked",
       sourceWalletId: bestWallet?.walletId ?? null,
       sourceAsset: null
     };
   });
 
-  const summary = forecast.reduce((acc, item) => {
-    const status = String(item.status);
-    if (status === "covered") acc.covered++;
-    else if (status === "conversion_required") acc.conversionRequired++;
+  const summarize = (items: typeof allForecast) => items.reduce((acc, item) => {
+    if (item.status === "covered") acc.covered++;
+    else if (item.status === "conversion_required") acc.conversionRequired++;
     else acc.blocked++;
-    const shortfall = String(item.shortfallUSDC || "0");
+    const shortfall = item.shortfallUSDC;
     if (shortfall !== "0") acc.totalShortfallAtoms += parseTokenAmount(shortfall);
     return acc;
   }, { covered: 0, conversionRequired: 0, blocked: 0, totalShortfallAtoms: 0n });
 
-  const balanceDataFresh = wallets.size > 0 &&
-    [...wallets.values()].every((wallet) => wallet.usdcFresh && wallet.solFresh);
+  const ownForecast = allForecast.filter((item) => item.agentId === agent.id);
+  const ownSummary = summarize(ownForecast);
+  const businessSummary = summarize(allForecast);
+  const relevantWallets = [...wallets.values()].filter((wallet) =>
+    (wallet.scope === "agent" && wallet.agentId === agent.id) ||
+    (wallet.scope === "business" && agent.can_use_business_treasury === 1)
+  );
+  const balanceDataFresh = relevantWallets.length > 0 &&
+    relevantWallets.every((wallet) => wallet.usdcFresh && wallet.solFresh);
+
+  const toSummary = (summary: ReturnType<typeof summarize>) => ({
+    planned: summary.covered + summary.conversionRequired + summary.blocked,
+    covered: summary.covered,
+    conversionRequired: summary.conversionRequired,
+    blocked: summary.blocked,
+    totalShortfallUSDC: formatTokenAmount(summary.totalShortfallAtoms, 6)
+  });
 
   return {
     windowDays: 30,
     balanceDataFresh,
-    walletsObserved: wallets.size,
-    obligations: forecast,
-    summary: {
-      planned: forecast.length,
-      covered: summary.covered,
-      conversionRequired: summary.conversionRequired,
-      blocked: summary.blocked,
-      totalShortfallUSDC: formatTokenAmount(summary.totalShortfallAtoms, 6)
+    walletsObserved: relevantWallets.length,
+    obligations: ownForecast.map(({ agentId: _agentId, ...item }) => item),
+    summary: toSummary(ownSummary),
+    businessSummary: {
+      ...toSummary(businessSummary),
+      otherAgentObligations: allForecast.filter((item) => item.agentId !== agent.id).length
     },
-    note: "Forecasts simulate one-wallet allocation per obligation. Conversion availability is indicative until a live Swap.io quote is obtained; no future funds are reserved. Refresh any stale wallet snapshots before relying on the projection."
+    note: "Business-wide forecast allocates shared business wallets across all agents in due-date order. Private wallets remain agent-isolated. Conversion availability is indicative until a live Swap.io quote is obtained; no future funds are reserved."
   };
 }
 
