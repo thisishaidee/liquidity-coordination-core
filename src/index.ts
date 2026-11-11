@@ -1556,7 +1556,7 @@ async function upsertLiquidityForecast(request: Request, env: Env): Promise<Resp
 
   await env.DB.batch(statements);
   const forecast = await buildLiquidityForecast(agent, env);
-  const summary = forecast.summary as { conversionRequired: number; blocked: number; totalShortfallUSDC: string };
+  const summary = forecast.businessSummary as { conversionRequired: number; blocked: number; totalShortfallUSDC: string };
   if (summary.conversionRequired || summary.blocked) {
     await notifyBusiness(
       env,
