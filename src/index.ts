@@ -367,9 +367,18 @@ async function continueTelegramLiquidityRequest(env: Env, chatId: string, userId
     await sendTelegramMessage(env, chatId, "Review your liquidity request\n\nAgent: " + agentName + "\nAmount: " + draft.amount + " USDC\nPurpose: " + purpose + "\nNetwork: Solana\nAsset: USDC\n\nReply CONFIRM to submit this request and reserve eligible funds, or /cancel to discard it.");
     return true;
   }
+  if (draft.step === "submitting") {
+    await sendTelegramMessage(env, chatId, "Your confirmed request is already being processed. Please wait for the result.");
+    return true;
+  }
   if (draft.step === "confirm") {
     if (answer.trim().toUpperCase() !== "CONFIRM") {
       await sendTelegramMessage(env, chatId, "Reply CONFIRM to submit this exact request, or /cancel to discard it.");
+      return true;
+    }
+    const claim = await env.DB.prepare("UPDATE telegram_request_drafts SET step = 'submitting', updated_at = datetime('now') WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? AND step = 'confirm' AND julianday(expires_at) > julianday('now')").bind(businessId, chatId, userId).run();
+    if ((claim.meta?.changes ?? 0) !== 1) {
+      await sendTelegramMessage(env, chatId, "This request is already being processed or has expired. Check /operations or start a new request.");
       return true;
     }
     const purpose = draft.purpose ?? "";
@@ -464,8 +473,9 @@ async function handleTelegramCommand(
     return;
   }
   if (command === "/cancel") {
-    const cancelled = await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(businessId, chatId, userId).run();
-    await sendTelegramMessage(env, chatId, (cancelled.meta?.changes ?? 0) > 0 ? "Your liquidity request draft has been cancelled." : "There is no active request draft to cancel.");
+    const cancelled = await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? AND step != 'submitting'").bind(businessId, chatId, userId).run();
+    const active = await env.DB.prepare("SELECT step FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? LIMIT 1").bind(businessId, chatId, userId).first<{ step: string }>();
+    await sendTelegramMessage(env, chatId, (cancelled.meta?.changes ?? 0) > 0 ? "Your liquidity request draft has been cancelled." : active?.step === "submitting" ? "Your confirmed request is already being processed and can no longer be cancelled." : "There is no active request draft to cancel.");
     return;
   }
   if (!command.startsWith("/") && await continueTelegramLiquidityRequest(env, chatId, userId, businessId, rawText)) return;
