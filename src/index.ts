@@ -308,7 +308,7 @@ async function startTelegramLiquidityRequest(env: Env, chatId: string, userId: s
 }
 
 async function continueTelegramLiquidityRequest(env: Env, chatId: string, userId: string, businessId: string, answer: string): Promise<boolean> {
-  const draft = await env.DB.prepare("SELECT step, agent_id, amount, expires_at FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? LIMIT 1").bind(businessId, chatId, userId).first<{ step: string; agent_id: string | null; amount: string | null; expires_at: string }>();
+  const draft = await env.DB.prepare("SELECT step, agent_id, amount, purpose, expires_at FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? LIMIT 1").bind(businessId, chatId, userId).first<{ step: string; agent_id: string | null; amount: string | null; purpose: string | null; expires_at: string }>();
   if (!draft) return false;
   if (Date.parse(draft.expires_at) <= Date.now()) {
     await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(businessId, chatId, userId).run();
@@ -344,6 +344,27 @@ async function continueTelegramLiquidityRequest(env: Env, chatId: string, userId
     const purpose = answer.trim();
     if (purpose.length < 3 || purpose.length > 300 || !draft.agent_id || !draft.amount) {
       await sendTelegramMessage(env, chatId, "Please provide a purpose between 3 and 300 characters, or send /cancel.");
+      return true;
+    }
+    const agentName = (await env.DB.prepare("SELECT name FROM agents WHERE id = ? AND business_id = ? AND status = 'active'").bind(draft.agent_id, businessId).first<{ name: string }>())?.name;
+    if (!agentName) {
+      await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(businessId, chatId, userId).run();
+      await sendTelegramMessage(env, chatId, "That agent is no longer active. Send /request to choose an active agent.");
+      return true;
+    }
+    await env.DB.prepare("UPDATE telegram_request_drafts SET purpose = ?, step = 'confirm', updated_at = datetime('now') WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(purpose, businessId, chatId, userId).run();
+    await sendTelegramMessage(env, chatId, "Review your liquidity request\n\nAgent: " + agentName + "\nAmount: " + draft.amount + " USDC\nPurpose: " + purpose + "\nNetwork: Solana\nAsset: USDC\n\nReply CONFIRM to submit this request and reserve eligible funds, or /cancel to discard it.");
+    return true;
+  }
+  if (draft.step === "confirm") {
+    if (answer.trim().toUpperCase() !== "CONFIRM") {
+      await sendTelegramMessage(env, chatId, "Reply CONFIRM to submit this exact request, or /cancel to discard it.");
+      return true;
+    }
+    const purpose = draft.purpose ?? "";
+    if (!draft.agent_id || !draft.amount || purpose.length < 3) {
+      await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(businessId, chatId, userId).run();
+      await sendTelegramMessage(env, chatId, "This request draft is incomplete. Send /request to start again.");
       return true;
     }
     const agent = await env.DB.prepare("SELECT id, business_id, status, can_use_business_treasury FROM agents WHERE id = ? AND business_id = ? AND status = 'active' LIMIT 1").bind(draft.agent_id, businessId).first<AgentRow>();
