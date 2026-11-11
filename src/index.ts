@@ -788,6 +788,12 @@ async function createLiquidityRequest(request: Request, env: Env): Promise<Respo
       return json({ error: "reservation_persistence_failed" }, 500);
     }
 
+    await notifyBusiness(
+      env,
+      agent.business_id,
+      `Liquidity reserved: ${formatTokenAmount(requestedAtoms)} USDC for task ${taskId}. Operation ${operationId} expires in 15 minutes unless released or completed.`
+    );
+
     return json({
       operationId,
       status: "reserved",
@@ -814,6 +820,14 @@ async function createLiquidityRequest(request: Request, env: Env): Promise<Respo
     purpose.trim(), status, decision.action, decision.availableAtoms.toString(),
     decision.shortfallAtoms.toString()
   ).run();
+
+  await notifyBusiness(
+    env,
+    agent.business_id,
+    decision.action === "conversion_required"
+      ? `Liquidity shortfall: task ${taskId} needs ${formatTokenAmount(decision.shortfallAtoms)} additional USDC. Eligible source assets: ${decision.eligibleSourceTokens.join(", ") || "none"}. Operation ${operationId}.`
+      : `Liquidity blocked: task ${taskId} has insufficient authorized funds. Operation ${operationId}.`
+  );
 
   return json({
     operationId,
@@ -1226,6 +1240,8 @@ export default {
       return json({ service: "liquidity-coordination-api", status: "ok", version: "0.2.0" });
     }
     if (request.method === "POST" && url.pathname === "/v1/admin/bootstrap") return bootstrapBusiness(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/admin/telegram/link-codes") return createTelegramLinkCode(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/telegram/webhook") return telegramWebhook(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/wallets") return registerWallet(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/balances") return upsertBalanceSnapshot(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/balances/sync") return syncSolanaBalances(request, env);
