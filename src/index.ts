@@ -1043,7 +1043,8 @@ async function getOperation(request: Request, env: Env, operationId: string): Pr
 
   const operation = await env.DB.prepare(`
     SELECT id, task_id, network, token, amount_atoms, status, action,
-           available_atoms, shortfall_atoms, created_at
+           available_atoms, shortfall_atoms, transaction_hash, received_output_atoms,
+           settlement_note, created_at
     FROM operations WHERE id = ? AND agent_id = ? LIMIT 1
   `).bind(operationId, agent.id).first<Record<string, string>>();
   if (!operation) return json({ error: "operation_not_found" }, 404);
@@ -1064,6 +1065,11 @@ async function getOperation(request: Request, env: Env, operationId: string): Pr
       available: formatTokenAmount(BigInt(operation.available_atoms)),
       shortfall: formatTokenAmount(BigInt(operation.shortfall_atoms))
     },
+    transactionHash: operation.transaction_hash ?? null,
+    receivedUSDC: operation.received_output_atoms
+      ? formatTokenAmount(BigInt(operation.received_output_atoms), 6)
+      : null,
+    settlementNote: operation.settlement_note ?? null,
     reservation: reservation ? {
       id: reservation.id,
       amount: formatTokenAmount(BigInt(reservation.amount_atoms), reservation.token === "SOL" ? 9 : 6),
