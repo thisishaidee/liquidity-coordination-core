@@ -1280,6 +1280,256 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
   });
 }
 
+type ForecastWallet = {
+  walletId: string;
+  address: string;
+  usdc: bigint;
+  sol: bigint;
+  usdcFresh: boolean;
+  solFresh: boolean;
+};
+
+async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record<string, unknown>> {
+  const balanceRows = await env.DB.prepare(`
+    SELECT w.id AS wallet_id, w.address, b.token, b.confirmed_atoms,
+           b.reserved_atoms, b.observed_at
+    FROM wallets w
+    JOIN wallet_balances b ON b.wallet_id = w.id
+    WHERE w.business_id = ? AND w.status = 'active' AND w.purpose = 'operating'
+      AND w.network = 'solana'
+      AND (
+        (w.scope = 'agent' AND w.agent_id = ?) OR
+        (w.scope = 'business' AND ? = 1)
+      )
+  `).bind(agent.business_id, agent.id, agent.can_use_business_treasury).all<{
+    wallet_id: string;
+    address: string;
+    token: string;
+    confirmed_atoms: string;
+    reserved_atoms: string;
+    observed_at: string;
+  }>();
+
+  const wallets = new Map<string, ForecastWallet>();
+  for (const row of balanceRows.results ?? []) {
+    if (!wallets.has(row.wallet_id)) {
+      wallets.set(row.wallet_id, {
+        walletId: row.wallet_id,
+        address: row.address,
+        usdc: 0n,
+        sol: 0n,
+        usdcFresh: false,
+        solFresh: false
+      });
+    }
+    const wallet = wallets.get(row.wallet_id)!;
+    const ageMs = Date.now() - Date.parse(row.observed_at);
+    const fresh = Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= 5 * 60 * 1000;
+    const confirmed = BigInt(row.confirmed_atoms);
+    const reserved = BigInt(row.reserved_atoms);
+    const available = confirmed > reserved ? confirmed - reserved : 0n;
+    if (row.token === "USDC") {
+      wallet.usdc = fresh ? available : 0n;
+      wallet.usdcFresh = fresh;
+    } else if (row.token === "SOL") {
+      wallet.sol = fresh ? available : 0n;
+      wallet.solFresh = fresh;
+    }
+  }
+
+  const obligations = await env.DB.prepare(`
+    SELECT task_id, amount_atoms, due_at, purpose
+    FROM liquidity_obligations
+    WHERE agent_id = ? AND status = 'planned'
+      AND julianday(due_at) > julianday('now')
+      AND julianday(due_at) <= julianday('now', '+30 days')
+    ORDER BY due_at ASC
+    LIMIT 100
+  `).bind(agent.id).all<{
+    task_id: string;
+    amount_atoms: string;
+    due_at: string;
+    purpose: string;
+  }>();
+
+  const remaining = new Map([...wallets.values()].map((wallet) => [wallet.walletId, wallet.usdc]));
+  const forecast = (obligations.results ?? []).map((obligation) => {
+    const amount = BigInt(obligation.amount_atoms);
+    const candidates = [...wallets.values()];
+    const coveredWallet = candidates
+      .filter((wallet) => (remaining.get(wallet.walletId) ?? 0n) >= amount)
+      .sort((a, b) => {
+        const aRemain = remaining.get(a.walletId) ?? 0n;
+        const bRemain = remaining.get(b.walletId) ?? 0n;
+        return aRemain < bRemain ? -1 : aRemain > bRemain ? 1 : 0;
+      })[0];
+
+    if (coveredWallet) {
+      const available = remaining.get(coveredWallet.walletId) ?? 0n;
+      remaining.set(coveredWallet.walletId, available - amount);
+      return {
+        taskId: obligation.task_id,
+        dueAt: obligation.due_at,
+        purpose: obligation.purpose,
+        amountUSDC: formatTokenAmount(amount, 6),
+        availableUSDC: formatTokenAmount(available, 6),
+        shortfallUSDC: "0",
+        status: "covered",
+        sourceWalletId: coveredWallet.walletId,
+        sourceAsset: null
+      };
+    }
+
+    const conversionWallet = candidates
+      .filter((wallet) => wallet.sol > 0n && wallet.solFresh)
+      .sort((a, b) => {
+        const aRemain = remaining.get(a.walletId) ?? 0n;
+        const bRemain = remaining.get(b.walletId) ?? 0n;
+        return aRemain > bRemain ? -1 : aRemain < bRemain ? 1 : 0;
+      })[0];
+
+    if (conversionWallet) {
+      const available = remaining.get(conversionWallet.walletId) ?? 0n;
+      const allocated = available < amount ? available : amount;
+      remaining.set(conversionWallet.walletId, available - allocated);
+      return {
+        taskId: obligation.task_id,
+        dueAt: obligation.due_at,
+        purpose: obligation.purpose,
+        amountUSDC: formatTokenAmount(amount, 6),
+        availableUSDC: formatTokenAmount(available, 6),
+        shortfallUSDC: formatTokenAmount(amount - allocated, 6),
+        status: "conversion_required",
+        sourceWalletId: conversionWallet.walletId,
+        sourceAsset: "SOL",
+        sourceSOLAvailable: formatTokenAmount(conversionWallet.sol, 9),
+        quoteRequired: true
+      };
+    }
+
+    const bestWallet = candidates.sort((a, b) => {
+      const aRemain = remaining.get(a.walletId) ?? 0n;
+      const bRemain = remaining.get(b.walletId) ?? 0n;
+      return aRemain > bRemain ? -1 : aRemain < bRemain ? 1 : 0;
+    })[0];
+    const available = bestWallet ? remaining.get(bestWallet.walletId) ?? 0n : 0n;
+    if (bestWallet && available > 0n) remaining.set(bestWallet.walletId, 0n);
+    return {
+      taskId: obligation.task_id,
+      dueAt: obligation.due_at,
+      purpose: obligation.purpose,
+      amountUSDC: formatTokenAmount(amount, 6),
+      availableUSDC: formatTokenAmount(available, 6),
+      shortfallUSDC: formatTokenAmount(amount - (available < amount ? available : amount), 6),
+      status: "blocked",
+      sourceWalletId: bestWallet?.walletId ?? null,
+      sourceAsset: null
+    };
+  });
+
+  const summary = forecast.reduce((acc, item) => {
+    const status = String(item.status);
+    if (status === "covered") acc.covered++;
+    else if (status === "conversion_required") acc.conversionRequired++;
+    else acc.blocked++;
+    acc.totalShortfallAtoms += parseTokenAmount(String(item.shortfallUSDC || "0"));
+    return acc;
+  }, { covered: 0, conversionRequired: 0, blocked: 0, totalShortfallAtoms: 0n });
+
+  return {
+    windowDays: 30,
+    obligations: forecast,
+    summary: {
+      planned: forecast.length,
+      covered: summary.covered,
+      conversionRequired: summary.conversionRequired,
+      blocked: summary.blocked,
+      totalShortfallUSDC: formatTokenAmount(summary.totalShortfallAtoms, 6)
+    },
+    note: "Forecasts simulate one-wallet allocation per obligation. Conversion availability is indicative until a live Swap.io quote is obtained; no future funds are reserved."
+  };
+}
+
+async function upsertLiquidityForecast(request: Request, env: Env): Promise<Response> {
+  const agent = await authenticate(request, env.DB);
+  if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
+  const body = await readJson(request);
+  if (!body || !Array.isArray(body.obligations) || body.obligations.length < 1 || body.obligations.length > 50) {
+    return json({ error: "invalid_request", message: "Provide between 1 and 50 planned obligations." }, 400);
+  }
+
+  const statements: D1PreparedStatement[] = [];
+  for (const raw of body.obligations) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return json({ error: "invalid_obligation" }, 400);
+    const obligation = raw as Record<string, unknown>;
+    if (
+      typeof obligation.taskId !== "string" || !/^[a-zA-Z0-9._:-]{1,100}$/.test(obligation.taskId) ||
+      typeof obligation.dueAt !== "string" || typeof obligation.purpose !== "string" ||
+      obligation.purpose.trim().length < 3 || obligation.purpose.length > 300
+    ) return json({ error: "invalid_obligation", message: "Each obligation needs taskId, dueAt and purpose." }, 400);
+
+    const dueMs = Date.parse(obligation.dueAt);
+    if (!Number.isFinite(dueMs) || dueMs <= Date.now() || dueMs > Date.now() + 30 * 24 * 60 * 60 * 1000) {
+      return json({ error: "invalid_due_date", message: "dueAt must be in the next 30 days." }, 400);
+    }
+
+    let amountAtoms: bigint;
+    try {
+      amountAtoms = parseTokenAmount(obligation.amount);
+    } catch (error) {
+      return json({ error: "invalid_amount", message: error instanceof Error ? error.message : "Invalid amount" }, 400);
+    }
+
+    statements.push(env.DB.prepare(`
+      INSERT INTO liquidity_obligations
+        (id, business_id, agent_id, task_id, token, amount_atoms, due_at, purpose, status, updated_at)
+      VALUES (?, ?, ?, ?, 'USDC', ?, ?, ?, 'planned', datetime('now'))
+      ON CONFLICT(agent_id, task_id) DO UPDATE SET
+        amount_atoms = excluded.amount_atoms,
+        due_at = excluded.due_at,
+        purpose = excluded.purpose,
+        status = 'planned',
+        updated_at = datetime('now')
+    `).bind(
+      "obl_" + crypto.randomUUID().replaceAll("-", ""),
+      agent.business_id,
+      agent.id,
+      obligation.taskId,
+      amountAtoms.toString(),
+      new Date(dueMs).toISOString(),
+      obligation.purpose.trim()
+    ));
+  }
+
+  await env.DB.batch(statements);
+  const forecast = await buildLiquidityForecast(agent, env);
+  const summary = forecast.summary as { conversionRequired: number; blocked: number; totalShortfallUSDC: string };
+  if (summary.conversionRequired || summary.blocked) {
+    await notifyBusiness(
+      env,
+      agent.business_id,
+      `Upcoming liquidity forecast: ${summary.conversionRequired} task(s) may need conversion and ${summary.blocked} are currently blocked. Projected shortfall: ${summary.totalShortfallUSDC} USDC.`
+    );
+  }
+  return json(forecast, 201);
+}
+
+async function getLiquidityForecast(request: Request, env: Env): Promise<Response> {
+  const agent = await authenticate(request, env.DB);
+  if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
+  return json(await buildLiquidityForecast(agent, env));
+}
+
+async function updateObligationStatus(request: Request, env: Env, taskId: string, status: "fulfilled" | "cancelled"): Promise<Response> {
+  const agent = await authenticate(request, env.DB);
+  if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
+  const result = await env.DB.prepare(
+    "UPDATE liquidity_obligations SET status = ?, updated_at = datetime('now') WHERE agent_id = ? AND task_id = ? AND status = 'planned'"
+  ).bind(status, agent.id, taskId).run();
+  if ((result.meta?.changes ?? 0) !== 1) return json({ error: "planned_obligation_not_found" }, 404);
+  return json({ taskId, status });
+}
+
 async function getAgentLiquidity(request: Request, env: Env): Promise<Response> {
   const agent = await authenticate(request, env.DB);
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
@@ -1447,6 +1697,12 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/admin/reservations/expire") return expireReservationsAdmin(request, env);
     if (request.method === "POST" && url.pathname === "/v1/liquidity/requests") return createLiquidityRequest(request, env);
     if (request.method === "GET" && url.pathname === "/v1/liquidity") return getAgentLiquidity(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/liquidity/forecast") return upsertLiquidityForecast(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/liquidity/forecast") return getLiquidityForecast(request, env);
+    const obligationMatch = url.pathname.match(/^\/v1\/liquidity\/forecast\/([a-zA-Z0-9._:-]+)\/(fulfilled|cancelled)$/);
+    if (request.method === "POST" && obligationMatch) {
+      return updateObligationStatus(request, env, obligationMatch[1], obligationMatch[2] as "fulfilled" | "cancelled");
+    }
     if (request.method === "GET" && url.pathname === "/v1/operations") return listAgentOperations(request, env);
     if (request.method === "POST" && url.pathname === "/v1/conversions/quote") return requestSwapQuote(request, env);
     if (request.method === "POST" && url.pathname === "/v1/conversions/prepare") return prepareSwapTransaction(request, env);
