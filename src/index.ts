@@ -478,13 +478,56 @@ async function prepareSwapTransaction(request: Request, env: Env): Promise<Respo
   const body = await readJson(request);
   if (!body) return json({ error: "invalid_json" }, 400);
 
-  const context = await validateConversionContext(agent, body, env);
+  const context = await validateConversionContext(agent, body, env, true);
   if (context instanceof Response) return context;
   if (typeof body.provider !== "string" || body.provider.length < 1 || body.provider.length > 100) {
     return json({ error: "invalid_provider" }, 400);
   }
   if (!body.providerQuote || typeof body.providerQuote !== "object" || Array.isArray(body.providerQuote)) {
     return json({ error: "invalid_provider_quote" }, 400);
+  }
+
+  if (!context.sourceReservationId) {
+    const reservationId = "res_" + crypto.randomUUID().replaceAll("-", "");
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    const reserve = await env.DB.prepare(`
+      UPDATE wallet_balances
+      SET reserved_atoms = CAST(reserved_atoms AS INTEGER) + ?
+      WHERE id = ?
+        AND CAST(confirmed_atoms AS INTEGER) - CAST(reserved_atoms AS INTEGER) >= ?
+    `).bind(context.sourceAtoms.toString(), context.walletBalanceId, context.sourceAtoms.toString()).run();
+
+    if ((reserve.meta?.changes ?? 0) !== 1) {
+      return json({ error: "source_balance_changed", message: "SOL was allocated elsewhere. Refresh balances and request a new quote." }, 409);
+    }
+
+    try {
+      await env.DB.batch([
+        env.DB.prepare(`
+          INSERT INTO reservations (id, operation_id, wallet_balance_id, amount_atoms, expires_at, token)
+          VALUES (?, ?, ?, ?, ?, 'SOL')
+        `).bind(reservationId, context.operationId, context.walletBalanceId, context.sourceAtoms.toString(), expiresAt),
+        env.DB.prepare(`
+          UPDATE operations
+          SET status = 'preparing_conversion', source_reservation_id = ?, provider_key = ?
+          WHERE id = ? AND status = 'awaiting_conversion'
+        `).bind(reservationId, body.provider, context.operationId)
+      ]);
+      const refreshed = await env.DB.prepare(
+        "SELECT source_reservation_id FROM operations WHERE id = ? AND status = 'preparing_conversion'"
+      ).bind(context.operationId).first<{ source_reservation_id: string | null }>();
+      if (refreshed?.source_reservation_id !== reservationId) throw new Error("Operation was claimed by another prepare request");
+    } catch {
+      await env.DB.prepare(
+        "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?"
+      ).bind(context.sourceAtoms.toString(), context.walletBalanceId, context.sourceAtoms.toString()).run();
+      await env.DB.prepare("DELETE FROM reservations WHERE id = ? AND status = 'active'").bind(reservationId).run();
+      return json({ error: "source_reservation_failed" }, 409);
+    }
+  } else {
+    await env.DB.prepare(
+      "UPDATE operations SET provider_key = ? WHERE id = ? AND status = 'preparing_conversion'"
+    ).bind(body.provider, context.operationId).run();
   }
 
   return proxyHermes(request, "/v1/swap/build-tx", {
@@ -494,7 +537,8 @@ async function prepareSwapTransaction(request: Request, env: Env): Promise<Respo
     quoteResponse: body.providerQuote
   }, {
     "X-Liquidity-Operation-ID": context.operationId,
-    "X-Liquidity-Required-USDC": formatTokenAmount(context.shortfallAtoms, 6)
+    "X-Liquidity-Required-USDC": formatTokenAmount(context.shortfallAtoms, 6),
+    "X-Liquidity-Source-Reserved-SOL": context.sourceAmount
   });
 }
 
