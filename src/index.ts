@@ -304,6 +304,7 @@ const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 type ConversionContext = {
   operationId: string;
   userAddress: string;
+  paymentWalletAddress: string;
   sourceAmount: string;
   sourceAtoms: bigint;
   shortfallAtoms: bigint;
@@ -317,13 +318,14 @@ async function validateConversionContext(
   env: Env,
   allowPreparing = false
 ): Promise<ConversionContext | Response> {
-  const { operationId, userAddress, sourceAmount } = body;
+  const { operationId, userAddress, paymentWalletAddress, sourceAmount } = body;
   if (
     typeof operationId !== "string" ||
     typeof userAddress !== "string" || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(userAddress) ||
+    typeof paymentWalletAddress !== "string" || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(paymentWalletAddress) ||
     typeof sourceAmount !== "string"
   ) {
-    return json({ error: "invalid_request", message: "Provide operationId, registered userAddress and sourceAmount in SOL." }, 400);
+    return json({ error: "invalid_request", message: "Provide operationId, registered operating userAddress, registered paymentWalletAddress and sourceAmount in SOL." }, 400);
   }
 
   let sourceAtoms: bigint;
@@ -368,6 +370,25 @@ async function validateConversionContext(
   }>();
 
   if (!wallet) return json({ error: "source_wallet_not_authorized" }, 403);
+
+  const paymentWallet = await env.DB.prepare(`
+    SELECT b.confirmed_atoms, b.reserved_atoms, b.observed_at
+    FROM wallets w
+    JOIN wallet_balances b ON b.wallet_id = w.id AND b.token = 'USDC'
+    WHERE w.business_id = ? AND w.network = 'solana' AND w.address = ?
+      AND w.scope = 'business' AND w.purpose = 'api_payment' AND w.status = 'active'
+    LIMIT 1
+  `).bind(agent.business_id, paymentWalletAddress).first<{
+    confirmed_atoms: string;
+    reserved_atoms: string;
+    observed_at: string;
+  }>();
+  if (!paymentWallet) return json({ error: "api_payment_wallet_not_configured" }, 409);
+  const paymentAgeMs = Date.now() - Date.parse(paymentWallet.observed_at);
+  const paymentAvailable = BigInt(paymentWallet.confirmed_atoms) - BigInt(paymentWallet.reserved_atoms);
+  if (!Number.isFinite(paymentAgeMs) || paymentAgeMs < 0 || paymentAgeMs > 5 * 60 * 1000 || paymentAvailable <= 0n) {
+    return json({ error: "api_payment_reserve_unavailable", message: "The dedicated x402 payment wallet needs a fresh, positive USDC balance." }, 409);
+  }
   const ageMs = Date.now() - Date.parse(wallet.observed_at);
   if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > 5 * 60 * 1000) {
     return json({ error: "source_balance_stale", message: "Refresh Solana balances before requesting a conversion." }, 409);
@@ -409,6 +430,7 @@ async function validateConversionContext(
   return {
     operationId,
     userAddress,
+    paymentWalletAddress,
     sourceAmount,
     sourceAtoms,
     shortfallAtoms: BigInt(operation.shortfall_atoms),
