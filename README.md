@@ -15,6 +15,8 @@ API-first infrastructure for coordinating authorized liquidity across AI agents.
 | POST | `/v1/admin/balances/sync` | Refresh registered wallet balances from Solana RPC |
 | POST | `/v1/admin/reservations/expire` | Manually sweep expired reservations |
 | POST | `/v1/liquidity/requests` | Submit a task funding request |
+| POST | `/v1/conversions/quote` | Request a paid Swap.io quote through x402 |
+| POST | `/v1/conversions/prepare` | Build an unsigned Swap.io transaction through x402 |
 | GET | `/v1/operations/:id` | Read an agent's operation |
 | POST | `/v1/operations/:id/release` | Release an active internal reservation |
 
@@ -39,7 +41,7 @@ This is still an early backend, not a production funds executor.
 
 - Reservations are internal ledger holds. They do not transfer or spend funds.
 - V1 only fulfills directly from one eligible USDC wallet. It deliberately does not combine multiple wallets until split reservations can be made atomically.
-- Alternative-token detection is a decision only. Swap.io quote/build/submit is not connected yet.
+- Swap.io quote and unsigned transaction preparation are proxied through x402. The caller's x402 client signs the separate USDC API payment; this Worker never receives wallet private keys. The caller must still sign the returned swap transaction locally.
 - The manual admin balance endpoint accepts operator-entered snapshots for controlled testing only. The admin sync endpoint reads SOL and USDC balances from Solana RPC at confirmed commitment. Never accept balances from agent requests.
 - A scheduled Worker runs reservation expiry cleanup every minute. The admin expiry endpoint is also available for manual reconciliation. Verify the cron trigger is active after deployment.
 - API-key rotation, user login, business-level dashboard authorization and rate limiting remain future work.
@@ -146,6 +148,49 @@ curl -X POST http://localhost:8787/v1/liquidity/requests \
 ```
 
 A `reserved` response means the amount is held in the internal ledger, not transferred. A `awaiting_conversion` response means an eligible alternative token was observed; it does not mean a swap has been quoted or executed.
+
+## Swap.io x402 integration
+
+The conversion endpoints proxy only to the fixed Hermes host; callers cannot supply arbitrary URLs.
+
+- `POST /v1/conversions/quote` accepts `operationId`, registered `userAddress`, `sourceAmount` in SOL and optional `slippageBps`.
+- The API verifies the operation belongs to the authenticated agent, the wallet is authorized, and the SOL balance snapshot is fresh and sufficient.
+- The request is translated to the Hermes quote schema using wrapped SOL as the input mint and canonical Solana USDC as the output mint.
+- The upstream HTTP 402 body and payment headers are relayed. An x402-compatible client handles the separate USDC API payment and retries with `X-PAYMENT`; the Worker forwards that proof to Hermes.
+- `POST /v1/conversions/prepare` accepts `operationId`, `userAddress`, `sourceAmount`, `provider` and the selected quote's `providerQuote`. It returns the unsigned base64 transaction from Hermes.
+
+Example client shape (the signing wallet stays in the business-controlled agent runtime):
+
+```js
+import { createX402Client } from "x402-solana/client";
+
+const client = createX402Client({
+  wallet: {
+    address: businessWallet.publicKey.toString(),
+    signTransaction: async (tx) => {
+      tx.sign([businessWallet]);
+      return tx;
+    }
+  },
+  network: "solana"
+});
+
+const quoteResponse = await client.fetch("https://YOUR_API/v1/conversions/quote", {
+  method: "POST",
+  headers: {
+    "Authorization": `Bearer ${AGENT_API_KEY}`,
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    operationId: "op_...",
+    userAddress: businessWallet.publicKey.toString(),
+    sourceAmount: "0.1",
+    slippageBps: 50
+  })
+});
+```
+
+The wallet used by the x402 client needs a separate USDC reserve for Hermes API charges. That is distinct from SOL being converted. The returned swap transaction is unsigned; signing and broadcasting remain outside this Worker. No paid API request has been made by this repository's implementation.
 
 ## Next milestones
 
