@@ -25,6 +25,17 @@ describe("liquidity decisions", () => {
     ]);
     expect(result.action).toBe("direct_fulfillment");
     expect(result.shortfallAtoms).toBe(0n);
+    expect(result.sourceWalletId).toBe("w1");
+  });
+
+  it("chooses a single wallet that can cover the full request", () => {
+    const result = evaluateLiquidity("USDC", 10_000_000n, [
+      { walletId: "w1", token: "USDC", availableAtoms: 5_000_000n, eligible: true },
+      { walletId: "w2", token: "USDC", availableAtoms: 15_000_000n, eligible: true }
+    ]);
+    expect(result.action).toBe("direct_fulfillment");
+    expect(result.sourceWalletId).toBe("w2");
+    expect(result.availableAtoms).toBe(15_000_000n);
   });
 
   it("does not aggregate separate wallets before split reservations are implemented", () => {
