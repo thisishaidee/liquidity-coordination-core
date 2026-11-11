@@ -395,7 +395,7 @@ async function continueTelegramLiquidityRequest(env: Env, chatId: string, userId
     }
     const taskId = "telegram-" + crypto.randomUUID().replaceAll("-", "");
     const internalRequest = new Request("https://nerith.internal/v1/liquidity/requests", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ taskId: taskId, network: "solana", token: "USDC", amount: draft.amount, purpose: purpose }) });
-    const response = await createLiquidityRequest(internalRequest, env, agent);
+    const response = await createLiquidityRequest(internalRequest, env, agent, { chatId: chatId, userId: userId });
     const result = await response.json() as Record<string, unknown>;
     await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(businessId, chatId, userId).run();
     if (!response.ok) {
@@ -403,7 +403,6 @@ async function continueTelegramLiquidityRequest(env: Env, chatId: string, userId
       return true;
     }
     const operationId = typeof result.operationId === "string" ? result.operationId : "";
-    if (operationId) await env.DB.prepare("INSERT INTO telegram_request_origins (business_id, operation_id, telegram_chat_id, telegram_user_id) VALUES (?, ?, ?, ?)").bind(businessId, operationId, chatId, userId).run();
     const requested = result.requested as { amount?: string } | undefined;
     const liquidity = result.liquidity as { shortfall?: string } | undefined;
     const action = String(result.action ?? "");
@@ -1857,7 +1856,7 @@ async function prepareSwapTransaction(request: Request, env: Env): Promise<Respo
   return upstream;
 }
 
-async function createLiquidityRequest(request: Request, env: Env, trustedAgent?: AgentRow): Promise<Response> {
+async function createLiquidityRequest(request: Request, env: Env, trustedAgent?: AgentRow, telegramOrigin?: { chatId: string; userId: string }): Promise<Response> {
   const agent = trustedAgent ?? await authenticate(request, env.DB);
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
   const body = await readJson(request);
@@ -1958,7 +1957,11 @@ async function createLiquidityRequest(request: Request, env: Env, trustedAgent?:
         env.DB.prepare(`
           INSERT INTO reservations (id, operation_id, wallet_balance_id, amount_atoms, expires_at)
           VALUES (?, ?, ?, ?, ?)
-        `).bind(reservationId, operationId, candidate.row.balance_id, requestedAtoms.toString(), expiresAt)
+        `).bind(reservationId, operationId, candidate.row.balance_id, requestedAtoms.toString(), expiresAt),
+        ...(telegramOrigin ? [
+          env.DB.prepare("INSERT INTO telegram_request_origins (business_id, operation_id, telegram_chat_id, telegram_user_id) VALUES (?, ?, ?, ?)")
+            .bind(agent.business_id, operationId, telegramOrigin.chatId, telegramOrigin.userId)
+        ] : [])
       ]);
     } catch {
       await env.DB.prepare(
@@ -2040,6 +2043,10 @@ async function createLiquidityRequest(request: Request, env: Env, trustedAgent?:
           targetReservedAtoms.toString(),
           expiresAt
         )
+      ] : []),
+      ...(telegramOrigin ? [
+        env.DB.prepare("INSERT INTO telegram_request_origins (business_id, operation_id, telegram_chat_id, telegram_user_id) VALUES (?, ?, ?, ?)")
+          .bind(agent.business_id, operationId, telegramOrigin.chatId, telegramOrigin.userId)
       ] : [])
     ]);
   } catch {
