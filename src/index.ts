@@ -1164,6 +1164,7 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
       transaction?: { message?: { accountKeys?: Array<string | { pubkey?: string }> } };
       meta?: {
         err?: unknown;
+        fee?: number;
         preBalances?: number[];
         postBalances?: number[];
         preTokenBalances?: ParsedTokenBalance[];
@@ -1197,16 +1198,24 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
       const keyIndex = keys.findIndex((entry) =>
         (typeof entry === "string" ? entry : entry.pubkey) === wallet.address
       );
-      const sumOwnerMint = (entries: ParsedTokenBalance[] | undefined, mint: string) =>
-        (entries ?? []).filter((entry) => entry.owner === wallet.address && entry.mint === mint)
+      const keys = transaction.transaction?.message?.accountKeys ?? [];
+      const keyIndex = keys.findIndex((entry) =>
+        (typeof entry === "string" ? entry : entry.pubkey) === wallet.address
+      );
+      const preLamports = transaction.meta.preBalances?.[keyIndex];
+      const postLamports = transaction.meta.postBalances?.[keyIndex];
+      const feeLamports = BigInt(transaction.meta.fee ?? 0);
+      const lamportsSpent = keyIndex >= 0 && preLamports !== undefined && postLamports !== undefined
+        ? BigInt(preLamports) - BigInt(postLamports) - feeLamports
+        : 0n;
+      const sourceSpentAtoms = lamportsSpent > 0n ? lamportsSpent : 0n;
+
+      const sumOwnerUsdc = (entries: ParsedTokenBalance[] | undefined) =>
+        (entries ?? []).filter((entry) => entry.owner === wallet.address && entry.mint === USDC_MINT)
           .reduce((sum, entry) => sum + BigInt(entry.uiTokenAmount?.amount ?? "0"), 0n);
 
-      const beforeWsol = sumOwnerMint(transaction.meta.preTokenBalances, SOL_MINT);
-      const afterWsol = sumOwnerMint(transaction.meta.postTokenBalances, SOL_MINT);
-      const sourceSpentAtoms = beforeWsol > afterWsol ? beforeWsol - afterWsol : 0n;
-
-      const beforeUsdc = sumOwnerMint(transaction.meta.preTokenBalances, USDC_MINT);
-      const afterUsdc = sumOwnerMint(transaction.meta.postTokenBalances, USDC_MINT);
+      const beforeUsdc = sumOwnerUsdc(transaction.meta.preTokenBalances);
+      const afterUsdc = sumOwnerUsdc(transaction.meta.postTokenBalances);
       outputAtoms = afterUsdc > beforeUsdc ? afterUsdc - beforeUsdc : 0n;
 
       if (sourceSpentAtoms < BigInt(reservation.amount_atoms) || outputAtoms === 0n) {
