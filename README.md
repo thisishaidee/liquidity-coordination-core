@@ -16,7 +16,7 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 
 | Method | Route | Purpose |
 |---|---|---|
-| GET | `/` | Read-only browser dashboard |
+| GET | `/` | Public NERITH landing page |\n| GET | `/app` | Read-only agent-scoped browser console |
 | GET | `/health` | Service health |
 | POST | `/v1/admin/bootstrap` | Create a business and its first agent |
 | POST | `/v1/admin/agents` | Provision an additional scoped agent |
@@ -335,7 +335,7 @@ The x402 client wallet must match the registered `api_payment` wallet and needs 
 
 ## Browser dashboard
 
-The Worker serves a responsive read-only dashboard embedded in its module at `/`; `npm run build:dashboard` regenerates `src/dashboard.ts` from `public/index.html`. Connect with an agent API key to inspect authorized operating-wallet balances, the separate x402 payment reserve, and the agent's latest 50 operations. API-payment balances are visible but never included in operating liquidity or forecasts. The key is held in page memory only and is not written to local or session storage. The dashboard cannot sign transactions, move funds, or change permissions.
+The Worker serves a public product landing page at `/` and the responsive read-only agent-scoped dashboard at `/app`. `npm run build:dashboard` regenerates both embedded HTML modules from `public/landing.html` and `public/index.html`. Connect with an agent API key to inspect authorized operating-wallet balances, the separate x402 payment reserve, and the agent's latest 50 operations. API-payment balances are visible but never included in operating liquidity or forecasts. The key is held in page memory only and is not written to local or session storage. The dashboard cannot sign transactions, move funds, or change permissions.
 
 ## Telegram business alerts
 
