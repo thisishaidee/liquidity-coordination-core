@@ -107,7 +107,7 @@
 
       <section class="panel">
         <div class="section-head">
-          <div><h2>Upcoming liquidity</h2><div class="muted">Your agent's 30-day obligations; business shortfall includes all agents sharing treasury. <span id="forecastFreshness">—</span></div></div>
+          <div><h2>Upcoming liquidity</h2><div class="muted">Your agent's 30-day obligations; business shortfall includes all agents sharing treasury. <span id="forecastFreshness">—</span> · <span id="businessForecastSummary">—</span></div></div>
         </div>
         <div class="table-wrap">
           <table>
@@ -177,6 +177,7 @@
         $("conversionCount").textContent = items.filter((x) => ["awaiting_conversion","preparing_conversion","conversion_submitted"].includes(x.status)).length;
         $("forecastShortfall").textContent = money(forecast.businessSummary?.totalShortfallUSDC || "0", "USDC");
         $("forecastFreshness").textContent = forecast.businessBalanceDataFresh ? "Business wallet snapshots fresh" : "Some business wallet snapshots stale or missing";
+        $("businessForecastSummary").textContent = `Includes ${forecast.businessSummary?.otherAgentObligations || 0} other-agent obligations`;
         $("balanceRows").innerHTML = balances.length ? balances.map((b) => `
           <tr>
             <td class="mono">${escapeHtml(shortAddress(b.address))}</td>
