@@ -3026,11 +3026,13 @@ async function listAgentOperations(request: Request, env: Env): Promise<Response
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
 
   const rows = await env.DB.prepare(`
-    SELECT id, task_id, token, amount_atoms, status, action, available_atoms,
-           shortfall_atoms, source_wallet_id, transaction_hash, received_output_atoms, created_at
-    FROM operations
-    WHERE agent_id = ?
-    ORDER BY created_at DESC
+    SELECT o.id, o.task_id, o.token, o.amount_atoms, o.status, o.action, o.available_atoms,
+           o.shortfall_atoms, o.source_wallet_id, o.transaction_hash, o.received_output_atoms, o.created_at,
+           a.decision AS telegram_decision, a.decided_at AS telegram_decided_at
+    FROM operations o
+    LEFT JOIN telegram_operation_approvals a ON a.operation_id = o.id
+    WHERE o.agent_id = ?
+    ORDER BY o.created_at DESC
     LIMIT 50
   `).bind(agent.id).all<{
     id: string;
@@ -3045,6 +3047,8 @@ async function listAgentOperations(request: Request, env: Env): Promise<Response
     transaction_hash: string | null;
     received_output_atoms: string | null;
     created_at: string;
+    telegram_decision: string | null;
+    telegram_decided_at: string | null;
   }>();
 
   return json({
@@ -3062,6 +3066,8 @@ async function listAgentOperations(request: Request, env: Env): Promise<Response
       receivedUSDC: row.received_output_atoms
         ? formatTokenAmount(BigInt(row.received_output_atoms), 6)
         : null,
+      telegramDecision: row.telegram_decision,
+      telegramDecidedAt: row.telegram_decided_at,
       createdAt: row.created_at
     }))
   });
