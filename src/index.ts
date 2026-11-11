@@ -311,13 +311,13 @@ async function handleTelegramCommand(
   }
 
   const connection = await env.DB.prepare(`
-    SELECT c.business_id, b.name AS business_name
+    SELECT c.business_id, c.permission, b.name AS business_name
     FROM telegram_connections c
     JOIN businesses b ON b.id = c.business_id
     WHERE c.chat_id = ? AND c.telegram_user_id = ? AND c.status = 'active'
     ORDER BY c.linked_at DESC
     LIMIT 1
-  `).bind(chatId, userId).first<{ business_id: string; business_name: string }>();
+  `).bind(chatId, userId).first<{ business_id: string; business_name: string; permission: string }>();
 
   if (!connection) {
     await sendTelegramMessage(
