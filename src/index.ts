@@ -1204,7 +1204,7 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
     receivedUSDC: outputAtoms > 0n ? formatTokenAmount(outputAtoms, 6) : null,
     requiredUSDC: formatTokenAmount(BigInt(operation.shortfall_atoms), 6),
     settlementNote,
-    balanceRefreshRequired: effectiveStatus !== "failed"
+    balanceRefreshRequired: true
   });
 }
 
