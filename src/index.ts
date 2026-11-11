@@ -875,23 +875,71 @@ async function createLiquidityRequest(request: Request, env: Env): Promise<Respo
   }
 
   const status = decision.action === "conversion_required" ? "awaiting_conversion" : "blocked";
-  await env.DB.prepare(`
-    INSERT INTO operations
-      (id, business_id, agent_id, task_id, network, token, amount_atoms, purpose,
-       status, action, available_atoms, shortfall_atoms, source_wallet_id)
-    VALUES (?, ?, ?, ?, 'solana', 'USDC', ?, ?, ?, ?, ?, ?, ?)
-  `).bind(
-    operationId, agent.business_id, agent.id, taskId, requestedAtoms.toString(),
-    purpose.trim(), status, decision.action, decision.availableAtoms.toString(),
-    decision.shortfallAtoms.toString(), decision.sourceWalletId
-  ).run();
+  let targetReservationId: string | null = null;
+  let targetBalanceId: string | null = null;
+  let targetReservedAtoms = 0n;
+
+  if (decision.action === "conversion_required" && decision.availableAtoms > 0n && decision.sourceWalletId) {
+    const targetBalance = eligibleRows.find((row) =>
+      row.wallet_id === decision.sourceWalletId && row.token === "USDC"
+    );
+    if (!targetBalance) return json({ error: "target_balance_changed" }, 409);
+
+    targetReservationId = "res_" + crypto.randomUUID().replaceAll("-", "");
+    targetBalanceId = targetBalance.balance_id;
+    targetReservedAtoms = decision.availableAtoms;
+    const reserveTarget = await env.DB.prepare(`
+      UPDATE wallet_balances
+      SET reserved_atoms = CAST(reserved_atoms AS INTEGER) + ?
+      WHERE id = ?
+        AND CAST(confirmed_atoms AS INTEGER) - CAST(reserved_atoms AS INTEGER) >= ?
+    `).bind(targetReservedAtoms.toString(), targetBalanceId, targetReservedAtoms.toString()).run();
+
+    if ((reserveTarget.meta?.changes ?? 0) !== 1) {
+      return json({ error: "target_balance_changed", message: "Existing USDC was allocated by another operation. Refresh and retry." }, 409);
+    }
+  }
+
+  try {
+    await env.DB.batch([
+      env.DB.prepare(`
+        INSERT INTO operations
+          (id, business_id, agent_id, task_id, network, token, amount_atoms, purpose,
+           status, action, available_atoms, shortfall_atoms, source_wallet_id, target_reservation_id)
+        VALUES (?, ?, ?, ?, 'solana', 'USDC', ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        operationId, agent.business_id, agent.id, taskId, requestedAtoms.toString(),
+        purpose.trim(), status, decision.action, decision.availableAtoms.toString(),
+        decision.shortfallAtoms.toString(), decision.sourceWalletId, targetReservationId
+      ),
+      ...(targetReservationId && targetBalanceId ? [
+        env.DB.prepare(`
+          INSERT INTO reservations (id, operation_id, wallet_balance_id, amount_atoms, expires_at, token)
+          VALUES (?, ?, ?, ?, ?, 'USDC')
+        `).bind(
+          targetReservationId,
+          operationId,
+          targetBalanceId,
+          targetReservedAtoms.toString(),
+          expiresAt
+        )
+      ] : [])
+    ]);
+  } catch {
+    if (targetReservationId && targetBalanceId && targetReservedAtoms > 0n) {
+      await env.DB.prepare(
+        "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?"
+      ).bind(targetReservedAtoms.toString(), targetBalanceId, targetReservedAtoms.toString()).run();
+    }
+    return json({ error: "operation_not_created" }, 409);
+  }
 
   const futureImpact = await safeBusinessForecast(agent, env);
   await notifyBusiness(
     env,
     agent.business_id,
     decision.action === "conversion_required"
-      ? `Liquidity shortfall: task ${taskId} needs ${formatTokenAmount(decision.shortfallAtoms)} additional USDC. Eligible source assets: ${decision.eligibleSourceTokens.join(", ") || "none"}. Operation ${operationId}.`
+      ? `Liquidity shortfall: task ${taskId} needs ${formatTokenAmount(decision.shortfallAtoms)} additional USDC. ${targetReservedAtoms > 0n ? formatTokenAmount(targetReservedAtoms) + " USDC is reserved in the selected source wallet." : ""} Eligible source assets: ${decision.eligibleSourceTokens.join(", ") || "none"}. Operation ${operationId}.`
       : `Liquidity blocked: task ${taskId} has insufficient authorized funds. Operation ${operationId}.`
   );
 
@@ -901,13 +949,15 @@ async function createLiquidityRequest(request: Request, env: Env): Promise<Respo
     requested: { network: "solana", token: "USDC", amount: formatTokenAmount(requestedAtoms) },
     liquidity: {
       available: formatTokenAmount(decision.availableAtoms),
+      reservedTargetUSDC: formatTokenAmount(targetReservedAtoms),
       shortfall: formatTokenAmount(decision.shortfallAtoms)
     },
     action: decision.action,
     eligibleSourceTokens: decision.eligibleSourceTokens,
     sourceWalletId: decision.sourceWalletId,
+    targetReservationId,
     futureImpact,
-    note: "No conversion, signing or transfer has occurred. Future impact is a business-wide forecast, not a reservation."
+    note: "No conversion, signing or transfer has occurred. Existing target USDC is held separately from the SOL source reservation."
   }, 201);
 }
 
