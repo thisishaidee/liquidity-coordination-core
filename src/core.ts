@@ -36,9 +36,11 @@ export function evaluateLiquidity(
   balances: LiquidityBalance[]
 ): LiquidityDecision {
   const eligible = balances.filter((balance) => balance.eligible && balance.availableAtoms > 0n);
+  // V1 reserves from one wallet atomically. Do not aggregate balances across
+  // wallets until split reservations can be committed as one transaction.
   const availableAtoms = eligible
     .filter((balance) => balance.token.toUpperCase() === requestedToken.toUpperCase())
-    .reduce((sum, balance) => sum + balance.availableAtoms, 0n);
+    .reduce((largest, balance) => balance.availableAtoms > largest ? balance.availableAtoms : largest, 0n);
 
   if (availableAtoms >= requestedAtoms) {
     return { action: "direct_fulfillment", availableAtoms, shortfallAtoms: 0n, eligibleSourceTokens: [] };
