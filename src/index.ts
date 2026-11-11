@@ -61,8 +61,79 @@ async function constantTimeEqual(a: string, b: string): Promise<boolean> {
 async function isAdmin(request: Request, env: Env): Promise<boolean> {
   const configured = env.ADMIN_BOOTSTRAP_TOKEN;
   const supplied = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
-  if (!configured || !supplied) return false;
-  return constantTimeEqual(configured, supplied);
+  if (configured && supplied && await constantTimeEqual(configured, supplied)) return true;
+  const cookie = request.headers.get("cookie") ?? "";
+  const match = cookie.match(/(?:^|;\s*)nerith_admin_session=([a-f0-9]{64})(?:;|$)/);
+  if (!match) return false;
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    const origin = request.headers.get("origin");
+    if (!origin || origin !== new URL(request.url).origin) return false;
+  }
+  const hash = await sha256(match[1]);
+  const session = await env.DB.prepare(
+    "SELECT token_hash FROM admin_sessions WHERE token_hash = ? AND expires_at > datetime('now') LIMIT 1"
+  ).bind(hash).first<{ token_hash: string }>();
+  return Boolean(session);
+}
+
+async function createAdminSession(request: Request, env: Env): Promise<Response> {
+  const configured = env.ADMIN_BOOTSTRAP_TOKEN;
+  const supplied = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
+  if (!configured || !supplied || !(await constantTimeEqual(configured, supplied))) {
+    return json({ error: "unauthorized" }, 401);
+  }
+  const token = newSecret("");
+  const hash = await sha256(token);
+  const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+  await env.DB.prepare("INSERT INTO admin_sessions (token_hash, expires_at) VALUES (?, ?)")
+    .bind(hash, expiresAt).run();
+  return new Response(JSON.stringify({ authenticated: true, expiresAt }), {
+    status: 200,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+      "set-cookie": "nerith_admin_session=" + token + "; Path=/v1/admin; HttpOnly; Secure; SameSite=Strict; Max-Age=43200"
+    }
+  });
+}
+
+async function endAdminSession(request: Request, env: Env): Promise<Response> {
+  const cookie = request.headers.get("cookie") ?? "";
+  const match = cookie.match(/(?:^|;\s*)nerith_admin_session=([a-f0-9]{64})(?:;|$)/);
+  if (match) {
+    await env.DB.prepare("DELETE FROM admin_sessions WHERE token_hash = ?")
+      .bind(await sha256(match[1])).run();
+  }
+  return new Response(JSON.stringify({ authenticated: false }), {
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+      "set-cookie": "nerith_admin_session=; Path=/v1/admin; HttpOnly; Secure; SameSite=Strict; Max-Age=0"
+    }
+  });
+}
+
+async function getBusinessWorkspace(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const businessId = new URL(request.url).searchParams.get("businessId");
+  if (!businessId) return json({ error: "business_id_required" }, 400);
+  const business = await env.DB.prepare("SELECT id, name, created_at FROM businesses WHERE id = ?")
+    .bind(businessId).first<{ id: string; name: string; created_at: string }>();
+  if (!business) return json({ error: "business_not_found" }, 404);
+  const [agents, wallets, telegram] = await Promise.all([
+    env.DB.prepare("SELECT id, name, status, can_use_business_treasury, created_at FROM agents WHERE business_id = ? ORDER BY created_at ASC")
+      .bind(businessId).all<{ id: string; name: string; status: string; can_use_business_treasury: number; created_at: string }>(),
+    env.DB.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active FROM wallets WHERE business_id = ?")
+      .bind(businessId).first<{ total: number; active: number }>(),
+    env.DB.prepare("SELECT COUNT(*) AS active FROM telegram_connections WHERE business_id = ? AND status = 'active'")
+      .bind(businessId).first<{ active: number }>()
+  ]);
+  return json({
+    business,
+    agents: (agents.results ?? []).map(a => ({ id: a.id, name: a.name, status: a.status, canUseBusinessTreasury: a.can_use_business_treasury === 1, createdAt: a.created_at })),
+    wallets: { total: wallets?.total ?? 0, active: wallets?.active ?? 0 },
+    telegramConnections: telegram?.active ?? 0
+  });
 }
 
 async function authenticate(request: Request, db: D1Database): Promise<AgentRow | null> {
@@ -2572,6 +2643,9 @@ export default {
         }, 503);
       }
     }
+    if (request.method === "POST" && url.pathname === "/v1/admin/session") return createAdminSession(request, env);
+    if (request.method === "DELETE" && url.pathname === "/v1/admin/session") return endAdminSession(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/admin/workspace") return getBusinessWorkspace(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/bootstrap") return bootstrapBusiness(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/agents") return provisionAgent(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/agents") return listBusinessAgents(request, env);
