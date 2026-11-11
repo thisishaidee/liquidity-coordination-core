@@ -13,6 +13,9 @@ API-first infrastructure for coordinating authorized liquidity across AI agents.
 | POST | `/v1/admin/bootstrap` | Create a business and its first agent |
 | POST | `/v1/admin/agents` | Provision an additional scoped agent |
 | GET | `/v1/admin/agents?businessId=...` | List agents without exposing their keys |
+| POST | `/v1/admin/agents/:id/rotate-key` | Rotate an agent API key immediately |
+| POST | `/v1/admin/agents/:id/disable` | Disable an agent credential |
+| POST | `/v1/admin/wallets/:id/disable` | Revoke a wallet after its active reservations clear |
 | POST | `/v1/admin/wallets` | Register an authorized Solana wallet |
 | POST | `/v1/admin/balances` | Record a controlled manual balance snapshot |
 | POST | `/v1/admin/balances/sync` | Refresh registered wallet balances from Solana RPC |
@@ -119,6 +122,27 @@ curl -X POST http://localhost:8787/v1/admin/agents \
 ```
 
 List agents with `GET /v1/admin/agents?businessId=biz_...`. The response never includes API keys.
+
+### Rotate or disable an agent
+
+```bash
+curl -X POST http://localhost:8787/v1/admin/agents/agt_.../rotate-key \
+  -H "Authorization: Bearer YOUR_ADMIN_BOOTSTRAP_TOKEN"
+
+curl -X POST http://localhost:8787/v1/admin/agents/agt_.../disable \
+  -H "Authorization: Bearer YOUR_ADMIN_BOOTSTRAP_TOKEN"
+```
+
+Rotation invalidates the old key immediately and returns the replacement once. Disabling an agent prevents future authenticated requests.
+
+### Revoke a wallet
+
+```bash
+curl -X POST http://localhost:8787/v1/admin/wallets/wal_.../disable \
+  -H "Authorization: Bearer YOUR_ADMIN_BOOTSTRAP_TOKEN"
+```
+
+Wallet revocation is refused while active internal reservations reference that wallet.
 
 ## Register a wallet
 
