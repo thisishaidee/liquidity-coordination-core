@@ -76,14 +76,16 @@ npm run typecheck
 npm test
 ```
 
-Create a Cloudflare D1 database, set its ID in `wrangler.toml`, then apply migrations:
+Use the dedicated Cloudflare D1 database already provisioned for this repository. Its ID is configured in `wrangler.toml`; migrations 0001 through 0011 have been applied and recorded in `d1_migrations`. For a fresh environment, create a D1 database and apply migrations:
 
 ```bash
 npx wrangler d1 create liquidity-coordination
 npx wrangler d1 migrations apply liquidity-coordination --local
+# For the provisioned production database:
+npx wrangler d1 migrations apply liquidity-coordination --remote
 ```
 
-For a remote database, apply migrations with `--remote`. Do not deploy until the production database binding and secret are configured.
+For a remote database, apply migrations with `--remote`. Do not deploy until the Worker secret is configured. The database binding is already set up.
 
 ## Provision a business and first agent
 
