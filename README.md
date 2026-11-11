@@ -337,7 +337,7 @@ The x402 client wallet must match the registered `api_payment` wallet and needs 
 
 ## Browser dashboard
 
-The Worker serves a public product landing page at `/` and the responsive read-only agent-scoped dashboard at `/app`. `npm run build:dashboard` regenerates both embedded HTML modules from `public/landing.html` and `public/index.html`. Connect with an agent API key to inspect authorized operating-wallet balances, the separate x402 payment reserve, and the agent's latest 50 operations. API-payment balances are visible but never included in operating liquidity or forecasts. The key is held in page memory only and is not written to local or session storage. The dashboard cannot sign transactions, move funds, or change permissions.
+The Worker serves a public product landing page at `/`, a business-owner setup and Telegram linking page at `/control`, and the responsive read-only agent-scoped dashboard at `/app`. `npm run build:dashboard` regenerates the embedded HTML modules from `public/landing.html`, `public/index.html` and `public/control.html`. Connect with an agent API key to inspect authorized operating-wallet balances, the separate x402 payment reserve, and the agent's latest 50 operations. API-payment balances are visible but never included in operating liquidity or forecasts. The key is held in page memory only and is not written to local or session storage. The dashboard cannot sign transactions, move funds, or change permissions.
 
 ## Telegram business companion
 
