@@ -18,6 +18,8 @@ API-first infrastructure for coordinating authorized liquidity across AI agents.
 | POST | `/v1/admin/telegram/link-codes` | Create a one-time private Telegram linking invitation |
 | POST | `/v1/telegram/webhook` | Receive verified Telegram bot updates |
 | POST | `/v1/liquidity/requests` | Submit a task funding request |
+| GET | `/v1/liquidity` | Read authorized operating-wallet balances |
+| GET | `/v1/operations` | List the authenticated agent's recent operations |
 | POST | `/v1/conversions/quote` | Request a paid Swap.io quote through x402 |
 | POST | `/v1/conversions/prepare` | Build an unsigned Swap.io transaction through x402 |
 | POST | `/v1/conversions/track` | Record the transaction signature after wallet broadcast |
