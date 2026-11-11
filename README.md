@@ -16,7 +16,8 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 
 | Method | Route | Purpose |
 |---|---|---|
-| GET | `/` | Public NERITH landing page |\n| GET | `/app` | Read-only agent-scoped browser console |
+| GET | `/` | Public NERITH landing page |
+| GET | `/app` | Read-only agent-scoped browser console |
 | GET | `/health` | Service health |
 | POST | `/v1/admin/bootstrap` | Create a business and its first agent |
 | POST | `/v1/admin/agents` | Provision an additional scoped agent |
