@@ -107,7 +107,7 @@
 
       <section class="panel">
         <div class="section-head">
-          <div><h2>Upcoming liquidity</h2><div class="muted">30-day obligation forecast; estimates are not reservations.</div></div>
+          <div><h2>Upcoming liquidity</h2><div class="muted">30-day obligation forecast; estimates are not reservations. <span id="forecastFreshness">—</span></div></div>
         </div>
         <div class="table-wrap">
           <table>
@@ -176,6 +176,7 @@
         $("openCount").textContent = items.filter((x) => !["released","expired","conversion_failed","conversion_settled","conversion_unverified","conversion_settled_shortfall"].includes(x.status)).length;
         $("conversionCount").textContent = items.filter((x) => ["awaiting_conversion","preparing_conversion","conversion_submitted"].includes(x.status)).length;
         $("forecastShortfall").textContent = money(forecast.summary?.totalShortfallUSDC || "0", "USDC");
+        $("forecastFreshness").textContent = forecast.balanceDataFresh ? "Balance snapshots fresh" : "Some balance snapshots stale or missing";
         $("balanceRows").innerHTML = balances.length ? balances.map((b) => `
           <tr>
             <td class="mono">${escapeHtml(shortAddress(b.address))}</td>
