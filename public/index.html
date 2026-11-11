@@ -128,7 +128,10 @@
       "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
     })[c]);
     const shortAddress = (value) => value ? value.slice(0,5) + "…" + value.slice(-5) : "—";
-    const money = (value, token) => `${Number(value || 0).toLocaleString(undefined,{maximumFractionDigits: token === "SOL" ? 9 : 6})} ${token}`;
+    const money = (value, token) => {
+      const [whole = "0", fraction = ""] = String(value || "0").split(".");
+      return `${BigInt(whole).toLocaleString()}${fraction ? "." + fraction : ""} ${token}`;
+    };
     const statusClass = (status) => {
       if (["reserved","conversion_settled","ready_for_fulfillment"].includes(status)) return "good";
       if (["awaiting_conversion","preparing_conversion","conversion_submitted","verification_pending"].includes(status)) return "warn";
