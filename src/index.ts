@@ -1239,6 +1239,79 @@ async function releaseOperation(request: Request, env: Env, operationId: string)
   return json({ operationId, status: "released", released });
 }
 
+async function completeOperation(request: Request, env: Env, operationId: string): Promise<Response> {
+  const agent = await authenticate(request, env.DB);
+  if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
+
+  const operation = await env.DB.prepare(
+    "SELECT id, status FROM operations WHERE id = ? AND agent_id = ?"
+  ).bind(operationId, agent.id).first<{ id: string; status: string }>();
+  if (!operation) return json({ error: "operation_not_found" }, 404);
+  if (operation.status !== "reserved" && operation.status !== "conversion_settled") {
+    return json({ error: "operation_not_completable", status: operation.status }, 409);
+  }
+
+  const claimOperation = await env.DB.prepare(
+    "UPDATE operations SET status = 'completed' WHERE id = ? AND agent_id = ? AND status = ?"
+  ).bind(operationId, agent.id, operation.status).run();
+  if ((claimOperation.meta?.changes ?? 0) !== 1) return json({ error: "operation_state_changed" }, 409);
+
+  const reservations = await env.DB.prepare(
+    "SELECT id, wallet_balance_id, amount_atoms, token FROM reservations WHERE operation_id = ? AND status = 'active'"
+  ).bind(operationId).all<{
+    id: string;
+    wallet_balance_id: string;
+    amount_atoms: string;
+    token: string;
+  }>();
+
+  const processed: Array<{ id: string; wallet_balance_id: string; amount_atoms: string }> = [];
+  for (const reservation of reservations.results ?? []) {
+    const claim = await env.DB.prepare(
+      "UPDATE reservations SET status = 'consumed', released_at = datetime('now') WHERE id = ? AND status = 'active'"
+    ).bind(reservation.id).run();
+    if ((claim.meta?.changes ?? 0) !== 1) continue;
+
+    const debit = await env.DB.prepare(`
+      UPDATE wallet_balances
+      SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?, observed_at = datetime('now', '-10 minutes')
+      WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?
+    `).bind(reservation.amount_atoms, reservation.wallet_balance_id, reservation.amount_atoms).run();
+
+    if ((debit.meta?.changes ?? 0) !== 1) {
+      await env.DB.prepare(
+        "UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = 'consumed'"
+      ).bind(reservation.id).run();
+      for (const item of processed) {
+        await env.DB.prepare(
+          "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) + ?, observed_at = datetime('now', '-10 minutes') WHERE id = ?"
+        ).bind(item.amount_atoms, item.wallet_balance_id).run();
+        await env.DB.prepare(
+          "UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = 'consumed'"
+        ).bind(item.id).run();
+      }
+      await env.DB.prepare(
+        "UPDATE operations SET status = ? WHERE id = ? AND status = 'completed'"
+      ).bind(operation.status, operationId).run();
+      return json({ error: "reservation_ledger_mismatch" }, 409);
+    }
+    processed.push({ id: reservation.id, wallet_balance_id: reservation.wallet_balance_id, amount_atoms: reservation.amount_atoms });
+  }
+
+  await notifyBusiness(
+    env,
+    agent.business_id,
+    `Agent reported operation ${operationId} completed. Internal reservations were consumed and wallet snapshots marked stale pending on-chain refresh.`
+  );
+
+  return json({
+    operationId,
+    status: "completed",
+    reservationsConsumed: processed.length,
+    note: "Completion is agent-reported. This endpoint does not prove that an external payment or task action occurred."
+  });
+}
+
 async function expireReservations(env: Env): Promise<{ expired: number; skipped: number }> {
   const dueOperations = await env.DB.prepare(`
     SELECT DISTINCT o.id, o.business_id, o.status
@@ -2148,6 +2221,8 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/conversions/track") return trackSwapTransaction(request, env);
     const swapStatusMatch = url.pathname.match(/^\/v1\/conversions\/status\/([a-zA-Z0-9_-]+)$/);
     if (request.method === "GET" && swapStatusMatch) return getSwapStatus(request, env, swapStatusMatch[1]);
+    const completeMatch = url.pathname.match(/^\/v1\/operations\/([a-zA-Z0-9_-]+)\/complete$/);
+    if (request.method === "POST" && completeMatch) return completeOperation(request, env, completeMatch[1]);
     const releaseMatch = url.pathname.match(/^\/v1\/operations\/([a-zA-Z0-9_-]+)\/release$/);
     if (request.method === "POST" && releaseMatch) return releaseOperation(request, env, releaseMatch[1]);
     const operationMatch = url.pathname.match(/^\/v1\/operations\/([a-zA-Z0-9_-]+)$/);
