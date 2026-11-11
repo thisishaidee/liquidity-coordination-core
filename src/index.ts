@@ -399,7 +399,7 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      "Welcome to NERITH. I can give your business a private view of liquidity, forecasts, agents and recent operations.\n\nTo connect, ask your business administrator to generate a one-time Telegram invitation, then open that link here.\n\nCommands: /help"
+      "Welcome to NERITH. Monitor business liquidity, agents and operations, create liquidity requests, and let authorised approvers review prepared requests.\n\nTo connect, ask your business administrator to generate a one-time Telegram invitation, then open that link here.\n\nCommands: /help"
     );
     return;
   }
@@ -437,7 +437,7 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      `NERITH · ${connection.business_name}\n\n/status  Business overview\n/liquidity  Available and reserved balances\n/forecast  Upcoming planned obligations\n/agents  Agent status\n/operations  Recent liquidity activity\n/requests  Review prepared liquidity requests\n/disconnect  Disconnect this chat\n\nApprovals record a business decision only. This bot cannot sign or broadcast transactions.`
+      `NERITH · ${connection.business_name}\n\n/status  Business overview\n/liquidity  Available and reserved balances\n/forecast  Upcoming planned obligations\n/agents  Agent status\n/operations  Recent liquidity activity\n/request  Create a liquidity request\n/requests  Review prepared liquidity requests\n/cancel  Cancel a request draft\n/disconnect  Disconnect this chat\n\nRequests are checked against authorised, fresh liquidity and reservations. Approvals record a business decision only. This bot cannot sign or broadcast transactions.`
     );
     return;
   }
