@@ -295,6 +295,98 @@ async function createTelegramLinkCode(request: Request, env: Env): Promise<Respo
   }, 201);
 }
 
+async function startTelegramLiquidityRequest(env: Env, chatId: string, userId: string, businessId: string): Promise<void> {
+  const agents = await env.DB.prepare("SELECT id, name FROM agents WHERE business_id = ? AND status = 'active' ORDER BY name ASC LIMIT 8").bind(businessId).all<{ id: string; name: string }>();
+  const available = agents.results ?? [];
+  if (!available.length) {
+    await sendTelegramMessage(env, chatId, "There are no active agents in this workspace. Add or activate an agent before creating a request.");
+    return;
+  }
+  await env.DB.prepare("INSERT INTO telegram_request_drafts (business_id, chat_id, telegram_user_id, step, expires_at) VALUES (?, ?, ?, 'agent', datetime('now', '+15 minutes')) ON CONFLICT(business_id, chat_id, telegram_user_id) DO UPDATE SET agent_id = NULL, amount = NULL, purpose = NULL, task_id = NULL, step = 'agent', expires_at = datetime('now', '+15 minutes'), updated_at = datetime('now')").bind(businessId, chatId, userId).run();
+  const choices = available.map((agent, index) => (index + 1) + ". " + agent.name).join("\n");
+  await sendTelegramMessage(env, chatId, "New liquidity request · Step 1 of 3\n\nWhich agent needs the funds? Reply with its number:\n\n" + choices + "\n\nSend /cancel at any time to stop.");
+}
+
+async function continueTelegramLiquidityRequest(env: Env, chatId: string, userId: string, businessId: string, answer: string): Promise<boolean> {
+  const draft = await env.DB.prepare("SELECT step, agent_id, amount, expires_at FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? LIMIT 1").bind(businessId, chatId, userId).first<{ step: string; agent_id: string | null; amount: string | null; expires_at: string }>();
+  if (!draft) return false;
+  if (Date.parse(draft.expires_at) <= Date.now()) {
+    await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(businessId, chatId, userId).run();
+    await sendTelegramMessage(env, chatId, "Your request draft expired. Send /request to start again.");
+    return true;
+  }
+  if (draft.step === "agent") {
+    const agents = await env.DB.prepare("SELECT id, name FROM agents WHERE business_id = ? AND status = 'active' ORDER BY name ASC LIMIT 8").bind(businessId).all<{ id: string; name: string }>();
+    const available = agents.results ?? [];
+    const index = Number(answer.trim());
+    if (!Number.isInteger(index) || index < 1 || index > available.length) {
+      await sendTelegramMessage(env, chatId, "Reply with one of the agent numbers shown, or send /cancel.");
+      return true;
+    }
+    const agent = available[index - 1];
+    await env.DB.prepare("UPDATE telegram_request_drafts SET agent_id = ?, step = 'amount', updated_at = datetime('now') WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(agent.id, businessId, chatId, userId).run();
+    await sendTelegramMessage(env, chatId, "Agent selected: " + agent.name + "\n\nStep 2 of 3 · How much USDC is required? Reply with a positive amount, for example 25 or 12.50.");
+    return true;
+  }
+  if (draft.step === "amount") {
+    try {
+      const atoms = parseTokenAmount(answer.trim());
+      if (atoms > 9_000_000_000_000_000_000n) throw new Error("amount exceeds supported ledger range");
+    } catch {
+      await sendTelegramMessage(env, chatId, "Enter a valid positive USDC amount with up to 6 decimal places. Example: 25 or 12.50.");
+      return true;
+    }
+    await env.DB.prepare("UPDATE telegram_request_drafts SET amount = ?, step = 'purpose', updated_at = datetime('now') WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(answer.trim(), businessId, chatId, userId).run();
+    await sendTelegramMessage(env, chatId, "Step 3 of 3 · What is the USDC needed for? Give a clear purpose (3–300 characters).");
+    return true;
+  }
+  if (draft.step === "purpose") {
+    const purpose = answer.trim();
+    if (purpose.length < 3 || purpose.length > 300 || !draft.agent_id || !draft.amount) {
+      await sendTelegramMessage(env, chatId, "Please provide a purpose between 3 and 300 characters, or send /cancel.");
+      return true;
+    }
+    const agent = await env.DB.prepare("SELECT id, business_id, status, can_use_business_treasury FROM agents WHERE id = ? AND business_id = ? AND status = 'active' LIMIT 1").bind(draft.agent_id, businessId).first<AgentRow>();
+    if (!agent) {
+      await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(businessId, chatId, userId).run();
+      await sendTelegramMessage(env, chatId, "That agent is no longer active. Send /request to choose an active agent.");
+      return true;
+    }
+    const taskId = "telegram-" + crypto.randomUUID().replaceAll("-", "");
+    const internalRequest = new Request("https://nerith.internal/v1/liquidity/requests", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ taskId: taskId, network: "solana", token: "USDC", amount: draft.amount, purpose: purpose }) });
+    const response = await createLiquidityRequest(internalRequest, env, agent);
+    const result = await response.json() as Record<string, unknown>;
+    await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(businessId, chatId, userId).run();
+    if (!response.ok) {
+      await sendTelegramMessage(env, chatId, "NERITH could not create this request: " + String(result.message ?? result.error ?? "request_failed") + ". No approval was recorded.");
+      return true;
+    }
+    const operationId = typeof result.operationId === "string" ? result.operationId : "";
+    if (operationId) await env.DB.prepare("INSERT INTO telegram_request_origins (business_id, operation_id, telegram_chat_id, telegram_user_id) VALUES (?, ?, ?, ?)").bind(businessId, operationId, chatId, userId).run();
+    const requested = result.requested as { amount?: string } | undefined;
+    const liquidity = result.liquidity as { shortfall?: string } | undefined;
+    const action = String(result.action ?? "");
+    const status = String(result.status ?? "");
+    const agentName = (await env.DB.prepare("SELECT name FROM agents WHERE id = ?").bind(agent.id).first<{ name: string }>())?.name ?? "Selected agent";
+    const prepared = status === "reserved" && action === "direct_fulfillment";
+    const message = [
+      prepared ? "Liquidity request prepared" : "Liquidity request recorded",
+      "",
+      "Agent: " + agentName,
+      "Amount: " + String(requested?.amount ?? draft.amount) + " USDC",
+      "Purpose: " + purpose,
+      "Status: " + status,
+      "Operation: " + operationId,
+      prepared ? "Funds are reserved in the internal ledger. A different authorised approver must review this request." : "This request is not ready for approval. " + (liquidity?.shortfall ? "Current USDC shortfall: " + liquidity.shortfall + "." : "Check liquidity and wallet eligibility in NERITH."),
+      "",
+      "No transaction has been signed, broadcast or transferred."
+    ].join("\n");
+    await sendTelegramMessage(env, chatId, message);
+    return true;
+  }
+  return true;
+}
+
 async function handleTelegramCommand(
   env: Env,
   chatId: string,
@@ -331,6 +423,16 @@ async function handleTelegramCommand(
   }
 
   const businessId = connection.business_id;
+  if (command === "/request") {
+    await startTelegramLiquidityRequest(env, chatId, userId, businessId);
+    return;
+  }
+  if (command === "/cancel") {
+    const cancelled = await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(businessId, chatId, userId).run();
+    await sendTelegramMessage(env, chatId, (cancelled.meta?.changes ?? 0) > 0 ? "Your liquidity request draft has been cancelled." : "There is no active request draft to cancel.");
+    return;
+  }
+  if (!command.startsWith("/") && await continueTelegramLiquidityRequest(env, chatId, userId, businessId, rawText)) return;
   if (command === "/help" || command === "/commands" || command === "/start") {
     await sendTelegramMessage(
       env,
@@ -519,7 +621,9 @@ async function listTelegramRequests(env: Env, chatId: string, userId: string, bu
       "This records a business decision only. It does not sign, broadcast or transfer funds."
     ];
     let markup: Record<string, unknown> | undefined;
-    if (permission === "approver") {
+    const origin = await env.DB.prepare("SELECT telegram_chat_id, telegram_user_id FROM telegram_request_origins WHERE operation_id = ? LIMIT 1").bind(op.id).first<{ telegram_chat_id: string; telegram_user_id: string }>();
+    const isRequester = origin?.telegram_chat_id === chatId && origin?.telegram_user_id === userId;
+    if (permission === "approver" && !isRequester) {
       const approveToken = newSecret("").slice(0, 48);
       const rejectToken = newSecret("").slice(0, 48);
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
@@ -584,6 +688,12 @@ async function handleTelegramApprovalCallback(env: Env, callback: {
   ).bind(action.business_id, chatId, userId).first<{ id: string }>();
   if (!permission) {
     await answerTelegramCallback(env, callbackId, "Approver permission is no longer active.");
+    return;
+  }
+  const origin = await env.DB.prepare("SELECT telegram_chat_id, telegram_user_id FROM telegram_request_origins WHERE operation_id = ? LIMIT 1").bind(action.operation_id).first<{ telegram_chat_id: string; telegram_user_id: string }>();
+  if (origin?.telegram_chat_id === chatId && origin?.telegram_user_id === userId) {
+    await env.DB.prepare("UPDATE telegram_approval_actions SET consumed_at = datetime('now') WHERE token_hash = ?").bind(tokenHash).run();
+    await answerTelegramCallback(env, callbackId, "You cannot approve your own request.");
     return;
   }
   const details = await telegramOperationSnapshot(env, action.operation_id, action.business_id);
@@ -749,7 +859,9 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
           { command: "forecast", description: "Upcoming planned obligations" },
           { command: "agents", description: "Agent status" },
           { command: "operations", description: "Recent liquidity operations" },
+          { command: "request", description: "Create a liquidity request" },
           { command: "requests", description: "Review prepared liquidity requests" },
+          { command: "cancel", description: "Cancel a request draft" },
           { command: "disconnect", description: "Disconnect this Telegram chat" }
         ]
       })
@@ -763,7 +875,7 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
       configured: true,
       botUsername: identity.result.username,
       webhookUrl,
-      commands: ["start", "help", "status", "liquidity", "forecast", "agents", "operations", "disconnect"]
+      commands: ["start", "help", "status", "liquidity", "forecast", "agents", "operations", "request", "requests", "cancel", "disconnect"]
     });
   } catch {
     return json({ error: "telegram_setup_unavailable" }, 502);
@@ -839,7 +951,7 @@ async function telegramWebhook(request: Request, env: Env): Promise<Response> {
     return json({ ok: true });
   }
 
-  await sendTelegramMessage(env, chatId, "This Telegram chat is now connected to your business.\n\nTry /status, /liquidity, /forecast, /agents or /operations.\nUse /help to see all commands. This bot is read-only and cannot sign transactions or authorize spending.");
+  await sendTelegramMessage(env, chatId, "This Telegram chat is now connected to your business.\n\nTry /status, /liquidity, /forecast, /agents, /operations or /request.\nUse /help to see all commands. Requests and approvals are recorded by NERITH, but this bot cannot sign or broadcast transactions.");
   return json({ ok: true, linked: true });
 }
 
@@ -1684,8 +1796,8 @@ async function prepareSwapTransaction(request: Request, env: Env): Promise<Respo
   return upstream;
 }
 
-async function createLiquidityRequest(request: Request, env: Env): Promise<Response> {
-  const agent = await authenticate(request, env.DB);
+async function createLiquidityRequest(request: Request, env: Env, trustedAgent?: AgentRow): Promise<Response> {
+  const agent = trustedAgent ?? await authenticate(request, env.DB);
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
   const body = await readJson(request);
   if (!body) return json({ error: "invalid_json" }, 400);
