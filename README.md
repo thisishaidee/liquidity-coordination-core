@@ -11,6 +11,8 @@ API-first infrastructure for coordinating authorized liquidity across AI agents.
 | GET | `/` | Read-only browser dashboard |
 | GET | `/health` | Service health |
 | POST | `/v1/admin/bootstrap` | Create a business and its first agent |
+| POST | `/v1/admin/agents` | Provision an additional scoped agent |
+| GET | `/v1/admin/agents?businessId=...` | List agents without exposing their keys |
 | POST | `/v1/admin/wallets` | Register an authorized Solana wallet |
 | POST | `/v1/admin/balances` | Record a controlled manual balance snapshot |
 | POST | `/v1/admin/balances/sync` | Refresh registered wallet balances from Solana RPC |
@@ -93,6 +95,23 @@ curl -X POST http://localhost:8787/v1/admin/bootstrap \
 ```
 
 The response contains an agent API key once. Store it securely; the service stores only its hash.
+
+## Provision additional agents
+
+Use the admin endpoint to add more agents to an existing business. Each agent gets an independent API key and an explicit business-treasury permission.
+
+```bash
+curl -X POST http://localhost:8787/v1/admin/agents \
+  -H "Authorization: Bearer YOUR_ADMIN_BOOTSTRAP_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "businessId": "biz_...",
+    "agentName": "research-agent",
+    "canUseBusinessTreasury": false
+  }'
+```
+
+List agents with `GET /v1/admin/agents?businessId=biz_...`. The response never includes API keys.
 
 ## Register a wallet
 
