@@ -10,6 +10,7 @@ export type LiquidityDecision = {
   availableAtoms: bigint;
   shortfallAtoms: bigint;
   eligibleSourceTokens: string[];
+  sourceWalletId: string | null;
 };
 
 export function parseTokenAmount(value: unknown, decimals = 6): bigint {
@@ -36,27 +37,60 @@ export function evaluateLiquidity(
   balances: LiquidityBalance[]
 ): LiquidityDecision {
   const eligible = balances.filter((balance) => balance.eligible && balance.availableAtoms > 0n);
-  // V1 reserves from one wallet atomically. Do not aggregate balances across
-  // wallets until split reservations can be committed as one transaction.
-  const availableAtoms = eligible
-    .filter((balance) => balance.token.toUpperCase() === requestedToken.toUpperCase())
-    .reduce((largest, balance) => balance.availableAtoms > largest ? balance.availableAtoms : largest, 0n);
+  const target = eligible.filter((balance) => balance.token.toUpperCase() === requestedToken.toUpperCase());
+  const largestTarget = target.reduce(
+    (best, balance) => balance.availableAtoms > best.availableAtoms ? balance : best,
+    { walletId: "", token: requestedToken, availableAtoms: 0n, eligible: true }
+  );
 
-  if (availableAtoms >= requestedAtoms) {
-    return { action: "direct_fulfillment", availableAtoms, shortfallAtoms: 0n, eligibleSourceTokens: [] };
+  if (largestTarget.availableAtoms >= requestedAtoms) {
+    return {
+      action: "direct_fulfillment",
+      availableAtoms: largestTarget.availableAtoms,
+      shortfallAtoms: 0n,
+      eligibleSourceTokens: [],
+      sourceWalletId: largestTarget.walletId || null
+    };
   }
 
-  const shortfallAtoms = requestedAtoms - availableAtoms;
-  const eligibleSourceTokens = [...new Set(
+  // A conversion must land in the same wallet whose USDC balance is being
+  // counted. Never combine USDC in one wallet with SOL in another.
+  const sourceWalletIds = [...new Set(
     eligible.filter((balance) => balance.token.toUpperCase() !== requestedToken.toUpperCase())
-      .map((balance) => balance.token.toUpperCase())
+      .map((balance) => balance.walletId)
   )];
 
+  const conversionCandidates = sourceWalletIds.map((walletId) => {
+    const targetBalance = target.find((balance) => balance.walletId === walletId);
+    const sourceTokens = [...new Set(
+      eligible.filter((balance) => balance.walletId === walletId &&
+        balance.token.toUpperCase() !== requestedToken.toUpperCase())
+        .map((balance) => balance.token.toUpperCase())
+    )];
+    return {
+      walletId,
+      availableAtoms: targetBalance?.availableAtoms ?? 0n,
+      sourceTokens
+    };
+  }).sort((a, b) => a.availableAtoms > b.availableAtoms ? -1 : a.availableAtoms < b.availableAtoms ? 1 : 0);
+
+  const conversion = conversionCandidates[0];
+  if (conversion) {
+    return {
+      action: "conversion_required",
+      availableAtoms: conversion.availableAtoms,
+      shortfallAtoms: requestedAtoms - conversion.availableAtoms,
+      eligibleSourceTokens: conversion.sourceTokens,
+      sourceWalletId: conversion.walletId
+    };
+  }
+
   return {
-    action: eligibleSourceTokens.length ? "conversion_required" : "insufficient_authorized_funds",
-    availableAtoms,
-    shortfallAtoms,
-    eligibleSourceTokens
+    action: "insufficient_authorized_funds",
+    availableAtoms: largestTarget.availableAtoms,
+    shortfallAtoms: requestedAtoms - largestTarget.availableAtoms,
+    eligibleSourceTokens: [],
+    sourceWalletId: null
   };
 }
 
