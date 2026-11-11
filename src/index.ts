@@ -636,7 +636,25 @@ async function proxyHermes(
     if (value) responseHeaders.set(name, value);
   }
   for (const [name, value] of Object.entries(extraHeaders)) responseHeaders.set(name, value);
-  return new Response(await upstream.arrayBuffer(), {
+
+  const responseBody = await upstream.arrayBuffer();
+  if (upstream.status === 200 && (path === "/v1/swap/quote" || path === "/v1/swap/build-tx")) {
+    const receiptHeader = upstream.headers.get("x-payment-response") ?? upstream.headers.get("payment-response");
+    let receipt: { success?: boolean } | null = null;
+    try {
+      if (receiptHeader) receipt = JSON.parse(atob(receiptHeader)) as { success?: boolean };
+    } catch {
+      receipt = null;
+    }
+    if (!receipt?.success) {
+      return json({
+        error: "swap_payment_receipt_missing_or_invalid",
+        message: "Hermes returned HTTP 200 without a successful x402 settlement receipt. The response was not accepted."
+      }, 502);
+    }
+  }
+
+  return new Response(responseBody, {
     status: upstream.status,
     headers: responseHeaders
   });
