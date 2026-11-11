@@ -29,7 +29,7 @@ API-first infrastructure for coordinating authorized liquidity across AI agents.
 | POST | `/v1/conversions/quote` | Request a paid Swap.io quote through x402 |
 | POST | `/v1/conversions/prepare` | Build an unsigned Swap.io transaction through x402 |
 | POST | `/v1/conversions/track` | Record the transaction signature after wallet broadcast |
-| GET | `/v1/conversions/status/:operationId` | Poll and verify conversion settlement |
+| GET | `/v1/conversions/status/:operationId?paymentWalletAddress=...` | Paid x402 status polling and settlement verification |
 | GET | `/v1/operations/:id` | Read an agent's operation |
 | POST | `/v1/operations/:id/release` | Release an active internal reservation |
 
@@ -287,7 +287,7 @@ const buildResponse = await client.fetch("https://YOUR_API/v1/conversions/prepar
 });
 ```
 
-The x402 client wallet must match the registered `api_payment` wallet and needs a fresh balance of at least 0.01 USDC for quote and build calls. The API returns each route's minimum output and a `minOutputCoversShortfall` flag; it enforces the minimum output check again on the server before transaction building. That reserve is distinct from the operating wallet's SOL being converted. The build endpoint reserves the requested SOL amount before preparing the unsigned transaction. After the business-controlled signer broadcasts it, call `POST /v1/conversions/track` with the operation ID and Solana signature, then poll `GET /v1/conversions/status/:operationId`. The status handler makes a separate paid Hermes status request through the same x402 client, then independently verifies that the registered operating wallet signed the finalized transaction and received USDC. It marks the wallet snapshots stale after terminal settlement so they must be refreshed before further liquidity decisions. No paid API request has been made by this repository's implementation.
+The x402 client wallet must match the registered `api_payment` wallet and needs a fresh balance of at least 0.01 USDC for quote, build and status calls. The API returns each route's minimum output and a `minOutputCoversShortfall` flag; it enforces the minimum output check again on the server before transaction building. That reserve is distinct from the operating wallet's SOL being converted. The build endpoint reserves the requested SOL amount before preparing the unsigned transaction. After the business-controlled signer broadcasts it, call `POST /v1/conversions/track` with the operation ID and Solana signature, then poll `GET /v1/conversions/status/:operationId?paymentWalletAddress=...` through the same x402 client. The status handler makes a separate paid Hermes status request through the same x402 client, then independently verifies that the registered operating wallet signed the finalized transaction and received USDC. It marks the wallet snapshots stale after terminal settlement so they must be refreshed before further liquidity decisions. No paid API request has been made by this repository's implementation.
 
 ## Browser dashboard
 
