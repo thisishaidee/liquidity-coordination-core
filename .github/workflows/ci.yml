@@ -17,8 +17,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
+      - run: npm install
       - run: npm run typecheck
       - run: npm test
       - run: npx wrangler deploy --dry-run --outdir=dist
@@ -39,8 +38,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
+      - run: npm install
       - name: Apply pending production D1 migrations
         run: npx wrangler d1 migrations apply liquidity-coordination --remote
         env:
