@@ -2069,21 +2069,24 @@ async function getAgentLiquidity(request: Request, env: Env): Promise<Response> 
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
 
   const rows = await env.DB.prepare(`
-    SELECT w.id AS wallet_id, w.address, w.scope, b.token, b.confirmed_atoms,
+    SELECT w.id AS wallet_id, w.address, w.scope, w.purpose, b.token, b.confirmed_atoms,
            b.reserved_atoms, b.observed_at, b.source
     FROM wallets w
     JOIN wallet_balances b ON b.wallet_id = w.id
-    WHERE w.business_id = ? AND w.status = 'active' AND w.purpose = 'operating'
-      AND w.network = 'solana'
+    WHERE w.business_id = ? AND w.status = 'active' AND w.network = 'solana'
       AND (
-        (w.scope = 'agent' AND w.agent_id = ?) OR
-        (w.scope = 'business' AND ? = 1)
+        (w.purpose = 'operating' AND (
+          (w.scope = 'agent' AND w.agent_id = ?) OR
+          (w.scope = 'business' AND ? = 1)
+        )) OR
+        (w.purpose = 'api_payment' AND w.scope = 'business')
       )
     ORDER BY w.scope, w.address, b.token
   `).bind(agent.business_id, agent.id, agent.can_use_business_treasury).all<{
     wallet_id: string;
     address: string;
     scope: string;
+    purpose: string;
     token: string;
     confirmed_atoms: string;
     reserved_atoms: string;
@@ -2101,6 +2104,7 @@ async function getAgentLiquidity(request: Request, env: Env): Promise<Response> 
       walletId: row.wallet_id,
       address: row.address,
       scope: row.scope,
+      purpose: row.purpose,
       token: row.token,
       confirmed: formatTokenAmount(confirmed, decimals),
       reserved: formatTokenAmount(reserved, decimals),
