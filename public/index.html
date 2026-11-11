@@ -1,233 +1,81 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
-  <title>NERITH — Agent Liquidity Console</title>
-  <style>
-    :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#17211f;background:#f5f7f6;font-synthesis:none}
-    *{box-sizing:border-box}
-    body{margin:0;min-height:100vh}
-    .shell{max-width:1120px;margin:0 auto;padding:28px 20px 56px}
-    header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:28px}
-    .brand{display:flex;align-items:center;gap:12px}
-    .mark{width:42px;height:42px;display:grid;place-items:center;flex:0 0 auto}.mark svg{display:block;width:100%;height:100%}
-    h1{font-size:20px;margin:0;letter-spacing:-.04em}
-    .sub{color:#6a7773;font-size:13px;margin-top:4px}
-    .status{font-size:12px;padding:7px 10px;border-radius:999px;background:#e9eeec;color:#53615c}
-    .status.live{background:#e0f3e9;color:#17663e}
-    .panel{background:#fff;border:1px solid #e2e8e5;border-radius:16px;padding:20px;margin-bottom:18px;box-shadow:0 2px 8px rgba(15,40,32,.025)}
-    .connect{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end}
-    label{display:block;font-size:12px;font-weight:650;color:#53615c;margin-bottom:8px}
-    input{width:100%;border:1px solid #d6dfdb;border-radius:10px;padding:12px 13px;font:inherit;font-size:14px;outline:none}
-    input:focus{border-color:#527e70;box-shadow:0 0 0 3px #527e701a}
-    button{border:0;border-radius:10px;background:#183b31;color:#fff;font:inherit;font-size:13px;font-weight:650;padding:12px 17px;cursor:pointer}
-    button:disabled{opacity:.5;cursor:not-allowed}
-    .hint{font-size:12px;color:#75817d;margin-top:9px}
-    .error{color:#a53b36;font-size:13px;margin-top:10px;display:none}
-    .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:18px}
-    .stat{background:#fff;border:1px solid #e2e8e5;border-radius:14px;padding:17px}
-    .stat-label{font-size:12px;color:#6c7974}
-    .stat-value{font-size:25px;letter-spacing:-.05em;font-weight:720;margin-top:8px}
-    .section-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}
-    h2{font-size:15px;margin:0;letter-spacing:-.02em}
-    .muted{font-size:12px;color:#77837e}
-    .table-wrap{overflow-x:auto}
-    table{width:100%;border-collapse:collapse;min-width:650px}
-    th{text-align:left;font-size:11px;color:#7a8681;font-weight:650;padding:10px 12px;border-bottom:1px solid #edf0ee}
-    td{font-size:13px;padding:13px 12px;border-bottom:1px solid #f0f3f1;white-space:nowrap}
-    tr:last-child td{border-bottom:0}
-    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
-    .pill{display:inline-flex;border-radius:999px;padding:5px 8px;font-size:11px;background:#edf1ef;color:#5b6863}
-    .pill.good{background:#e4f4ea;color:#216a43}
-    .pill.warn{background:#fff3dd;color:#8a5a12}
-    .pill.bad{background:#fdebea;color:#9b3d37}
-    .empty{padding:28px 12px;text-align:center;color:#7a8681;font-size:13px}
-    .hidden{display:none!important}
-    footer{font-size:11px;color:#84908b;text-align:center;margin-top:28px}
-    @media(max-width:640px){
-      .shell{padding:20px 14px 40px}
-      header{margin-bottom:20px}
-      .connect{grid-template-columns:1fr}
-      .connect button{width:100%}
-      .stats{grid-template-columns:1fr 1fr;gap:10px}
-      .stat{padding:14px}
-      .stat-value{font-size:21px}
-      .panel{padding:15px}
-      .section-head{align-items:flex-start}
-    }
-  </style>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light">
+<title>NERITH — Liquidity coordination</title>
+<style>
+:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:#171b18;background:#f7f8f5;font-synthesis:none;--ink:#171b18;--muted:#7b8179;--line:#e8ebe4;--lime:#d8f36a;--panel:#fff;--green:#345c40}
+*{box-sizing:border-box}body{margin:0;min-height:100vh}button,input{font:inherit}button{cursor:pointer}
+.app{min-height:100vh;display:grid;grid-template-columns:238px minmax(0,1fr)}
+.sidebar{background:#111713;color:#f4f5f0;padding:27px 18px;display:flex;flex-direction:column;gap:34px;min-height:100vh}
+.brand{display:flex;align-items:center;gap:11px;padding:0 8px}.mark{width:36px;height:36px;flex:none}.mark svg{width:100%;height:100%}.brand-name{font-size:17px;font-weight:760;letter-spacing:.12em}.brand-tag{font-size:10px;color:#8d988e;margin-top:3px;letter-spacing:.03em}
+.nav-label{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:#778178;padding:0 12px 10px}.nav{display:grid;gap:5px}.nav a{display:flex;align-items:center;gap:12px;padding:11px 12px;color:#aeb7ae;text-decoration:none;font-size:12px;border-radius:8px}.nav a.active,.nav a:hover{background:#222b23;color:#fff}.nav a.active:before{content:"";width:4px;height:17px;background:var(--lime);border-radius:3px;margin-left:-12px;margin-right:8px}.nav-icon{width:15px;text-align:center;color:#9aa59a}.sidebar-bottom{margin-top:auto;border-top:1px solid #29312a;padding:18px 8px 0;color:#849084;font-size:10px;line-height:1.7}
+.main{min-width:0;padding:28px clamp(18px,4vw,58px) 56px;max-width:1600px;width:100%;margin:0 auto}.topbar{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:36px}.eyebrow{font-size:10px;text-transform:uppercase;letter-spacing:.15em;color:#7c847a}.top-right{display:flex;align-items:center;gap:12px}.status{font-size:11px;color:#727a70;background:#eef0e9;border:1px solid #e3e7dc;border-radius:30px;padding:8px 11px}.status.live{color:#345c40;background:#eef5e7}.connect-open{border:1px solid #dfe4d9;background:#fff;border-radius:8px;padding:9px 13px;font-size:11px;color:#252c25}
+h1{font-size:clamp(27px,3vw,38px);line-height:1.08;letter-spacing:-.055em;margin:9px 0 10px;font-weight:650}.intro{color:#737b70;font-size:13px;max-width:620px;line-height:1.65}.hero{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;margin-bottom:28px}.hero-note{max-width:220px;text-align:right;color:#788074;font-size:10px;line-height:1.6}.hero-note strong{display:block;color:#303a2e;font-size:12px;font-weight:600}
+.connect-panel{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end;background:#fff;border:1px solid var(--line);border-radius:12px;padding:15px;margin:0 0 22px}.connect-panel label{display:block;font-size:10px;color:#727a70;margin-bottom:7px}.connect-panel input{width:100%;border:1px solid #dfe4da;border-radius:7px;padding:11px 12px;font-size:12px;outline:none}.connect-panel input:focus,.search:focus{border-color:#9ab34b;box-shadow:0 0 0 3px #d8f36a44}.primary{border:0;background:#172019;color:white;border-radius:7px;padding:11px 16px;font-size:11px;font-weight:650}.hint,.error{font-size:10px;color:#81897e;margin-top:7px}.error{color:#a33d35;display:none}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:18px}.stat{background:#fff;border:1px solid var(--line);border-radius:11px;padding:17px 18px;min-width:0}.stat-top{display:flex;justify-content:space-between;gap:8px;color:#7b8378;font-size:10px}.stat-dot{width:6px;height:6px;background:#c5d96a;border-radius:50%;margin-top:3px}.stat-value{font-size:clamp(20px,2.1vw,27px);letter-spacing:-.055em;font-weight:650;margin-top:16px;overflow-wrap:anywhere}.stat-foot{font-size:9px;color:#92988e;margin-top:7px}
+.section{background:#fff;border:1px solid var(--line);border-radius:11px;margin-bottom:15px;overflow:hidden}.section-head{display:flex;justify-content:space-between;align-items:center;gap:15px;padding:17px 19px;border-bottom:1px solid #eff1eb}.section-title{font-size:13px;font-weight:650;letter-spacing:-.02em}.section-sub{font-size:10px;color:#81887e;margin-top:5px}.section-actions{display:flex;align-items:center;gap:9px}.ghost{border:1px solid #e3e7df;background:#fff;color:#4b5548;border-radius:7px;padding:8px 11px;font-size:10px}.search{width:min(220px,34vw);border:1px solid #e3e7df;border-radius:7px;padding:8px 10px;font-size:10px;outline:none;background:#fff}.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:650px}th{text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#8b9288;font-weight:600;padding:12px 17px;border-bottom:1px solid #f0f2ed}td{font-size:11px;padding:13px 17px;border-bottom:1px solid #f1f3ee;white-space:nowrap;color:#424a40}tr:last-child td{border-bottom:0}.mono{font-family:ui-monospace,monospace;font-size:10px}.pill{display:inline-flex;border-radius:20px;padding:5px 8px;font-size:9px;background:#f0f1ed;color:#667061}.pill.good{background:#edf5e7;color:#41633b}.pill.warn{background:#fbf3df;color:#916b27}.pill.bad{background:#faeae6;color:#a64a3e}.empty{padding:25px 12px;text-align:center;color:#92988e;font-size:11px}.hidden{display:none!important}
+.lower-grid{display:grid;grid-template-columns:1.2fr .8fr;gap:15px}.insight{padding:18px 19px}.insight-label{font-size:9px;color:#8a9187;text-transform:uppercase;letter-spacing:.12em}.insight-value{font-size:22px;letter-spacing:-.04em;margin-top:10px}.insight-copy{font-size:10px;line-height:1.6;color:#828a7f;margin-top:7px}.bar-track{height:7px;border-radius:9px;background:#edf0e9;overflow:hidden;margin-top:15px}.bar-fill{height:100%;width:0;background:#c9e85a;border-radius:9px}.notice{background:#f6f8f1;border:1px solid #e9eddf;border-radius:9px;padding:13px 15px;font-size:10px;line-height:1.6;color:#687162}
+footer{font-size:9px;color:#a0a69b;text-align:center;margin-top:30px}
+@media(max-width:900px){.app{grid-template-columns:190px 1fr}.sidebar{padding:22px 12px}.lower-grid{grid-template-columns:1fr}.main{padding:24px 22px 45px}}
+@media(max-width:640px){.app{display:block}.sidebar{min-height:0;padding:13px 15px;display:block}.brand{padding:0}.mark{width:30px;height:30px}.nav-label,.sidebar-bottom{display:none}.nav{display:flex;overflow-x:auto;gap:4px;margin-top:13px}.nav a{white-space:nowrap;padding:8px 10px;font-size:10px}.nav a.active:before{display:none}.main{padding:21px 14px 38px}.topbar{margin-bottom:25px}.hero{display:block}.hero-note{text-align:left;margin-top:15px}.stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.stat{padding:13px}.stat-value{font-size:20px;margin-top:12px}.connect-panel{grid-template-columns:1fr}.connect-panel button{width:100%}.section-head{align-items:flex-start;padding:14px}.section-actions{flex-wrap:wrap;justify-content:flex-end}.search{width:145px}.section-title{font-size:12px}.section-sub{max-width:240px;line-height:1.5}.table-wrap{margin:0}.ghost{padding:8px}.lower-grid{gap:10px}}
+</style>
 </head>
 <body>
-  <main class="shell">
-    <header>
-      <div class="brand">
-        <div class="mark" aria-label="NERITH convergence mark"><svg viewBox="0 0 100 100" aria-hidden="true"><g fill="none" stroke="#101312" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"><path d="M50 8 C65 8 67 27 59 41 C55 48 51 50 50 57"/><path d="M9 78 C2 65 17 55 31 50 C40 46 46 49 50 57"/><path d="M91 78 C98 65 83 55 69 50 C60 46 54 49 50 57"/></g><path d="M50 40 L55 51 L50 57 L45 51 Z" fill="#C7F23A"/></svg></div>
-        <div>
-          <h1>NERITH</h1>
-          <div class="sub">Liquidity coordination for autonomous agents · Solana</div>
-        </div>
-      </div>
-      <div id="connectionStatus" class="status">Not connected</div>
-    </header>
-
-    <section class="panel">
-      <form id="connectForm" class="connect">
-        <div>
-          <label for="apiKey">Agent API key</label>
-          <input id="apiKey" type="password" autocomplete="off" placeholder="Paste your agent API key" required>
-          <div class="hint">The key stays in this page's memory and is not saved to browser storage.</div>
-        </div>
-        <button id="connectButton" type="submit">Connect agent</button>
-      </form>
-      <div id="error" class="error" role="alert"></div>
-    </section>
-
-    <section id="dashboard" class="hidden">
-      <div class="stats">
-        <div class="stat"><div class="stat-label">Authorized wallets</div><div class="stat-value" id="walletCount">—</div></div>
-        <div class="stat"><div class="stat-label">Open operations</div><div class="stat-value" id="openCount">—</div></div>
-        <div class="stat"><div class="stat-label">Pending conversions</div><div class="stat-value" id="conversionCount">—</div></div>
-        <div class="stat"><div class="stat-label">Business projected shortfall</div><div class="stat-value" id="forecastShortfall">—</div></div>
-      </div>
-
-      <section class="panel">
-        <div class="section-head">
-          <div><h2>Authorized liquidity</h2><div class="muted">Operating liquidity and the separate x402 payment reserve.</div></div>
-          <button id="refreshButton" type="button">Refresh</button>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Wallet</th><th>Scope</th><th>Purpose</th><th>Asset</th><th>Confirmed</th><th>Reserved</th><th>Available</th><th>Snapshot</th></tr></thead>
-            <tbody id="balanceRows"><tr><td colspan="8" class="empty">Connect an agent to load balances.</td></tr></tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="section-head">
-          <div><h2>Upcoming liquidity</h2><div class="muted">Your agent's 30-day obligations; business shortfall includes all agents sharing treasury. <span id="forecastFreshness">—</span> · <span id="businessForecastSummary">—</span></div></div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Task</th><th>Due</th><th>Amount</th><th>Shortfall</th><th>Projection</th></tr></thead>
-            <tbody id="forecastRows"><tr><td colspan="5" class="empty">No planned obligations.</td></tr></tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="section-head">
-          <div><h2>Recent operations</h2><div class="muted">Latest 50 operations for this agent.</div></div>
-          <span class="muted" id="lastUpdated">—</span>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Operation</th><th>Task</th><th>Requested</th><th>Shortfall</th><th>Status</th><th>Action</th></tr></thead>
-            <tbody id="operationRows"><tr><td colspan="6" class="empty">No operations loaded.</td></tr></tbody>
-          </table>
-        </div>
-      </section>
-    </section>
-
-    <footer>NERITH business console · Read-only by design. Signing keys never enter this dashboard.</footer>
-  </main>
-
-  <script>
-    let agentKey = "";
-    const $ = (id) => document.getElementById(id);
-    const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({
-      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
-    })[c]);
-    const shortAddress = (value) => value ? value.slice(0,5) + "…" + value.slice(-5) : "—";
-    const money = (value, token) => {
-      const [whole = "0", fraction = ""] = String(value || "0").split(".");
-      return `${BigInt(whole).toLocaleString()}${fraction ? "." + fraction : ""} ${token}`;
-    };
-    const statusClass = (status) => {
-      if (["reserved","conversion_settled","ready_for_fulfillment"].includes(status)) return "good";
-      if (["awaiting_conversion","preparing_conversion","conversion_submitted","verification_pending"].includes(status)) return "warn";
-      if (["blocked","expired","conversion_failed","conversion_unverified","conversion_settled_shortfall"].includes(status)) return "bad";
-      return "";
-    };
-    async function api(path) {
-      const response = await fetch(path, { headers: { "Authorization": `Bearer ${agentKey}` } });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.message || data.error || `Request failed (${response.status})`);
-      return data;
-    }
-    function showError(message) {
-      $("error").textContent = message;
-      $("error").style.display = message ? "block" : "none";
-    }
-    async function refresh() {
-      if (!agentKey) return;
-      $("refreshButton").disabled = true;
-      showError("");
-      try {
-        const [liquidity, operations, forecast] = await Promise.all([
-          api("/v1/liquidity"), api("/v1/operations"), api("/v1/liquidity/forecast")
-        ]);
-        const balances = liquidity.balances || [];
-        const items = operations.operations || [];
-        const obligations = forecast.obligations || [];
-        $("walletCount").textContent = new Set(balances.map((x) => x.walletId)).size;
-        $("openCount").textContent = items.filter((x) => !["released","expired","completed","conversion_failed","conversion_settled","conversion_unverified","conversion_settled_shortfall"].includes(x.status)).length;
-        $("conversionCount").textContent = items.filter((x) => ["awaiting_conversion","preparing_conversion","conversion_submitted"].includes(x.status)).length;
-        $("forecastShortfall").textContent = money(forecast.businessSummary?.totalShortfallUSDC || "0", "USDC");
-        $("forecastFreshness").textContent = forecast.businessBalanceDataFresh ? "Business wallet snapshots fresh" : "Some business wallet snapshots stale or missing";
-        $("businessForecastSummary").textContent = `Includes ${forecast.businessSummary?.otherAgentObligations || 0} other-agent obligations`;
-        $("balanceRows").innerHTML = balances.length ? balances.map((b) => `
-          <tr>
-            <td class="mono">${escapeHtml(shortAddress(b.address))}</td>
-            <td>${escapeHtml(b.scope)}</td>
-            <td>${escapeHtml(b.purpose === "api_payment" ? "x402 reserve" : "operating")}</td>
-            <td><strong>${escapeHtml(b.token)}</strong></td>
-            <td>${escapeHtml(money(b.confirmed,b.token))}</td>
-            <td>${escapeHtml(money(b.reserved,b.token))}</td>
-            <td>${escapeHtml(money(b.available,b.token))}</td>
-            <td><span class="pill ${b.fresh ? "good" : "warn"}">${b.fresh ? "Fresh" : "Stale"}</span></td>
-          </tr>`).join("") : '<tr><td colspan="8" class="empty">No authorized wallet balances found.</td></tr>';
-        $("forecastRows").innerHTML = obligations.length ? obligations.map((o) => `
-          <tr>
-            <td>${escapeHtml(o.taskId)}</td>
-            <td>${escapeHtml(new Date(o.dueAt).toLocaleString())}</td>
-            <td>${escapeHtml(money(o.amountUSDC,"USDC"))}</td>
-            <td>${escapeHtml(money(o.shortfallUSDC,"USDC"))}</td>
-            <td><span class="pill ${statusClass(o.status)}">${escapeHtml(o.status.replaceAll("_"," "))}</span></td>
-          </tr>`).join("") : '<tr><td colspan="5" class="empty">No planned obligations in the next 30 days.</td></tr>';
-        $("operationRows").innerHTML = items.length ? items.map((o) => `
-          <tr>
-            <td class="mono">${escapeHtml(o.operationId.slice(0,14))}</td>
-            <td>${escapeHtml(o.taskId)}</td>
-            <td>${escapeHtml(money(o.amount,o.token))}</td>
-            <td>${escapeHtml(money(o.shortfall,o.token))}</td>
-            <td><span class="pill ${statusClass(o.status)}">${escapeHtml(o.status.replaceAll("_"," "))}</span></td>
-            <td>${escapeHtml(o.action.replaceAll("_"," "))}</td>
-          </tr>`).join("") : '<tr><td colspan="6" class="empty">No operations yet.</td></tr>';
-        $("lastUpdated").textContent = "Updated " + new Date().toLocaleTimeString();
-        $("connectionStatus").textContent = "Agent connected";
-        $("connectionStatus").classList.add("live");
-        $("dashboard").classList.remove("hidden");
-      } catch (error) {
-        showError(error.message || "Could not load dashboard data.");
-        $("connectionStatus").textContent = "Connection error";
-        $("connectionStatus").classList.remove("live");
-      } finally {
-        $("refreshButton").disabled = false;
-      }
-    }
-    $("connectForm").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      agentKey = $("apiKey").value.trim();
-      $("apiKey").value = "";
-      if (!agentKey) return;
-      $("connectButton").disabled = true;
-      await refresh();
-      $("connectButton").disabled = false;
-    });
-    $("refreshButton").addEventListener("click", refresh);
-  </script>
-</body>
-</html>
+<div class="app">
+<aside class="sidebar">
+<div class="brand"><div class="mark" aria-label="NERITH convergence mark"><svg viewBox="0 0 100 100" aria-hidden="true"><g fill="none" stroke="#f4f5f0" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"><path d="M50 8 C65 8 67 27 59 41 C55 48 51 50 50 57"/><path d="M9 78 C2 65 17 55 31 50 C40 46 46 49 50 57"/><path d="M91 78 C98 65 83 55 69 50 C60 46 54 49 50 57"/></g><path d="M50 40 L55 51 L50 57 L45 51 Z" fill="#d8f36a"/></svg></div><div><div class="brand-name">NERITH</div><div class="brand-tag">LIQUIDITY COORDINATION</div></div></div>
+<div><div class="nav-label">Workspace</div><nav class="nav"><a class="active" href="#overview"><span class="nav-icon">◫</span>Overview</a><a href="#liquidity"><span class="nav-icon">◉</span>Liquidity</a><a href="#forecasts"><span class="nav-icon">⌁</span>Forecasts</a><a href="#operations"><span class="nav-icon">↗</span>Operations</a></nav></div>
+<div class="sidebar-bottom">BUSINESS WORKSPACE<br>Solana · USDC<br><span style="color:#d8f36a">●</span> Read-only console</div>
+</aside>
+<main class="main">
+<div class="topbar"><div class="eyebrow">Business workspace / Overview</div><div class="top-right"><div id="connectionStatus" class="status">Not connected</div><button class="connect-open" id="showConnect" type="button">Connect agent</button></div></div>
+<section id="overview">
+<div class="hero"><div><div class="eyebrow">Liquidity intelligence</div><h1>Keep every agent<br>ready to move.</h1><div class="intro">A clear view of authorized capital, upcoming obligations and the liquidity decisions keeping autonomous workflows on track.</div></div><div class="hero-note"><strong>Anticipate. Coordinate. Execute.</strong>Business-controlled funds. Scoped agent access. Settlement-aware operations.</div></div>
+<section class="connect-panel" id="connectPanel"><form id="connectForm" style="display:contents"><div><label for="apiKey">AGENT API KEY</label><input id="apiKey" type="password" autocomplete="off" placeholder="Paste your agent API key" required><div class="hint">Your key stays in this page's memory and is never saved to browser storage.</div></div><button class="primary" id="connectButton" type="submit">Connect securely</button></form><div id="error" class="error" role="alert"></div></section>
+<div class="stats">
+<div class="stat"><div class="stat-top">Authorized wallets <span class="stat-dot"></span></div><div class="stat-value" id="walletCount">—</div><div class="stat-foot">Available to this agent</div></div>
+<div class="stat"><div class="stat-top">Open operations <span class="stat-dot"></span></div><div class="stat-value" id="openCount">—</div><div class="stat-foot">Awaiting a next step</div></div>
+<div class="stat"><div class="stat-top">Pending conversions <span class="stat-dot"></span></div><div class="stat-value" id="conversionCount">—</div><div class="stat-foot">Quote or transaction in progress</div></div>
+<div class="stat"><div class="stat-top">Projected shortfall <span class="stat-dot"></span></div><div class="stat-value" id="forecastShortfall">—</div><div class="stat-foot">Business-wide · next 30 days</div></div>
+</div>
+</section>
+<section class="section" id="liquidity"><div class="section-head"><div><div class="section-title">Authorized liquidity</div><div class="section-sub">Operating funds and the separate x402 payment reserve.</div></div><div class="section-actions"><input class="search" id="balanceSearch" type="search" placeholder="Search wallets or assets…" aria-label="Search authorized liquidity"><button class="ghost" id="refreshButton" type="button">Refresh ↻</button></div></div><div class="table-wrap"><table><thead><tr><th>Wallet</th><th>Scope</th><th>Purpose</th><th>Asset</th><th>Confirmed</th><th>Reserved</th><th>Available</th><th>Snapshot</th></tr></thead><tbody id="balanceRows"><tr><td colspan="8" class="empty">Connect an agent to load balances.</td></tr></tbody></table></div></section>
+<div class="lower-grid">
+<section class="section" id="forecasts"><div class="section-head"><div><div class="section-title">Upcoming obligations</div><div class="section-sub">A 30-day view of expected USDC demand.</div></div><input class="search" id="forecastSearch" type="search" placeholder="Search tasks…" aria-label="Search forecasts"></div><div class="table-wrap"><table><thead><tr><th>Task</th><th>Due</th><th>Amount</th><th>Shortfall</th><th>Projection</th></tr></thead><tbody id="forecastRows"><tr><td colspan="5" class="empty">No planned obligations.</td></tr></tbody></table></div><div class="insight"><div class="insight-label">Forecast confidence</div><div class="insight-copy" id="forecastFreshness">Connect an agent to check balance freshness.</div><div class="insight-copy" id="businessForecastSummary">Business-wide forecast includes obligations from agents sharing the treasury.</div></div></section>
+<section class="section" id="operations"><div class="section-head"><div><div class="section-title">Recent operations</div><div class="section-sub">Latest 50 operations for this agent.</div></div><input class="search" id="operationSearch" type="search" placeholder="Search activity…" aria-label="Search operations"></div><div class="table-wrap"><table><thead><tr><th>Operation</th><th>Task</th><th>Requested</th><th>Shortfall</th><th>Status</th></tr></thead><tbody id="operationRows"><tr><td colspan="5" class="empty">No operations loaded.</td></tr></tbody></table></div><div class="insight"><div class="insight-label">Last synchronization</div><div class="insight-value" id="lastUpdated">—</div><div class="insight-copy">Data reflects the latest successful API response. Stale wallet snapshots are labelled rather than treated as live balances.</div></div></section>
+</div>
+<div class="notice">NERITH coordinates liquidity; it does not custody funds or sign transactions. Reservations are internal ledger holds. Business-controlled wallet signing and on-chain settlement verification remain separate steps.</div>
+<footer>NERITH · Liquidity coordination for autonomous agents · Signing keys never enter this dashboard.</footer>
+</main></div>
+<script>
+let agentKey="";
+const $=id=>document.getElementById(id);
+const escapeHtml=value=>String(value??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const shortAddress=value=>value?value.slice(0,5)+"…"+value.slice(-5):"—";
+const money=(value,token)=>{const [whole="0",fraction=""]=String(value||"0").split(".");return `${BigInt(whole).toLocaleString()}${fraction?"."+fraction:""} ${token}`;};
+const statusClass=status=>{if(["reserved","conversion_settled","ready_for_fulfillment"].includes(status))return"good";if(["awaiting_conversion","preparing_conversion","conversion_submitted","verification_pending"].includes(status))return"warn";if(["blocked","expired","conversion_failed","conversion_unverified","conversion_settled_shortfall"].includes(status))return"bad";return"";};
+async function api(path){const response=await fetch(path,{headers:{"Authorization":`Bearer ${agentKey}`}});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.message||data.error||`Request failed (${response.status})`);return data;}
+function showError(message){$("error").textContent=message;$("error").style.display=message?"block":"none";}
+function applySearch(inputId,tbodyId){const query=$(inputId).value.trim().toLowerCase();for(const row of $(tbodyId).querySelectorAll("tr")){row.hidden=!!query&&!row.textContent.toLowerCase().includes(query);}}
+["balance","forecast","operation"].forEach(name=>$(name+"Search").addEventListener("input",()=>applySearch(name+"Search",name==="balance"?"balanceRows":name==="forecast"?"forecastRows":"operationRows")));
+async function refresh(){if(!agentKey)return;$("refreshButton").disabled=true;showError("");try{
+const [liquidity,operations,forecast]=await Promise.all([api("/v1/liquidity"),api("/v1/operations"),api("/v1/liquidity/forecast")]);
+const balances=liquidity.balances||[],items=operations.operations||[],obligations=forecast.obligations||[];
+$("walletCount").textContent=new Set(balances.map(x=>x.walletId)).size;
+$("openCount").textContent=items.filter(x=>!["released","expired","completed","conversion_failed","conversion_settled","conversion_unverified","conversion_settled_shortfall"].includes(x.status)).length;
+$("conversionCount").textContent=items.filter(x=>["awaiting_conversion","preparing_conversion","conversion_submitted"].includes(x.status)).length;
+$("forecastShortfall").textContent=money(forecast.businessSummary?.totalShortfallUSDC||"0","USDC");
+$("forecastFreshness").textContent=forecast.businessBalanceDataFresh?"Business wallet snapshots are fresh.":"Some business wallet snapshots are stale or missing.";
+$("businessForecastSummary").textContent=`Business-wide view includes ${forecast.businessSummary?.otherAgentObligations||0} obligations from other agents sharing the treasury.`;
+$("balanceRows").innerHTML=balances.length?balances.map(b=>`<tr><td class="mono">${escapeHtml(shortAddress(b.address))}</td><td>${escapeHtml(b.scope)}</td><td>${escapeHtml(b.purpose==="api_payment"?"x402 reserve":"operating")}</td><td><strong>${escapeHtml(b.token)}</strong></td><td>${escapeHtml(money(b.confirmed,b.token))}</td><td>${escapeHtml(money(b.reserved,b.token))}</td><td>${escapeHtml(money(b.available,b.token))}</td><td><span class="pill ${b.fresh?"good":"warn"}">${b.fresh?"Fresh":"Stale"}</span></td></tr>`).join(""):'<tr><td colspan="8" class="empty">No authorized wallet balances found.</td></tr>';
+$("forecastRows").innerHTML=obligations.length?obligations.map(o=>`<tr><td>${escapeHtml(o.taskId)}</td><td>${escapeHtml(new Date(o.dueAt).toLocaleString())}</td><td>${escapeHtml(money(o.amountUSDC,"USDC"))}</td><td>${escapeHtml(money(o.shortfallUSDC,"USDC"))}</td><td><span class="pill ${statusClass(o.status)}">${escapeHtml(o.status.replaceAll("_"," "))}</span></td></tr>`).join(""):'<tr><td colspan="5" class="empty">No planned obligations in the next 30 days.</td></tr>';
+$("operationRows").innerHTML=items.length?items.map(o=>`<tr><td class="mono">${escapeHtml(o.operationId.slice(0,14))}</td><td>${escapeHtml(o.taskId)}</td><td>${escapeHtml(money(o.amount,o.token))}</td><td>${escapeHtml(money(o.shortfall,o.token))}</td><td><span class="pill ${statusClass(o.status)}">${escapeHtml(o.status.replaceAll("_"," "))}</span></td></tr>`).join(""):'<tr><td colspan="5" class="empty">No operations yet.</td></tr>';
+$("lastUpdated").textContent=new Date().toLocaleTimeString();$("connectionStatus").textContent="Agent connected";$("connectionStatus").classList.add("live");$("connectPanel").classList.add("hidden");
+applySearch("balanceSearch","balanceRows");applySearch("forecastSearch","forecastRows");applySearch("operationSearch","operationRows");
+}catch(error){showError(error.message||"Could not load dashboard data.");$("connectionStatus").textContent="Connection error";$("connectionStatus").classList.remove("live");}finally{$("refreshButton").disabled=false;}}
+$("connectForm").addEventListener("submit",async event=>{event.preventDefault();agentKey=$("apiKey").value.trim();$("apiKey").value="";if(!agentKey)return;$("connectButton").disabled=true;await refresh();$("connectButton").disabled=false;});
+$("refreshButton").addEventListener("click",refresh);
+$("showConnect").addEventListener("click",()=>{$("connectPanel").classList.remove("hidden");$("apiKey").focus();});
+</script>
+</body></html>
