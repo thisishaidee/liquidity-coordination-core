@@ -2,6 +2,10 @@
 
 **Liquidity coordination for autonomous agents.**
 
+![NERITH primary logo](assets/nerith-lockup.svg)
+
+The primary identity uses the flowing three-path convergence mark. The standalone symbol is available at [assets/nerith-mark.svg](assets/nerith-mark.svg); the full symbol-and-wordmark lockup is [assets/nerith-lockup.svg](assets/nerith-lockup.svg).
+
 NERITH is an API-first infrastructure layer that anticipates agent funding needs, coordinates authorized liquidity across business wallets, and prepares asset conversions when a task requires them. It helps autonomous systems get the right assets in the right place before work is blocked.
 
 **Current milestone:** Cloudflare Workers + D1, initially Solana and six-decimal USDC accounting.
