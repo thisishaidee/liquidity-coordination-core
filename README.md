@@ -32,6 +32,7 @@ API-first infrastructure for coordinating authorized liquidity across AI agents.
 | GET | `/v1/conversions/status/:operationId?paymentWalletAddress=...` | Paid x402 status polling and settlement verification |
 | GET | `/v1/operations/:id` | Read an agent's operation |
 | POST | `/v1/operations/:id/release` | Release an active internal reservation |
+| POST | `/v1/operations/:id/complete` | Consume reservations after the agent reports task completion |
 
 Admin routes require `ADMIN_BOOTSTRAP_TOKEN` as a Bearer token. Agent routes require an agent API key.
 
@@ -183,6 +184,17 @@ curl -X POST http://localhost:8787/v1/admin/balances/sync \
 ```
 
 Snapshots older than five minutes are excluded from liquidity decisions.
+
+## Complete or release an operation
+
+After the agent's downstream task has completed, it can call:
+
+```bash
+curl -X POST http://localhost:8787/v1/operations/OPERATION_ID/complete \
+  -H "Authorization: Bearer YOUR_AGENT_API_KEY"
+```
+
+This consumes internal reservations and marks affected wallet snapshots stale so they must be refreshed from Solana before another liquidity decision. Completion is agent-reported; it is not proof that an external payment occurred. Use the `/release` endpoint when the task is cancelled or the reserved funds are no longer needed.
 
 ## Predictive liquidity forecast
 
