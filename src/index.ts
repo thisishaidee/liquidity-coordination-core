@@ -743,6 +743,7 @@ async function handleTelegramApprovalCallback(env: Env, callback: {
   }
   await env.DB.prepare("UPDATE telegram_approval_actions SET consumed_at = datetime('now') WHERE business_id = ? AND operation_id = ? AND consumed_at IS NULL")
     .bind(action.business_id, action.operation_id).run();
+  await notifyBusiness(env, action.business_id, "A Telegram approver " + decision + " liquidity request " + action.operation_id + ". The decision is recorded against the exact reserved operation. No transaction was signed, broadcast or transferred.");
   await answerTelegramCallback(env, callbackId, "Request " + decision + ".");
   await sendTelegramMessage(env, chatId,
     "Request " + decision + ". The decision is recorded against the exact reserved operation. No transaction was signed, broadcast or transferred."
