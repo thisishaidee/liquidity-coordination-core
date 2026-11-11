@@ -421,7 +421,7 @@ async function telegramWebhook(request: Request, env: Env): Promise<Response> {
     return json({ ok: true });
   }
 
-  await sendTelegramMessage(env, chatId, "This Telegram chat is now connected to your business.\\n\\nTry /status, /liquidity, /forecast, /agents or /operations.\\nUse /help to see all commands. This bot is read-only and cannot sign transactions or authorize spending.");
+  await sendTelegramMessage(env, chatId, "This Telegram chat is now connected to your business.\n\nTry /status, /liquidity, /forecast, /agents or /operations.\nUse /help to see all commands. This bot is read-only and cannot sign transactions or authorize spending.");
   return json({ ok: true, linked: true });
 }
 
