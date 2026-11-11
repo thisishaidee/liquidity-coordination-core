@@ -11,6 +11,7 @@ API-first infrastructure for coordinating authorized liquidity across AI agents.
 | GET | `/health` | Service health |
 | POST | `/v1/admin/bootstrap` | Create a business and its first agent |
 | POST | `/v1/admin/wallets` | Register an authorized Solana wallet |
+| POST | `/v1/admin/balances` | Record a controlled manual balance snapshot |
 | POST | `/v1/liquidity/requests` | Submit a task funding request |
 | GET | `/v1/operations/:id` | Read an agent's operation |
 | POST | `/v1/operations/:id/release` | Release an active internal reservation |
@@ -37,7 +38,7 @@ This is still an early backend, not a production funds executor.
 - Reservations are internal ledger holds. They do not transfer or spend funds.
 - V1 only fulfills directly from one eligible USDC wallet. It deliberately does not combine multiple wallets until split reservations can be made atomically.
 - Alternative-token detection is a decision only. Swap.io quote/build/submit is not connected yet.
-- Wallet balance snapshots must be populated by a trusted balance observer/indexer. Do not accept balances from agent requests.
+- The admin balance endpoint accepts operator-entered snapshots for controlled testing only. These are not live on-chain balances. Production decisions must use a trusted balance observer/indexer; never accept balances from agent requests.
 - Expired reservations are not yet automatically swept. Until a scheduled expiry worker is added, use the release endpoint or administrative reconciliation.
 - API-key rotation, user login, business-level dashboard authorization and rate limiting remain future work.
 - No wallet private keys or signing secrets belong in this Worker.
@@ -98,6 +99,23 @@ curl -X POST http://localhost:8787/v1/admin/wallets \
 ```
 
 Business-scope wallets omit `agentId`. An agent can use a business wallet only when `canUseBusinessTreasury` was explicitly enabled at provisioning.
+
+## Record a test balance snapshot
+
+This admin-only endpoint is for controlled development/testing. It does not verify the wallet's on-chain balance.
+
+```bash
+curl -X POST http://localhost:8787/v1/admin/balances \
+  -H "Authorization: Bearer YOUR_ADMIN_BOOTSTRAP_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "walletId": "wal_...",
+    "token": "USDC",
+    "amount": "25"
+  }'
+```
+
+USDC snapshots use six decimals; SOL snapshots use nine decimals. Snapshots older than five minutes are excluded from liquidity decisions.
 
 ## Submit a liquidity request
 
