@@ -476,6 +476,58 @@ async function sendTelegramTestAlert(request: Request, env: Env): Promise<Respon
   }, 202);
 }
 
+async function listTelegramConnections(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const businessId = new URL(request.url).searchParams.get("businessId");
+  if (!businessId) return json({ error: "business_id_required" }, 400);
+  const business = await env.DB.prepare("SELECT id FROM businesses WHERE id = ?")
+    .bind(businessId).first<{ id: string }>();
+  if (!business) return json({ error: "business_not_found" }, 404);
+  const rows = await env.DB.prepare(`
+    SELECT id, chat_id, telegram_user_id, permission, status, linked_at
+    FROM telegram_connections
+    WHERE business_id = ?
+    ORDER BY linked_at ASC
+  `).bind(businessId).all<{
+    id: string; chat_id: string; telegram_user_id: string;
+    permission: string; status: string; linked_at: string;
+  }>();
+  return json({
+    businessId,
+    connections: (rows.results ?? []).map(row => ({
+      id: row.id,
+      chatId: row.chat_id,
+      telegramUserId: row.telegram_user_id,
+      permission: row.permission,
+      status: row.status,
+      linkedAt: row.linked_at
+    }))
+  });
+}
+
+async function updateTelegramPermission(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const body = await readJson(request);
+  if (!body || typeof body.businessId !== "string" ||
+      typeof body.chatId !== "string" || typeof body.telegramUserId !== "string" ||
+      (body.permission !== "viewer" && body.permission !== "approver")) {
+    return json({ error: "invalid_request", message: "Provide businessId, chatId, telegramUserId and permission=viewer|approver." }, 400);
+  }
+  const result = await env.DB.prepare(`
+    UPDATE telegram_connections SET permission = ?
+    WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? AND status = 'active'
+  `).bind(body.permission, body.businessId, body.chatId, body.telegramUserId).run();
+  if ((result.meta?.changes ?? 0) !== 1) {
+    return json({ error: "active_telegram_connection_not_found" }, 404);
+  }
+  return json({
+    businessId: body.businessId,
+    chatId: body.chatId,
+    telegramUserId: body.telegramUserId,
+    permission: body.permission
+  });
+}
+
 async function configureTelegramWebhook(request: Request, env: Env): Promise<Response> {
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
   if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_WEBHOOK_SECRET) {
@@ -2762,6 +2814,8 @@ export default {
     const disableWalletMatch = url.pathname.match(/^\/v1\/admin\/wallets\/([a-zA-Z0-9_-]+)\/disable$/);
     if (request.method === "POST" && disableWalletMatch) return disableWallet(request, env, disableWalletMatch[1]);
     if (request.method === "POST" && url.pathname === "/v1/admin/telegram/test") return sendTelegramTestAlert(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/admin/telegram/connections") return listTelegramConnections(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/admin/telegram/permissions") return updateTelegramPermission(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/telegram/setup") return configureTelegramWebhook(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/telegram/link-codes") return createTelegramLinkCode(request, env);
     if (request.method === "POST" && url.pathname === "/v1/telegram/webhook") return telegramWebhook(request, env);
