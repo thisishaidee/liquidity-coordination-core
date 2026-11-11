@@ -1,4 +1,5 @@
 import { dashboardHtml } from "./dashboard";
+import { landingHtml } from "./landing";
 import {
   evaluateLiquidity,
   makeOperationId,
@@ -2270,8 +2271,9 @@ export default {
     if (request.method === "POST" && releaseMatch) return releaseOperation(request, env, releaseMatch[1]);
     const operationMatch = url.pathname.match(/^\/v1\/operations\/([a-zA-Z0-9_-]+)$/);
     if (request.method === "GET" && operationMatch) return getOperation(request, env, operationMatch[1]);
-    if (request.method === "GET" && url.pathname === "/") {
-      return new Response(dashboardHtml, {
+    if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/app")) {
+      const page = url.pathname === "/app" ? dashboardHtml : landingHtml;
+      return new Response(page, {
         headers: {
           "content-type": "text/html; charset=utf-8",
           "cache-control": "no-store",
