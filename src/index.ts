@@ -1009,6 +1009,12 @@ async function trackSwapTransaction(request: Request, env: Env): Promise<Respons
   ).bind(transactionHash, operationId).run();
   if ((update.meta?.changes ?? 0) !== 1) return json({ error: "operation_state_changed" }, 409);
 
+  await notifyBusiness(
+    env,
+    agent.business_id,
+    `Swap transaction submitted for operation ${operationId}. Awaiting final confirmation.`
+  );
+
   return json({
     operationId,
     status: "conversion_submitted",
