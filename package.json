@@ -4,11 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "npm run build:dashboard && wrangler dev",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
-    "deploy": "wrangler deploy"
+    "typecheck": "npm run build:dashboard && tsc --noEmit",
+    "deploy": "npm run build:dashboard && wrangler deploy",
+    "build:dashboard": "node scripts/embed-dashboard.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261110.1",
