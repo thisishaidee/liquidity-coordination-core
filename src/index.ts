@@ -1365,6 +1365,17 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
 
   const remaining = new Map([...wallets.values()].map((wallet) => [wallet.walletId, wallet.usdc]));
   const conversionUsedWallets = new Set<string>();
+  const pendingConversions = await env.DB.prepare(
+    "SELECT source_wallet_id, available_atoms FROM operations WHERE business_id = ? AND action = 'conversion_required' AND status IN ('awaiting_conversion', 'preparing_conversion', 'conversion_submitted')"
+  ).bind(agent.business_id).all<{ source_wallet_id: string | null; available_atoms: string }>();
+  for (const pending of pendingConversions.results ?? []) {
+    if (!pending.source_wallet_id) continue;
+    const current = remaining.get(pending.source_wallet_id) ?? 0n;
+    const held = BigInt(pending.available_atoms);
+    remaining.set(pending.source_wallet_id, current > held ? current - held : 0n);
+    conversionUsedWallets.add(pending.source_wallet_id);
+  }
+
   const allForecast = (obligations.results ?? []).map((obligation) => {
     const amount = BigInt(obligation.amount_atoms);
     const eligibleWallets = [...wallets.values()].filter((wallet) =>
