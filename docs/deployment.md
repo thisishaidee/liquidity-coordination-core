@@ -4,7 +4,7 @@
 
 - Cloudflare D1 database: `liquidity-coordination`
 - Database ID is configured in `wrangler.toml`.
-- Migrations `0001` through `0011` have been applied to the dedicated database and recorded in `d1_migrations`.
+- Migrations `0001` through `0012` have been applied to the dedicated database and recorded in `d1_migrations`.
 - The Worker name is `liquidity-coordination-api`.
 - Static dashboard assets are configured from `./public`.
 - A one-minute Cron Trigger is configured for reservation expiry.
