@@ -170,7 +170,7 @@ async function upsertBalanceSnapshot(request: Request, env: Env): Promise<Respon
     typeof walletId !== "string" ||
     (token !== "USDC" && token !== "SOL") ||
     typeof amount !== "string" ||
-    !/^(0|[1-9]\\d*)(\\.\\d+)?$/.test(amount)
+    !/^(0|[1-9]\d*)(\.\d+)?$/.test(amount)
   ) {
     return json({ error: "invalid_request", message: "Provide walletId, token=USDC|SOL and a non-negative decimal amount." }, 400);
   }
