@@ -659,6 +659,9 @@ async function prepareSwapTransaction(request: Request, env: Env): Promise<Respo
       if (refreshed?.source_reservation_id !== reservationId) throw new Error("Operation was claimed by another prepare request");
     } catch {
       await env.DB.prepare(
+        "UPDATE operations SET status = 'awaiting_conversion', source_reservation_id = NULL, provider_key = NULL WHERE id = ? AND status = 'preparing_conversion' AND source_reservation_id = ?"
+      ).bind(context.operationId, reservationId).run();
+      await env.DB.prepare(
         "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?"
       ).bind(context.sourceAtoms.toString(), context.walletBalanceId, context.sourceAtoms.toString()).run();
       await env.DB.prepare("DELETE FROM reservations WHERE id = ? AND status = 'active'").bind(reservationId).run();
@@ -1005,7 +1008,7 @@ async function trackSwapTransaction(request: Request, env: Env): Promise<Respons
   if (!reservation) return json({ error: "active_source_reservation_not_found" }, 409);
 
   const update = await env.DB.prepare(
-    "UPDATE operations SET status = 'conversion_submitted', transaction_hash = ? WHERE id = ? AND status = 'preparing_conversion'"
+    "UPDATE operations SET status = 'conversion_submitted', transaction_hash = ? WHERE id = ? AND status = 'preparing_conversion' AND EXISTS (SELECT 1 FROM reservations r WHERE r.id = operations.source_reservation_id AND r.status = 'active')"
   ).bind(transactionHash, operationId).run();
   if ((update.meta?.changes ?? 0) !== 1) return json({ error: "operation_state_changed" }, 409);
 
