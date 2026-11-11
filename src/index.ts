@@ -637,6 +637,8 @@ async function listTelegramRequests(env: Env, chatId: string, userId: string, bu
         { text: "Approve", callback_data: "na:" + approveToken },
         { text: "Reject", callback_data: "nr:" + rejectToken }
       ]] };
+    } else if (isRequester) {
+      lines.push("", "You submitted this request. A different authorised approver must make the decision.");
     } else {
       lines.push("", "Viewer access only. Ask the business administrator to grant approver permission.");
     }
