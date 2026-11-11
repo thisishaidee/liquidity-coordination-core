@@ -161,17 +161,19 @@ async function readJson(request: Request): Promise<Record<string, unknown> | nul
   }
 }
 
-async function sendTelegramMessage(env: Env, chatId: string, text: string): Promise<boolean> {
+async function sendTelegramMessage(env: Env, chatId: string, text: string, replyMarkup?: Record<string, unknown>): Promise<boolean> {
   if (!env.TELEGRAM_BOT_TOKEN) return false;
   try {
+    const payload: Record<string, unknown> = {
+      chat_id: chatId,
+      text: text.length > 3900 ? text.slice(0, 3880) + "\n… message truncated" : text,
+      disable_web_page_preview: true
+    };
+    if (replyMarkup) payload.reply_markup = replyMarkup;
     const response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: text.length > 3900 ? text.slice(0, 3880) + "\n… message truncated" : text,
-        disable_web_page_preview: true
-      })
+      body: JSON.stringify(payload)
     });
     const result = await response.json() as { ok?: boolean };
     return response.ok && result.ok === true;
