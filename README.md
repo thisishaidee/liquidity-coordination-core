@@ -338,27 +338,30 @@ The x402 client wallet must match the registered `api_payment` wallet and needs 
 
 The Worker serves a public product landing page at `/` and the responsive read-only agent-scoped dashboard at `/app`. `npm run build:dashboard` regenerates both embedded HTML modules from `public/landing.html` and `public/index.html`. Connect with an agent API key to inspect authorized operating-wallet balances, the separate x402 payment reserve, and the agent's latest 50 operations. API-payment balances are visible but never included in operating liquidity or forecasts. The key is held in page memory only and is not written to local or session storage. The dashboard cannot sign transactions, move funds, or change permissions.
 
-## Telegram business alerts
+## Telegram business companion
 
-Telegram is an optional notification surface; the API remains the source of truth. V1 supports private-chat linking and notifications for liquidity shortfalls, reservations, releases, expiries and conversion settlement. It does not approve or sign transactions in Telegram.
+Telegram is a private, business-scoped operations companion. It supports one-time private-chat linking, proactive business alerts and read-only commands for liquidity, forecasts, agents and operations. It never signs transactions, moves funds or authorizes spending. The API and on-chain settlement remain the source of truth.
 
-Configure the bot secrets:
+### Create and configure the bot
+
+1. In Telegram, open [@BotFather](https://t.me/BotFather), send `/newbot`, and follow its prompts to choose a display name and unique username.
+2. Copy the bot token from BotFather. Keep it private.
+3. In Cloudflare Worker secrets, set:
+   - `TELEGRAM_BOT_TOKEN` — the token from BotFather.
+   - `TELEGRAM_WEBHOOK_SECRET` — a private random string containing 32–64 hexadecimal characters.
+4. Ensure `ADMIN_BOOTSTRAP_TOKEN` is configured as a Worker secret. The business admin API uses it to protect bot setup and linking invitations.
+5. Call the authenticated setup endpoint once. It validates the bot, registers the webhook and publishes Telegram's command menu:
 
 ```bash
-npx wrangler secret put TELEGRAM_BOT_TOKEN
-npx wrangler secret put TELEGRAM_BOT_USERNAME
-npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
+curl -X POST https://YOUR_WORKER/v1/admin/telegram/setup \
+  -H "Authorization: Bearer YOUR_ADMIN_BOOTSTRAP_TOKEN"
 ```
 
-Set the Telegram webhook to the deployed Worker URL:
+The endpoint returns the bot username and configured webhook URL. The bot username is discovered through Telegram; it does not need to be stored as a separate secret.
 
-```bash
-curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
-  -d "url=https://YOUR_WORKER/v1/telegram/webhook" \
-  -d "secret_token=$TELEGRAM_WEBHOOK_SECRET"
-```
+### Link a business
 
-Create a one-time invitation for a business:
+Create a one-time invitation for the business:
 
 ```bash
 curl -X POST https://YOUR_WORKER/v1/admin/telegram/link-codes \
@@ -367,7 +370,19 @@ curl -X POST https://YOUR_WORKER/v1/admin/telegram/link-codes \
   -d '{"businessId":"biz_..."}'
 ```
 
-Send the returned deep link privately to the authorized business user. The link expires in 15 minutes and can only be used once. Group chats are not accepted. Telegram delivery is best-effort and cannot roll back or authorize a financial operation.
+Open the returned `deepLink` from the private Telegram account that should receive business alerts. Invitations expire after 15 minutes and can only be used once. Group chats are rejected. A linked chat can disconnect itself with `/disconnect`.
+
+### Bot commands
+
+- `/status` — business overview, active agents, open operations and operating liquidity.
+- `/liquidity` — confirmed, reserved and available operating balances, with snapshot freshness.
+- `/forecast` — upcoming planned obligations.
+- `/agents` — provisioned agents and their current status.
+- `/operations` — latest liquidity operations and their states.
+- `/help` — command guide.
+- `/disconnect` — revoke this chat's connection.
+
+Telegram reports business-wide operating balances only to a chat linked through a business-admin-issued invitation. It excludes the separate x402 API-payment reserve from operating liquidity. Forecast entries are recorded plans, not proof that funds are available or reserved. Telegram delivery is best-effort and cannot roll back or authorize a financial operation.
 
 ## Next milestones
 
