@@ -95,7 +95,11 @@ async function sendTelegramMessage(env: Env, chatId: string, text: string): Prom
     await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true })
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: text.length > 3900 ? text.slice(0, 3880) + "\\n… message truncated" : text,
+        disable_web_page_preview: true
+      })
     });
   } catch {
     // Notifications are best-effort and must never roll back a liquidity operation.
