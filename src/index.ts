@@ -295,6 +295,164 @@ async function syncSolanaBalances(request: Request, env: Env): Promise<Response>
   }, errors.length && !synced.length ? 502 : 200);
 }
 
+const SOL_MINT = "So11111111111111111111111111111111111111112";
+const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+type ConversionContext = {
+  operationId: string;
+  userAddress: string;
+  sourceAmount: string;
+  sourceAtoms: bigint;
+  shortfallAtoms: bigint;
+};
+
+async function validateConversionContext(
+  agent: AgentRow,
+  body: Record<string, unknown>,
+  env: Env
+): Promise<ConversionContext | Response> {
+  const { operationId, userAddress, sourceAmount } = body;
+  if (
+    typeof operationId !== "string" ||
+    typeof userAddress !== "string" || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(userAddress) ||
+    typeof sourceAmount !== "string"
+  ) {
+    return json({ error: "invalid_request", message: "Provide operationId, registered userAddress and sourceAmount in SOL." }, 400);
+  }
+
+  let sourceAtoms: bigint;
+  try {
+    sourceAtoms = parseTokenAmount(sourceAmount, 9);
+  } catch (error) {
+    return json({ error: "invalid_source_amount", message: error instanceof Error ? error.message : "Invalid SOL amount" }, 400);
+  }
+
+  const operation = await env.DB.prepare(
+    "SELECT id, status, shortfall_atoms FROM operations WHERE id = ? AND agent_id = ? AND action = 'conversion_required' LIMIT 1"
+  ).bind(operationId, agent.id).first<{ id: string; status: string; shortfall_atoms: string }>();
+  if (!operation) return json({ error: "conversion_operation_not_found" }, 404);
+  if (operation.status !== "awaiting_conversion") {
+    return json({ error: "operation_not_ready_for_conversion", status: operation.status }, 409);
+  }
+
+  const wallet = await env.DB.prepare(`
+    SELECT w.id AS wallet_id, w.address, b.confirmed_atoms, b.reserved_atoms, b.observed_at
+    FROM wallets w
+    JOIN wallet_balances b ON b.wallet_id = w.id AND b.token = 'SOL'
+    WHERE w.business_id = ? AND w.network = 'solana' AND w.address = ? AND w.status = 'active'
+      AND (
+        (w.scope = 'agent' AND w.agent_id = ?) OR
+        (w.scope = 'business' AND ? = 1)
+      )
+    LIMIT 1
+  `).bind(agent.business_id, userAddress, agent.id, agent.can_use_business_treasury).first<{
+    wallet_id: string;
+    address: string;
+    confirmed_atoms: string;
+    reserved_atoms: string;
+    observed_at: string;
+  }>();
+
+  if (!wallet) return json({ error: "source_wallet_not_authorized" }, 403);
+  const ageMs = Date.now() - Date.parse(wallet.observed_at);
+  if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > 5 * 60 * 1000) {
+    return json({ error: "source_balance_stale", message: "Refresh Solana balances before requesting a conversion." }, 409);
+  }
+
+  const confirmed = BigInt(wallet.confirmed_atoms);
+  const reserved = BigInt(wallet.reserved_atoms);
+  const available = confirmed > reserved ? confirmed - reserved : 0n;
+  if (available < sourceAtoms) {
+    return json({
+      error: "insufficient_source_balance",
+      availableSOL: formatTokenAmount(available, 9),
+      requestedSOL: sourceAmount
+    }, 409);
+  }
+
+  return {
+    operationId,
+    userAddress,
+    sourceAmount,
+    sourceAtoms,
+    shortfallAtoms: BigInt(operation.shortfall_atoms)
+  };
+}
+
+async function proxyHermes(
+  request: Request,
+  path: string,
+  payload: Record<string, unknown>
+): Promise<Response> {
+  const headers = new Headers({ "content-type": "application/json" });
+  const payment = request.headers.get("x-payment");
+  if (payment) headers.set("X-PAYMENT", payment);
+
+  const upstream = await fetch(`https://hermes.swap.io${path}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload)
+  });
+
+  const responseHeaders = new Headers({
+    "content-type": upstream.headers.get("content-type") ?? "application/json",
+    "cache-control": "no-store"
+  });
+  for (const name of ["x-payment-required", "payment-required", "x-payment-response", "payment-response"]) {
+    const value = upstream.headers.get(name);
+    if (value) responseHeaders.set(name, value);
+  }
+  return new Response(await upstream.arrayBuffer(), {
+    status: upstream.status,
+    headers: responseHeaders
+  });
+}
+
+async function requestSwapQuote(request: Request, env: Env): Promise<Response> {
+  const agent = await authenticate(request, env.DB);
+  if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
+  const body = await readJson(request);
+  if (!body) return json({ error: "invalid_json" }, 400);
+
+  const context = await validateConversionContext(agent, body, env);
+  if (context instanceof Response) return context;
+
+  const slippageBps = body.slippageBps === undefined ? 50 : body.slippageBps;
+  if (typeof slippageBps !== "number" || !Number.isInteger(slippageBps) || slippageBps < 1 || slippageBps > 300) {
+    return json({ error: "invalid_slippage", message: "slippageBps must be an integer from 1 to 300." }, 400);
+  }
+
+  return proxyHermes(request, "/v1/swap/quote", {
+    input: { token: SOL_MINT, amount: context.sourceAtoms.toString(), chainKey: "sol" },
+    output: { token: USDC_MINT, chainKey: "sol" },
+    userAddress: context.userAddress,
+    slippageBps
+  });
+}
+
+async function prepareSwapTransaction(request: Request, env: Env): Promise<Response> {
+  const agent = await authenticate(request, env.DB);
+  if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
+  const body = await readJson(request);
+  if (!body) return json({ error: "invalid_json" }, 400);
+
+  const context = await validateConversionContext(agent, body, env);
+  if (context instanceof Response) return context;
+  if (typeof body.provider !== "string" || body.provider.length < 1 || body.provider.length > 100) {
+    return json({ error: "invalid_provider" }, 400);
+  }
+  if (!body.providerQuote || typeof body.providerQuote !== "object" || Array.isArray(body.providerQuote)) {
+    return json({ error: "invalid_provider_quote" }, 400);
+  }
+
+  return proxyHermes(request, "/v1/swap/build-tx", {
+    provider: body.provider,
+    userAddress: context.userAddress,
+    chainKey: "sol",
+    quoteResponse: body.providerQuote
+  });
+}
+
 async function createLiquidityRequest(request: Request, env: Env): Promise<Response> {
   const agent = await authenticate(request, env.DB);
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
@@ -604,6 +762,8 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/admin/balances/sync") return syncSolanaBalances(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/reservations/expire") return expireReservationsAdmin(request, env);
     if (request.method === "POST" && url.pathname === "/v1/liquidity/requests") return createLiquidityRequest(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/conversions/quote") return requestSwapQuote(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/conversions/prepare") return prepareSwapTransaction(request, env);
     const releaseMatch = url.pathname.match(/^\/v1\/operations\/([a-zA-Z0-9_-]+)\/release$/);
     if (request.method === "POST" && releaseMatch) return releaseOperation(request, env, releaseMatch[1]);
     const operationMatch = url.pathname.match(/^\/v1\/operations\/([a-zA-Z0-9_-]+)$/);
