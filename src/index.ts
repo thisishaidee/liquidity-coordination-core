@@ -1,3 +1,4 @@
+import { dashboardHtml } from "./dashboard";
 import {
   evaluateLiquidity,
   makeOperationId,
@@ -13,7 +14,6 @@ interface Env {
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_BOT_USERNAME?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
-  ASSETS?: { fetch(request: Request): Promise<Response> };
 }
 
 type AgentRow = {
@@ -2220,7 +2220,7 @@ export default {
           status: "ok",
           version: "0.3.0",
           database: "connected",
-          dashboard: Boolean(env.ASSETS),
+          dashboard: true,
           telegramConfigured: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_WEBHOOK_SECRET)
         });
       } catch {
@@ -2266,8 +2266,17 @@ export default {
     if (request.method === "POST" && releaseMatch) return releaseOperation(request, env, releaseMatch[1]);
     const operationMatch = url.pathname.match(/^\/v1\/operations\/([a-zA-Z0-9_-]+)$/);
     if (request.method === "GET" && operationMatch) return getOperation(request, env, operationMatch[1]);
-    if (url.pathname.startsWith("/v1/")) return json({ error: "not_found" }, 404);
-    if (env.ASSETS) return env.ASSETS.fetch(request);
+    if (request.method === "GET" && url.pathname === "/") {
+      return new Response(dashboardHtml, {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "no-store",
+          "x-content-type-options": "nosniff",
+          "referrer-policy": "no-referrer",
+          "content-security-policy": "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"
+        }
+      });
+    }
     return json({ error: "not_found" }, 404);
   }
 };
