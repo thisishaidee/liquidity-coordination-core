@@ -26,7 +26,7 @@
     button:disabled{opacity:.5;cursor:not-allowed}
     .hint{font-size:12px;color:#75817d;margin-top:9px}
     .error{color:#a53b36;font-size:13px;margin-top:10px;display:none}
-    .stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:18px}
+    .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:18px}
     .stat{background:#fff;border:1px solid #e2e8e5;border-radius:14px;padding:17px}
     .stat-label{font-size:12px;color:#6c7974}
     .stat-value{font-size:25px;letter-spacing:-.05em;font-weight:720;margin-top:8px}
@@ -89,6 +89,7 @@
         <div class="stat"><div class="stat-label">Authorized wallets</div><div class="stat-value" id="walletCount">—</div></div>
         <div class="stat"><div class="stat-label">Open operations</div><div class="stat-value" id="openCount">—</div></div>
         <div class="stat"><div class="stat-label">Pending conversions</div><div class="stat-value" id="conversionCount">—</div></div>
+        <div class="stat"><div class="stat-label">Projected shortfall</div><div class="stat-value" id="forecastShortfall">—</div></div>
       </div>
 
       <section class="panel">
@@ -100,6 +101,18 @@
           <table>
             <thead><tr><th>Wallet</th><th>Scope</th><th>Asset</th><th>Confirmed</th><th>Reserved</th><th>Available</th><th>Snapshot</th></tr></thead>
             <tbody id="balanceRows"><tr><td colspan="7" class="empty">Connect an agent to load balances.</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <div><h2>Upcoming liquidity</h2><div class="muted">30-day obligation forecast; estimates are not reservations.</div></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Task</th><th>Due</th><th>Amount</th><th>Shortfall</th><th>Projection</th></tr></thead>
+            <tbody id="forecastRows"><tr><td colspan="5" class="empty">No planned obligations.</td></tr></tbody>
           </table>
         </div>
       </section>
@@ -153,12 +166,16 @@
       $("refreshButton").disabled = true;
       showError("");
       try {
-        const [liquidity, operations] = await Promise.all([api("/v1/liquidity"), api("/v1/operations")]);
+        const [liquidity, operations, forecast] = await Promise.all([
+          api("/v1/liquidity"), api("/v1/operations"), api("/v1/liquidity/forecast")
+        ]);
         const balances = liquidity.balances || [];
         const items = operations.operations || [];
+        const obligations = forecast.obligations || [];
         $("walletCount").textContent = new Set(balances.map((x) => x.walletId)).size;
         $("openCount").textContent = items.filter((x) => !["released","expired","conversion_failed","conversion_settled","conversion_unverified","conversion_settled_shortfall"].includes(x.status)).length;
         $("conversionCount").textContent = items.filter((x) => ["awaiting_conversion","preparing_conversion","conversion_submitted"].includes(x.status)).length;
+        $("forecastShortfall").textContent = money(forecast.summary?.totalShortfallUSDC || "0", "USDC");
         $("balanceRows").innerHTML = balances.length ? balances.map((b) => `
           <tr>
             <td class="mono">${escapeHtml(shortAddress(b.address))}</td>
@@ -169,6 +186,14 @@
             <td>${escapeHtml(money(b.available,b.token))}</td>
             <td><span class="pill ${b.fresh ? "good" : "warn"}">${b.fresh ? "Fresh" : "Stale"}</span></td>
           </tr>`).join("") : '<tr><td colspan="7" class="empty">No authorized operating wallet balances found.</td></tr>';
+        $("forecastRows").innerHTML = obligations.length ? obligations.map((o) => `
+          <tr>
+            <td>${escapeHtml(o.taskId)}</td>
+            <td>${escapeHtml(new Date(o.dueAt).toLocaleString())}</td>
+            <td>${escapeHtml(money(o.amountUSDC,"USDC"))}</td>
+            <td>${escapeHtml(money(o.shortfallUSDC,"USDC"))}</td>
+            <td><span class="pill ${statusClass(o.status)}">${escapeHtml(o.status.replaceAll("_"," "))}</span></td>
+          </tr>`).join("") : '<tr><td colspan="5" class="empty">No planned obligations in the next 30 days.</td></tr>';
         $("operationRows").innerHTML = items.length ? items.map((o) => `
           <tr>
             <td class="mono">${escapeHtml(o.operationId.slice(0,14))}</td>
