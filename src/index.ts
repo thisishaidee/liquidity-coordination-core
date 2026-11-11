@@ -10,6 +10,9 @@ interface Env {
   ADMIN_BOOTSTRAP_TOKEN?: string;
   SOLANA_RPC_URL?: string;
   SOLANA_USDC_MINT?: string;
+  TELEGRAM_BOT_TOKEN?: string;
+  TELEGRAM_BOT_USERNAME?: string;
+  TELEGRAM_WEBHOOK_SECRET?: string;
 }
 
 type AgentRow = {
@@ -82,6 +85,109 @@ async function readJson(request: Request): Promise<Record<string, unknown> | nul
   } catch {
     return null;
   }
+}
+
+async function sendTelegramMessage(env: Env, chatId: string, text: string): Promise<void> {
+  if (!env.TELEGRAM_BOT_TOKEN) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true })
+    });
+  } catch {
+    // Notifications are best-effort and must never roll back a liquidity operation.
+  }
+}
+
+async function notifyBusiness(env: Env, businessId: string, message: string): Promise<void> {
+  if (!env.TELEGRAM_BOT_TOKEN) return;
+  const connections = await env.DB.prepare(
+    "SELECT chat_id FROM telegram_connections WHERE business_id = ? AND status = 'active'"
+  ).bind(businessId).all<{ chat_id: string }>();
+  await Promise.all((connections.results ?? []).map((connection) =>
+    sendTelegramMessage(env, connection.chat_id, message)
+  ));
+}
+
+async function createTelegramLinkCode(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const body = await readJson(request);
+  if (!body || typeof body.businessId !== "string") return json({ error: "invalid_request" }, 400);
+
+  const business = await env.DB.prepare("SELECT id FROM businesses WHERE id = ?")
+    .bind(body.businessId).first<{ id: string }>();
+  if (!business) return json({ error: "business_not_found" }, 404);
+  if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_BOT_USERNAME || !env.TELEGRAM_WEBHOOK_SECRET) {
+    return json({ error: "telegram_not_configured", message: "Configure bot token, username and webhook secret first." }, 409);
+  }
+
+  const code = newSecret("");
+  const codeHash = await sha256(code);
+  const linkId = "tlg_" + crypto.randomUUID().replaceAll("-", "");
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  await env.DB.prepare(
+    "INSERT INTO telegram_link_codes (id, business_id, code_hash, expires_at) VALUES (?, ?, ?, ?)"
+  ).bind(linkId, business.id, codeHash, expiresAt).run();
+
+  return json({
+    linkId,
+    code,
+    expiresAt,
+    deepLink: `https://t.me/${env.TELEGRAM_BOT_USERNAME}?start=${code}`,
+    instruction: "Open the bot link from the Telegram account that should receive business alerts. This code works once and expires in 15 minutes."
+  }, 201);
+}
+
+async function telegramWebhook(request: Request, env: Env): Promise<Response> {
+  const secret = env.TELEGRAM_WEBHOOK_SECRET;
+  const supplied = request.headers.get("x-telegram-bot-api-secret-token") ?? "";
+  if (!secret || !constantTimeEqual(secret, supplied)) return json({ error: "unauthorized" }, 401);
+
+  const update = await readJson(request);
+  if (!update) return json({ error: "invalid_update" }, 400);
+  const message = update.message as {
+    text?: string;
+    chat?: { id?: number | string };
+    from?: { id?: number | string };
+  } | undefined;
+  const text = message?.text ?? "";
+  const chatId = message?.chat?.id === undefined ? "" : String(message.chat.id);
+  const userId = message?.from?.id === undefined ? "" : String(message.from.id);
+  const match = text.match(/^\/(?:start|link)\s+([a-f0-9]{64})$/i);
+
+  if (!match || !chatId || !userId) {
+    if (chatId) await sendTelegramMessage(env, chatId, "To connect this chat, ask your business administrator for a one-time linking invitation.");
+    return json({ ok: true });
+  }
+
+  const codeHash = await sha256(match[1]);
+  const linkCode = await env.DB.prepare(
+    "SELECT id, business_id FROM telegram_link_codes WHERE code_hash = ? AND consumed_at IS NULL AND julianday(expires_at) > julianday('now')"
+  ).bind(codeHash).first<{ id: string; business_id: string }>();
+  if (!linkCode) {
+    await sendTelegramMessage(env, chatId, "That invitation is invalid or expired. Ask your business administrator for a new one.");
+    return json({ ok: true });
+  }
+
+  const claim = await env.DB.prepare(
+    "UPDATE telegram_link_codes SET consumed_at = datetime('now') WHERE id = ? AND consumed_at IS NULL AND julianday(expires_at) > julianday('now')"
+  ).bind(linkCode.id).run();
+  if ((claim.meta?.changes ?? 0) !== 1) return json({ ok: true });
+
+  try {
+    await env.DB.prepare(
+      "INSERT INTO telegram_connections (id, business_id, chat_id, telegram_user_id) VALUES (?, ?, ?, ?) ON CONFLICT(business_id, chat_id, telegram_user_id) DO UPDATE SET status = 'active'"
+    ).bind("tg_" + crypto.randomUUID().replaceAll("-", ""), linkCode.business_id, chatId, userId).run();
+  } catch {
+    await env.DB.prepare("UPDATE telegram_link_codes SET consumed_at = NULL WHERE id = ?")
+      .bind(linkCode.id).run();
+    await sendTelegramMessage(env, chatId, "We couldn't finish linking this chat. Please try the invitation again.");
+    return json({ ok: true });
+  }
+
+  await sendTelegramMessage(env, chatId, "This Telegram chat is now connected to your business liquidity alerts.");
+  return json({ ok: true, linked: true });
 }
 
 async function bootstrapBusiness(request: Request, env: Env): Promise<Response> {
