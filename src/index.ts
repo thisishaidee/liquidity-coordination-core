@@ -102,12 +102,16 @@ async function sendTelegramMessage(env: Env, chatId: string, text: string): Prom
 
 async function notifyBusiness(env: Env, businessId: string, message: string): Promise<void> {
   if (!env.TELEGRAM_BOT_TOKEN) return;
-  const connections = await env.DB.prepare(
-    "SELECT chat_id FROM telegram_connections WHERE business_id = ? AND status = 'active'"
-  ).bind(businessId).all<{ chat_id: string }>();
-  await Promise.all((connections.results ?? []).map((connection) =>
-    sendTelegramMessage(env, connection.chat_id, message)
-  ));
+  try {
+    const connections = await env.DB.prepare(
+      "SELECT chat_id FROM telegram_connections WHERE business_id = ? AND status = 'active'"
+    ).bind(businessId).all<{ chat_id: string }>();
+    await Promise.all((connections.results ?? []).map((connection) =>
+      sendTelegramMessage(env, connection.chat_id, message)
+    ));
+  } catch {
+    // Telegram is an optional notification channel, not part of transaction correctness.
+  }
 }
 
 async function createTelegramLinkCode(request: Request, env: Env): Promise<Response> {
@@ -148,7 +152,7 @@ async function telegramWebhook(request: Request, env: Env): Promise<Response> {
   if (!update) return json({ error: "invalid_update" }, 400);
   const message = update.message as {
     text?: string;
-    chat?: { id?: number | string };
+    chat?: { id?: number | string; type?: string };
     from?: { id?: number | string };
   } | undefined;
   const text = message?.text ?? "";
@@ -156,7 +160,7 @@ async function telegramWebhook(request: Request, env: Env): Promise<Response> {
   const userId = message?.from?.id === undefined ? "" : String(message.from.id);
   const match = text.match(/^\/(?:start|link)\s+([a-f0-9]{64})$/i);
 
-  if (!match || !chatId || !userId) {
+  if (!match || !chatId || !userId || message?.chat?.type !== "private") {
     if (chatId) await sendTelegramMessage(env, chatId, "To connect this chat, ask your business administrator for a one-time linking invitation.");
     return json({ ok: true });
   }
@@ -892,6 +896,12 @@ async function releaseOperation(request: Request, env: Env, operationId: string)
     return json({ error: "reservation_ledger_mismatch" }, 409);
   }
 
+  await notifyBusiness(
+    env,
+    agent.business_id,
+    `Reservation released for operation ${operationId}: ${formatTokenAmount(amount, reservation.token === "SOL" ? 9 : 6)} ${reservation.token}.`
+  );
+
   return json({
     operationId,
     status: "released",
@@ -1173,6 +1183,12 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
   await env.DB.prepare(
     "UPDATE operations SET status = ?, received_output_atoms = ?, settlement_note = ? WHERE id = ? AND status = 'conversion_submitted'"
   ).bind(nextStatus, outputAtoms.toString(), settlementNote, operationId).run();
+
+  await notifyBusiness(
+    env,
+    agent.business_id,
+    `Conversion update for ${operationId}: ${nextStatus}. ${outputAtoms > 0n ? formatTokenAmount(outputAtoms, 6) + " USDC received." : ""}`
+  );
 
   return json({
     operationId,
