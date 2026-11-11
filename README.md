@@ -21,6 +21,10 @@ API-first infrastructure for coordinating authorized liquidity across AI agents.
 | POST | `/v1/telegram/webhook` | Receive verified Telegram bot updates |
 | POST | `/v1/liquidity/requests` | Submit a task funding request |
 | GET | `/v1/liquidity` | Read authorized operating-wallet balances |
+| POST | `/v1/liquidity/forecast` | Publish up to 50 upcoming USDC obligations |
+| GET | `/v1/liquidity/forecast` | Project 30-day wallet-level liquidity coverage |
+| POST | `/v1/liquidity/forecast/:taskId/fulfilled` | Close a planned obligation as fulfilled |
+| POST | `/v1/liquidity/forecast/:taskId/cancelled` | Cancel a planned obligation |
 | GET | `/v1/operations` | List the authenticated agent's recent operations |
 | POST | `/v1/conversions/quote` | Request a paid Swap.io quote through x402 |
 | POST | `/v1/conversions/prepare` | Build an unsigned Swap.io transaction through x402 |
@@ -177,6 +181,34 @@ curl -X POST http://localhost:8787/v1/admin/balances/sync \
 ```
 
 Snapshots older than five minutes are excluded from liquidity decisions.
+
+## Predictive liquidity forecast
+
+Agents can publish expected USDC obligations up to 30 days ahead. The engine simulates due-date order against fresh, authorized wallet balances and reports which tasks appear covered, may need SOL conversion, or are blocked.
+
+```bash
+curl -X POST http://localhost:8787/v1/liquidity/forecast \
+  -H "Authorization: Bearer YOUR_AGENT_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "obligations": [
+      {
+        "taskId": "payout-tomorrow",
+        "amount": "500",
+        "dueAt": "2026-11-12T10:00:00Z",
+        "purpose": "Contributor payouts"
+      },
+      {
+        "taskId": "api-budget-friday",
+        "amount": "40",
+        "dueAt": "2026-11-13T14:00:00Z",
+        "purpose": "Scheduled API usage"
+      }
+    ]
+  }'
+```
+
+The forecast is advisory, not a reservation. It uses one-wallet allocation, does not pool assets across wallets, and marks a wallet as a potential conversion source at most once per forecast because the exact SOL needed is unknown until a live Swap.io quote is requested. Agents should update obligations when a task is fulfilled or cancelled.
 
 ## Submit a liquidity request
 
