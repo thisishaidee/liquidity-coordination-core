@@ -1460,7 +1460,7 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
       uiTokenAmount?: { amount?: string };
     };
     type TransactionResult = {
-      transaction?: { message?: { accountKeys?: Array<string | { pubkey?: string }> } };
+      transaction?: { message?: { accountKeys?: Array<string | { pubkey?: string; signer?: boolean }> } };
       meta?: {
         err?: unknown;
         fee?: number;
