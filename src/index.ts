@@ -1494,16 +1494,10 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
       settlementNote = "Solana transaction metadata reports an execution error.";
     } else {
       const keys = transaction.transaction?.message?.accountKeys ?? [];
-      const keyIndex = keys.findIndex((entry) =>
+      const sourceAccount = keys.find((entry) =>
         (typeof entry === "string" ? entry : entry.pubkey) === wallet.address
       );
-      const preLamports = transaction.meta.preBalances?.[keyIndex];
-      const postLamports = transaction.meta.postBalances?.[keyIndex];
-      const feeLamports = BigInt(transaction.meta.fee ?? 0);
-      const lamportsSpent = keyIndex >= 0 && preLamports !== undefined && postLamports !== undefined
-        ? BigInt(preLamports) - BigInt(postLamports) - feeLamports
-        : 0n;
-      const sourceSpentAtoms = lamportsSpent > 0n ? lamportsSpent : 0n;
+      const sourceWalletSigned = typeof sourceAccount === "object" && sourceAccount !== null && sourceAccount.signer === true;
 
       const sumOwnerUsdc = (entries: ParsedTokenBalance[] | undefined) =>
         (entries ?? []).filter((entry) => entry.owner === wallet.address && entry.mint === USDC_MINT)
@@ -1513,9 +1507,9 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
       const afterUsdc = sumOwnerUsdc(transaction.meta.postTokenBalances);
       outputAtoms = afterUsdc > beforeUsdc ? afterUsdc - beforeUsdc : 0n;
 
-      if (sourceSpentAtoms < BigInt(reservation.amount_atoms) || outputAtoms === 0n) {
+      if (!sourceWalletSigned || outputAtoms === 0n) {
         effectiveStatus = "unverified";
-        settlementNote = "The finalized transaction could not be verified as the expected SOL-to-USDC conversion for the registered wallet.";
+        settlementNote = "The finalized transaction did not show the registered operating wallet as a signer receiving USDC.";
       } else if (outputAtoms < BigInt(operation.shortfall_atoms)) {
         effectiveStatus = "shortfall";
         settlementNote = "The swap finalized, but received USDC is below the operation's required shortfall.";
