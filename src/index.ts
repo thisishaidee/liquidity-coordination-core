@@ -124,9 +124,20 @@ async function createTelegramLinkCode(request: Request, env: Env): Promise<Respo
   const business = await env.DB.prepare("SELECT id FROM businesses WHERE id = ?")
     .bind(body.businessId).first<{ id: string }>();
   if (!business) return json({ error: "business_not_found" }, 404);
-  if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_BOT_USERNAME || !env.TELEGRAM_WEBHOOK_SECRET) {
-    return json({ error: "telegram_not_configured", message: "Configure bot token, username and webhook secret first." }, 409);
+  if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_WEBHOOK_SECRET) {
+    return json({ error: "telegram_not_configured", message: "Configure the bot token and webhook secret first." }, 409);
   }
+  let botUsername = env.TELEGRAM_BOT_USERNAME?.replace(/^@/, "");
+  if (!botUsername) {
+    try {
+      const identityResponse = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getMe`);
+      const identity = await identityResponse.json() as { ok?: boolean; result?: { username?: string } };
+      if (identityResponse.ok && identity.ok && identity.result?.username) botUsername = identity.result.username;
+    } catch {
+      // Return a controlled configuration error below.
+    }
+  }
+  if (!botUsername) return json({ error: "telegram_bot_identity_unavailable" }, 502);
 
   const code = newSecret("");
   const codeHash = await sha256(code);
@@ -140,7 +151,7 @@ async function createTelegramLinkCode(request: Request, env: Env): Promise<Respo
     linkId,
     code,
     expiresAt,
-    deepLink: `https://t.me/${env.TELEGRAM_BOT_USERNAME.replace(/^@/, "")}?start=${code}`,
+    deepLink: `https://t.me/${botUsername}?start=${code}`,
     instruction: "Open the bot link from the Telegram account that should receive business alerts. This code works once and expires in 15 minutes."
   }, 201);
 }
@@ -321,6 +332,27 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
     const webhook = await webhookResponse.json() as { ok?: boolean; description?: string };
     if (!webhookResponse.ok || !webhook.ok) {
       return json({ error: "telegram_webhook_setup_failed", message: webhook.description ?? "Telegram rejected the webhook configuration." }, 502);
+    }
+
+    const commandsResponse = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setMyCommands`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        commands: [
+          { command: "start", description: "Open NERITH" },
+          { command: "help", description: "Show available commands" },
+          { command: "status", description: "Business liquidity overview" },
+          { command: "liquidity", description: "Available and reserved balances" },
+          { command: "forecast", description: "Upcoming planned obligations" },
+          { command: "agents", description: "Agent status" },
+          { command: "operations", description: "Recent liquidity operations" },
+          { command: "disconnect", description: "Disconnect this Telegram chat" }
+        ]
+      })
+    });
+    const commandResult = await commandsResponse.json() as { ok?: boolean; description?: string };
+    if (!commandsResponse.ok || !commandResult.ok) {
+      return json({ error: "telegram_commands_setup_failed", message: commandResult.description ?? "Telegram rejected the command list." }, 502);
     }
 
     return json({
