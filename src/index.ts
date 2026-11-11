@@ -286,6 +286,57 @@ async function listBusinessAgents(request: Request, env: Env): Promise<Response>
   });
 }
 
+async function rotateAgentKey(request: Request, env: Env, agentId: string): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const agent = await env.DB.prepare(
+    "SELECT id, name, status FROM agents WHERE id = ?"
+  ).bind(agentId).first<{ id: string; name: string; status: string }>();
+  if (!agent) return json({ error: "agent_not_found" }, 404);
+
+  const apiKey = newSecret("lci_");
+  const apiKeyHash = await sha256(apiKey);
+  const update = await env.DB.prepare(
+    "UPDATE agents SET api_key_hash = ? WHERE id = ?"
+  ).bind(apiKeyHash, agentId).run();
+  if ((update.meta?.changes ?? 0) !== 1) return json({ error: "key_rotation_failed" }, 500);
+
+  return json({
+    agent: { id: agent.id, name: agent.name, status: agent.status },
+    apiKey,
+    warning: "The previous key is invalid immediately. Store this new key securely; it cannot be retrieved later."
+  });
+}
+
+async function disableAgent(request: Request, env: Env, agentId: string): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const update = await env.DB.prepare(
+    "UPDATE agents SET status = 'disabled' WHERE id = ? AND status = 'active'"
+  ).bind(agentId).run();
+  if ((update.meta?.changes ?? 0) !== 1) return json({ error: "active_agent_not_found" }, 404);
+  return json({ agentId, status: "disabled" });
+}
+
+async function disableWallet(request: Request, env: Env, walletId: string): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const activeReservations = await env.DB.prepare(`
+    SELECT COUNT(*) AS count
+    FROM reservations r
+    JOIN wallet_balances b ON b.id = r.wallet_balance_id
+    WHERE b.wallet_id = ? AND r.status = 'active'
+  `).bind(walletId).first<{ count: number }>();
+  if ((activeReservations?.count ?? 0) > 0) {
+    return json({
+      error: "wallet_has_active_reservations",
+      activeReservations: activeReservations?.count ?? 0
+    }, 409);
+  }
+  const update = await env.DB.prepare(
+    "UPDATE wallets SET status = 'disabled' WHERE id = ? AND status = 'active'"
+  ).bind(walletId).run();
+  if ((update.meta?.changes ?? 0) !== 1) return json({ error: "active_wallet_not_found" }, 404);
+  return json({ walletId, status: "disabled" });
+}
+
 async function registerWallet(request: Request, env: Env): Promise<Response> {
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
   const body = await readJson(request);
@@ -2172,6 +2223,12 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/admin/bootstrap") return bootstrapBusiness(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/agents") return provisionAgent(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/agents") return listBusinessAgents(request, env);
+    const rotateAgentMatch = url.pathname.match(/^\/v1\/admin\/agents\/([a-zA-Z0-9_-]+)\/rotate-key$/);
+    if (request.method === "POST" && rotateAgentMatch) return rotateAgentKey(request, env, rotateAgentMatch[1]);
+    const disableAgentMatch = url.pathname.match(/^\/v1\/admin\/agents\/([a-zA-Z0-9_-]+)\/disable$/);
+    if (request.method === "POST" && disableAgentMatch) return disableAgent(request, env, disableAgentMatch[1]);
+    const disableWalletMatch = url.pathname.match(/^\/v1\/admin\/wallets\/([a-zA-Z0-9_-]+)\/disable$/);
+    if (request.method === "POST" && disableWalletMatch) return disableWallet(request, env, disableWalletMatch[1]);
     if (request.method === "POST" && url.pathname === "/v1/admin/telegram/link-codes") return createTelegramLinkCode(request, env);
     if (request.method === "POST" && url.pathname === "/v1/telegram/webhook") return telegramWebhook(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/wallets") return registerWallet(request, env);
