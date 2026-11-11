@@ -1,4 +1,5 @@
 name = "liquidity-coordination-api"
+account_id = "ce0ffaff7491ff502fa23f17606a138a"
 main = "src/index.ts"
 compatibility_date = "2026-11-11"
 
