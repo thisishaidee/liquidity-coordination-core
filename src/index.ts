@@ -499,12 +499,13 @@ async function validateConversionContext(
   }
 
   const operation = await env.DB.prepare(
-    "SELECT id, status, shortfall_atoms, source_reservation_id FROM operations WHERE id = ? AND agent_id = ? AND action = 'conversion_required' LIMIT 1"
+    "SELECT id, status, shortfall_atoms, source_reservation_id, source_wallet_id FROM operations WHERE id = ? AND agent_id = ? AND action = 'conversion_required' LIMIT 1"
   ).bind(operationId, agent.id).first<{
     id: string;
     status: string;
     shortfall_atoms: string;
     source_reservation_id: string | null;
+    source_wallet_id: string | null;
   }>();
   if (!operation) return json({ error: "conversion_operation_not_found" }, 404);
 
@@ -514,17 +515,19 @@ async function validateConversionContext(
     return json({ error: "operation_not_ready_for_conversion", status: operation.status }, 409);
   }
 
+  if (!operation.source_wallet_id) return json({ error: "conversion_source_wallet_missing" }, 409);
+
   const wallet = await env.DB.prepare(`
     SELECT w.id AS wallet_id, w.address, b.confirmed_atoms, b.reserved_atoms, b.observed_at
     FROM wallets w
     JOIN wallet_balances b ON b.wallet_id = w.id AND b.token = 'SOL'
-    WHERE w.business_id = ? AND w.network = 'solana' AND w.address = ? AND w.status = 'active' AND w.purpose = 'operating'
+    WHERE w.id = ? AND w.business_id = ? AND w.network = 'solana' AND w.address = ? AND w.status = 'active' AND w.purpose = 'operating'
       AND (
         (w.scope = 'agent' AND w.agent_id = ?) OR
         (w.scope = 'business' AND ? = 1)
       )
     LIMIT 1
-  `).bind(agent.business_id, userAddress, agent.id, agent.can_use_business_treasury).first<{
+  `).bind(operation.source_wallet_id, agent.business_id, userAddress, agent.id, agent.can_use_business_treasury).first<{
     wallet_id: string;
     address: string;
     confirmed_atoms: string;
@@ -873,12 +876,12 @@ async function createLiquidityRequest(request: Request, env: Env): Promise<Respo
   await env.DB.prepare(`
     INSERT INTO operations
       (id, business_id, agent_id, task_id, network, token, amount_atoms, purpose,
-       status, action, available_atoms, shortfall_atoms)
-    VALUES (?, ?, ?, ?, 'solana', 'USDC', ?, ?, ?, ?, ?, ?)
+       status, action, available_atoms, shortfall_atoms, source_wallet_id)
+    VALUES (?, ?, ?, ?, 'solana', 'USDC', ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     operationId, agent.business_id, agent.id, taskId, requestedAtoms.toString(),
     purpose.trim(), status, decision.action, decision.availableAtoms.toString(),
-    decision.shortfallAtoms.toString()
+    decision.shortfallAtoms.toString(), decision.sourceWalletId
   ).run();
 
   await notifyBusiness(
@@ -899,6 +902,7 @@ async function createLiquidityRequest(request: Request, env: Env): Promise<Respo
     },
     action: decision.action,
     eligibleSourceTokens: decision.eligibleSourceTokens,
+    sourceWalletId: decision.sourceWalletId,
     note: "No conversion, signing or transfer has occurred."
   }, 201);
 }
@@ -1332,7 +1336,7 @@ async function listAgentOperations(request: Request, env: Env): Promise<Response
 
   const rows = await env.DB.prepare(`
     SELECT id, task_id, token, amount_atoms, status, action, available_atoms,
-           shortfall_atoms, transaction_hash, received_output_atoms, created_at
+           shortfall_atoms, source_wallet_id, transaction_hash, received_output_atoms, created_at
     FROM operations
     WHERE agent_id = ?
     ORDER BY created_at DESC
@@ -1346,6 +1350,7 @@ async function listAgentOperations(request: Request, env: Env): Promise<Response
     action: string;
     available_atoms: string;
     shortfall_atoms: string;
+    source_wallet_id: string | null;
     transaction_hash: string | null;
     received_output_atoms: string | null;
     created_at: string;
@@ -1361,6 +1366,7 @@ async function listAgentOperations(request: Request, env: Env): Promise<Response
       action: row.action,
       available: formatTokenAmount(BigInt(row.available_atoms), 6),
       shortfall: formatTokenAmount(BigInt(row.shortfall_atoms), 6),
+      sourceWalletId: row.source_wallet_id,
       transactionHash: row.transaction_hash,
       receivedUSDC: row.received_output_atoms
         ? formatTokenAmount(BigInt(row.received_output_atoms), 6)
@@ -1376,7 +1382,7 @@ async function getOperation(request: Request, env: Env, operationId: string): Pr
 
   const operation = await env.DB.prepare(`
     SELECT id, task_id, network, token, amount_atoms, status, action,
-           available_atoms, shortfall_atoms, transaction_hash, received_output_atoms,
+           available_atoms, shortfall_atoms, source_wallet_id, transaction_hash, received_output_atoms,
            settlement_note, created_at
     FROM operations WHERE id = ? AND agent_id = ? LIMIT 1
   `).bind(operationId, agent.id).first<Record<string, string>>();
@@ -1398,6 +1404,7 @@ async function getOperation(request: Request, env: Env, operationId: string): Pr
       available: formatTokenAmount(BigInt(operation.available_atoms)),
       shortfall: formatTokenAmount(BigInt(operation.shortfall_atoms))
     },
+    sourceWalletId: operation.source_wallet_id ?? null,
     transactionHash: operation.transaction_hash ?? null,
     receivedUSDC: operation.received_output_atoms
       ? formatTokenAmount(BigInt(operation.received_output_atoms), 6)
