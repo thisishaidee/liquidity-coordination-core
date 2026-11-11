@@ -222,7 +222,7 @@ async function handleTelegramCommand(
       const reserved = BigInt(row.reserved_atoms ?? "0");
       const available = confirmed > reserved ? confirmed - reserved : 0n;
       const age = Date.now() - Date.parse(row.observed_at);
-      const freshness = Number.isFinite(age) && age <= 5 * 60 * 1000 ? "fresh" : "stale snapshot";
+      const freshness = Number.isFinite(age) && age >= 0 && age <= 5 * 60 * 1000 ? "fresh" : "stale snapshot";
       return `• ${row.token}: ${formatTokenAmount(available, decimals)} available · ${formatTokenAmount(reserved, decimals)} reserved (${freshness})`;
     });
     const body = command === "/status"
@@ -287,6 +287,51 @@ async function handleTelegramCommand(
   }
 
   await sendTelegramMessage(env, chatId, "I don't recognise that command. Send /help to see available commands.");
+}
+
+async function configureTelegramWebhook(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_WEBHOOK_SECRET) {
+    return json({
+      error: "telegram_not_configured",
+      message: "Set TELEGRAM_BOT_TOKEN and TELEGRAM_WEBHOOK_SECRET as Worker secrets first."
+    }, 409);
+  }
+
+  const webhookUrl = new URL("/v1/telegram/webhook", request.url).toString();
+  try {
+    const identityResponse = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getMe`);
+    const identity = await identityResponse.json() as {
+      ok?: boolean;
+      result?: { username?: string; first_name?: string };
+    };
+    if (!identityResponse.ok || !identity.ok || !identity.result?.username) {
+      return json({ error: "telegram_bot_authentication_failed" }, 502);
+    }
+
+    const webhookResponse = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        url: webhookUrl,
+        secret_token: env.TELEGRAM_WEBHOOK_SECRET,
+        allowed_updates: ["message"]
+      })
+    });
+    const webhook = await webhookResponse.json() as { ok?: boolean; description?: string };
+    if (!webhookResponse.ok || !webhook.ok) {
+      return json({ error: "telegram_webhook_setup_failed", message: webhook.description ?? "Telegram rejected the webhook configuration." }, 502);
+    }
+
+    return json({
+      configured: true,
+      botUsername: identity.result.username,
+      webhookUrl,
+      commands: ["start", "help", "status", "liquidity", "forecast", "agents", "operations", "disconnect"]
+    });
+  } catch {
+    return json({ error: "telegram_setup_unavailable" }, 502);
+  }
 }
 
 async function telegramWebhook(request: Request, env: Env): Promise<Response> {
@@ -2393,6 +2438,7 @@ export default {
     if (request.method === "POST" && disableAgentMatch) return disableAgent(request, env, disableAgentMatch[1]);
     const disableWalletMatch = url.pathname.match(/^\/v1\/admin\/wallets\/([a-zA-Z0-9_-]+)\/disable$/);
     if (request.method === "POST" && disableWalletMatch) return disableWallet(request, env, disableWalletMatch[1]);
+    if (request.method === "POST" && url.pathname === "/v1/admin/telegram/setup") return configureTelegramWebhook(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/telegram/link-codes") return createTelegramLinkCode(request, env);
     if (request.method === "POST" && url.pathname === "/v1/telegram/webhook") return telegramWebhook(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/wallets") return registerWallet(request, env);
