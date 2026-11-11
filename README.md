@@ -327,7 +327,7 @@ The x402 client wallet must match the registered `api_payment` wallet and needs 
 
 ## Browser dashboard
 
-The Worker serves a responsive read-only dashboard at `/`. Connect with an agent API key to inspect authorized operating-wallet balances and the agent's latest 50 operations. The key is held in page memory only and is not written to local or session storage. The dashboard cannot sign transactions, move funds, or change permissions.
+The Worker serves a responsive read-only dashboard embedded in its module at `/`; `npm run build:dashboard` regenerates `src/dashboard.ts` from `public/index.html`. Connect with an agent API key to inspect authorized operating-wallet balances and the agent's latest 50 operations. The key is held in page memory only and is not written to local or session storage. The dashboard cannot sign transactions, move funds, or change permissions.
 
 ## Telegram business alerts
 
