@@ -1666,14 +1666,14 @@ async function expireReservations(env: Env): Promise<{ expired: number; skipped:
       UPDATE reservations
       SET status = CASE
         WHEN (SELECT status FROM operations WHERE id = reservations.operation_id) = 'completed' THEN 'consumed'
-        WHEN (SELECT status FROM operations WHERE id = reservations.operation_id) = 'released' THEN 'released'
+        WHEN (SELECT status FROM operations WHERE id = reservations.operation_id) IN ('released', 'conversion_failed') THEN 'released'
         WHEN (SELECT status FROM operations WHERE id = reservations.operation_id) = 'expired' THEN 'expired'
         ELSE status
       END,
       released_at = COALESCE(released_at, datetime('now'))
       WHERE status = 'active'
         AND operation_id IN (
-          SELECT id FROM operations WHERE status IN ('completed', 'released', 'expired')
+          SELECT id FROM operations WHERE status IN ('completed', 'released', 'expired', 'conversion_failed')
         )
     `),
     env.DB.prepare(`
