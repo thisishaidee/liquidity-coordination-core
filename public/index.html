@@ -89,7 +89,7 @@
         <div class="stat"><div class="stat-label">Authorized wallets</div><div class="stat-value" id="walletCount">—</div></div>
         <div class="stat"><div class="stat-label">Open operations</div><div class="stat-value" id="openCount">—</div></div>
         <div class="stat"><div class="stat-label">Pending conversions</div><div class="stat-value" id="conversionCount">—</div></div>
-        <div class="stat"><div class="stat-label">Projected shortfall</div><div class="stat-value" id="forecastShortfall">—</div></div>
+        <div class="stat"><div class="stat-label">Business projected shortfall</div><div class="stat-value" id="forecastShortfall">—</div></div>
       </div>
 
       <section class="panel">
@@ -107,7 +107,7 @@
 
       <section class="panel">
         <div class="section-head">
-          <div><h2>Upcoming liquidity</h2><div class="muted">30-day obligation forecast; estimates are not reservations. <span id="forecastFreshness">—</span></div></div>
+          <div><h2>Upcoming liquidity</h2><div class="muted">Your agent's 30-day obligations; business shortfall includes all agents sharing treasury. <span id="forecastFreshness">—</span></div></div>
         </div>
         <div class="table-wrap">
           <table>
@@ -175,7 +175,7 @@
         $("walletCount").textContent = new Set(balances.map((x) => x.walletId)).size;
         $("openCount").textContent = items.filter((x) => !["released","expired","conversion_failed","conversion_settled","conversion_unverified","conversion_settled_shortfall"].includes(x.status)).length;
         $("conversionCount").textContent = items.filter((x) => ["awaiting_conversion","preparing_conversion","conversion_submitted"].includes(x.status)).length;
-        $("forecastShortfall").textContent = money(forecast.summary?.totalShortfallUSDC || "0", "USDC");
+        $("forecastShortfall").textContent = money(forecast.businessSummary?.totalShortfallUSDC || "0", "USDC");
         $("forecastFreshness").textContent = forecast.balanceDataFresh ? "Balance snapshots fresh" : "Some balance snapshots stale or missing";
         $("balanceRows").innerHTML = balances.length ? balances.map((b) => `
           <tr>
