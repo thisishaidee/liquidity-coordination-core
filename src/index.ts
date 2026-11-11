@@ -51,10 +51,10 @@ async function sha256(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function constantTimeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let difference = 0;
-  for (let i = 0; i < a.length; i++) difference |= a.charCodeAt(i) ^ b.charCodeAt(i);
+async function constantTimeEqual(a: string, b: string): Promise<boolean> {
+  const [left, right] = await Promise.all([sha256(a), sha256(b)]);
+  let difference = a.length ^ b.length;
+  for (let i = 0; i < 64; i++) difference |= left.charCodeAt(i) ^ right.charCodeAt(i);
   return difference === 0;
 }
 
@@ -62,7 +62,7 @@ async function isAdmin(request: Request, env: Env): Promise<boolean> {
   const configured = env.ADMIN_BOOTSTRAP_TOKEN;
   const supplied = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
   if (!configured || !supplied) return false;
-  return constantTimeEqual(await sha256(configured), await sha256(supplied));
+  return constantTimeEqual(configured, supplied);
 }
 
 async function authenticate(request: Request, db: D1Database): Promise<AgentRow | null> {
@@ -374,7 +374,7 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
 async function telegramWebhook(request: Request, env: Env): Promise<Response> {
   const secret = env.TELEGRAM_WEBHOOK_SECRET;
   const supplied = request.headers.get("x-telegram-bot-api-secret-token") ?? "";
-  if (!secret || !constantTimeEqual(secret, supplied)) return json({ error: "unauthorized" }, 401);
+  if (!secret || !(await constantTimeEqual(secret, supplied))) return json({ error: "unauthorized" }, 401);
 
   const update = await readJson(request);
   if (!update) return json({ error: "invalid_update" }, 400);
