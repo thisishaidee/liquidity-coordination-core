@@ -816,15 +816,6 @@ async function prepareSwapTransaction(request: Request, env: Env): Promise<Respo
     }, 409);
   }
 
-  if (quote.build_response_json) {
-    const cachedHeaders = new Headers({
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store"
-    });
-    if (quote.build_payment_receipt) cachedHeaders.set("X-PAYMENT-RESPONSE", quote.build_payment_receipt);
-    return new Response(quote.build_response_json, { status: 200, headers: cachedHeaders });
-  }
-
   const context = await validateConversionContext(agent, {
     operationId: quote.operation_id,
     userAddress: quote.user_address,
@@ -834,6 +825,15 @@ async function prepareSwapTransaction(request: Request, env: Env): Promise<Respo
   if (context instanceof Response) return context;
   if (context.walletBalanceId !== quote.source_wallet_id || context.sourceAtoms.toString() !== quote.source_amount_atoms) {
     return json({ error: "quote_context_mismatch" }, 409);
+  }
+
+  if (quote.build_response_json) {
+    const cachedHeaders = new Headers({
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store"
+    });
+    if (quote.build_payment_receipt) cachedHeaders.set("X-PAYMENT-RESPONSE", quote.build_payment_receipt);
+    return new Response(quote.build_response_json, { status: 200, headers: cachedHeaders });
   }
 
   if (!context.sourceReservationId) {
