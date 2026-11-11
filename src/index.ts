@@ -852,16 +852,27 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
 
   const operation = await env.DB.prepare(
-    "SELECT id, status, transaction_hash, source_reservation_id FROM operations WHERE id = ? AND agent_id = ?"
+    "SELECT id, status, transaction_hash, source_reservation_id, shortfall_atoms, received_output_atoms, settlement_note FROM operations WHERE id = ? AND agent_id = ?"
   ).bind(operationId, agent.id).first<{
     id: string;
     status: string;
     transaction_hash: string | null;
     source_reservation_id: string | null;
+    shortfall_atoms: string;
+    received_output_atoms: string | null;
+    settlement_note: string | null;
   }>();
   if (!operation) return json({ error: "operation_not_found" }, 404);
-  if (operation.status === "conversion_settled" || operation.status === "conversion_failed") {
-    return json({ operationId, status: operation.status, transactionHash: operation.transaction_hash });
+  if (["conversion_settled", "conversion_settled_shortfall", "conversion_unverified", "conversion_failed"].includes(operation.status)) {
+    return json({
+      operationId,
+      status: operation.status,
+      transactionHash: operation.transaction_hash,
+      receivedUSDC: operation.received_output_atoms
+        ? formatTokenAmount(BigInt(operation.received_output_atoms), 6)
+        : null,
+      settlementNote: operation.settlement_note
+    });
   }
   if (operation.status !== "conversion_submitted" || !operation.transaction_hash || !operation.source_reservation_id) {
     return json({ error: "transaction_not_submitted", status: operation.status }, 409);
@@ -895,7 +906,83 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
   }>();
   if (!reservation) return json({ error: "source_reservation_not_found" }, 409);
 
-  const finalReservationState = swapStatus === "finalized" ? "consumed" : "released";
+  let effectiveStatus = swapStatus;
+  let outputAtoms = 0n;
+  let settlementNote: string | null = null;
+
+  if (swapStatus === "finalized") {
+    const wallet = await env.DB.prepare(
+      "SELECT w.address, b.wallet_id FROM wallet_balances b JOIN wallets w ON w.id = b.wallet_id WHERE b.id = ?"
+    ).bind(reservation.wallet_balance_id).first<{ address: string; wallet_id: string }>();
+    if (!wallet) return json({ error: "source_wallet_not_found" }, 409);
+
+    type ParsedTokenBalance = {
+      owner?: string;
+      mint?: string;
+      uiTokenAmount?: { amount?: string };
+    };
+    type TransactionResult = {
+      transaction?: { message?: { accountKeys?: Array<string | { pubkey?: string }> } };
+      meta?: {
+        err?: unknown;
+        preBalances?: number[];
+        postBalances?: number[];
+        preTokenBalances?: ParsedTokenBalance[];
+        postTokenBalances?: ParsedTokenBalance[];
+      };
+    };
+
+    let transaction: TransactionResult | null;
+    try {
+      transaction = await solanaRpc<TransactionResult | null>(
+        env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com",
+        "getTransaction",
+        [operation.transaction_hash, {
+          commitment: "finalized",
+          encoding: "jsonParsed",
+          maxSupportedTransactionVersion: 0
+        }]
+      );
+    } catch {
+      return json({ error: "transaction_verification_unavailable" }, 502);
+    }
+    if (!transaction?.meta) {
+      return json({ operationId, status: "verification_pending", message: "Finalized transaction details are not available from the RPC yet." }, 202);
+    }
+
+    if (transaction.meta.err) {
+      effectiveStatus = "failed";
+      settlementNote = "Solana transaction metadata reports an execution error.";
+    } else {
+      const keys = transaction.transaction?.message?.accountKeys ?? [];
+      const keyIndex = keys.findIndex((entry) =>
+        (typeof entry === "string" ? entry : entry.pubkey) === wallet.address
+      );
+      const preLamports = transaction.meta.preBalances?.[keyIndex];
+      const postLamports = transaction.meta.postBalances?.[keyIndex];
+      const nativeSpent = keyIndex >= 0 && preLamports !== undefined && postLamports !== undefined
+        ? BigInt(preLamports) - BigInt(postLamports)
+        : 0n;
+
+      const sumOwnerUsdc = (entries: ParsedTokenBalance[] | undefined) =>
+        (entries ?? []).filter((entry) => entry.owner === wallet.address && entry.mint === USDC_MINT)
+          .reduce((sum, entry) => sum + BigInt(entry.uiTokenAmount?.amount ?? "0"), 0n);
+
+      const beforeUsdc = sumOwnerUsdc(transaction.meta.preTokenBalances);
+      const afterUsdc = sumOwnerUsdc(transaction.meta.postTokenBalances);
+      outputAtoms = afterUsdc > beforeUsdc ? afterUsdc - beforeUsdc : 0n;
+
+      if (nativeSpent < BigInt(reservation.amount_atoms) || outputAtoms === 0n) {
+        effectiveStatus = "unverified";
+        settlementNote = "The finalized transaction could not be verified as the expected SOL-to-USDC conversion for the registered wallet.";
+      } else if (outputAtoms < BigInt(operation.shortfall_atoms)) {
+        effectiveStatus = "shortfall";
+        settlementNote = "The swap finalized, but received USDC is below the operation's required shortfall.";
+      }
+    }
+  }
+
+  const finalReservationState = effectiveStatus === "failed" ? "released" : "consumed";
   if (reservation.status === "active") {
     const claim = await env.DB.prepare(
       "UPDATE reservations SET status = ?, released_at = datetime('now') WHERE id = ? AND status = 'active'"
@@ -903,11 +990,9 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
     if ((claim.meta?.changes ?? 0) !== 1) return json({ error: "reservation_already_reconciled" }, 409);
 
     const amount = BigInt(reservation.amount_atoms);
-    const debit = await env.DB.prepare(`
-      UPDATE wallet_balances
-      SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?
-      WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?
-    `).bind(amount.toString(), reservation.wallet_balance_id, amount.toString()).run();
+    const debit = await env.DB.prepare(
+      "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?"
+    ).bind(amount.toString(), reservation.wallet_balance_id, amount.toString()).run();
 
     if ((debit.meta?.changes ?? 0) !== 1) {
       await env.DB.prepare(
@@ -919,7 +1004,7 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
     return json({ error: "source_reservation_already_reconciled", reservationStatus: reservation.status }, 409);
   }
 
-  if (swapStatus === "finalized") {
+  if (effectiveStatus !== "failed") {
     const walletId = await env.DB.prepare(
       "SELECT wallet_id FROM wallet_balances WHERE id = ?"
     ).bind(reservation.wallet_balance_id).first<{ wallet_id: string }>();
@@ -930,17 +1015,27 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
     }
   }
 
-  const nextStatus = swapStatus === "finalized" ? "conversion_settled" : "conversion_failed";
+  const nextStatus = effectiveStatus === "failed"
+    ? "conversion_failed"
+    : effectiveStatus === "shortfall"
+      ? "conversion_settled_shortfall"
+      : effectiveStatus === "unverified"
+        ? "conversion_unverified"
+        : "conversion_settled";
+
   await env.DB.prepare(
-    "UPDATE operations SET status = ? WHERE id = ? AND status = 'conversion_submitted'"
-  ).bind(nextStatus, operationId).run();
+    "UPDATE operations SET status = ?, received_output_atoms = ?, settlement_note = ? WHERE id = ? AND status = 'conversion_submitted'"
+  ).bind(nextStatus, outputAtoms.toString(), settlementNote, operationId).run();
 
   return json({
     operationId,
     transactionHash: operation.transaction_hash,
     swapStatus,
     operationStatus: nextStatus,
-    balanceRefreshRequired: swapStatus === "finalized"
+    receivedUSDC: outputAtoms > 0n ? formatTokenAmount(outputAtoms, 6) : null,
+    requiredUSDC: formatTokenAmount(BigInt(operation.shortfall_atoms), 6),
+    settlementNote,
+    balanceRefreshRequired: effectiveStatus !== "failed"
   });
 }
 
