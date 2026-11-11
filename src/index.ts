@@ -1658,6 +1658,49 @@ async function completeOperation(request: Request, env: Env, operationId: string
 }
 
 async function expireReservations(env: Env): Promise<{ expired: number; skipped: number }> {
+  // Recover terminal operations whose Worker invocation stopped before all reservation
+  // rows were processed. The reservation table is the source of truth for aggregate holds.
+  // Run the repair statements in one D1 batch so a retry cannot double-debit a wallet.
+  await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE reservations
+      SET status = CASE
+        WHEN (SELECT status FROM operations WHERE id = reservations.operation_id) = 'completed' THEN 'consumed'
+        WHEN (SELECT status FROM operations WHERE id = reservations.operation_id) = 'released' THEN 'released'
+        WHEN (SELECT status FROM operations WHERE id = reservations.operation_id) = 'expired' THEN 'expired'
+        ELSE status
+      END,
+      released_at = COALESCE(released_at, datetime('now'))
+      WHERE status = 'active'
+        AND operation_id IN (
+          SELECT id FROM operations WHERE status IN ('completed', 'released', 'expired')
+        )
+    `),
+    env.DB.prepare(`
+      UPDATE wallet_balances
+      SET reserved_atoms = CAST((
+        SELECT COALESCE(SUM(CAST(r.amount_atoms AS INTEGER)), 0)
+        FROM reservations r
+        WHERE r.wallet_balance_id = wallet_balances.id AND r.status = 'active'
+      ) AS TEXT)
+      WHERE CAST(reserved_atoms AS INTEGER) != (
+        SELECT COALESCE(SUM(CAST(r.amount_atoms AS INTEGER)), 0)
+        FROM reservations r
+        WHERE r.wallet_balance_id = wallet_balances.id AND r.status = 'active'
+      )
+    `),
+    env.DB.prepare(`
+      UPDATE wallet_balances
+      SET observed_at = datetime('now', '-10 minutes')
+      WHERE id IN (
+        SELECT r.wallet_balance_id
+        FROM reservations r
+        JOIN operations o ON o.id = r.operation_id
+        WHERE o.status = 'completed' AND r.status = 'consumed'
+      )
+    `)
+  ]);
+
   const dueOperations = await env.DB.prepare(`
     SELECT DISTINCT o.id, o.business_id, o.status
     FROM operations o
