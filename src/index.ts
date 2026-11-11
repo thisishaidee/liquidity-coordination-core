@@ -802,7 +802,7 @@ async function requestSwapQuote(request: Request, env: Env): Promise<Response> {
     expiresAt,
     requiredOutputUSDC: formatTokenAmount(context.shortfallAtoms, 6),
     quotes: summaries,
-    note: "Only select a quote whose minimum output covers the required USDC shortfall. The quote is cached server-side and expires in five minutes."
+    note: "Only select a quote whose minimum output covers the required USDC shortfall. The quote is cached server-side and expires in 15 minutes."
   }, 200);
 }
 
