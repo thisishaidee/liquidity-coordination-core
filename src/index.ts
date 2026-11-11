@@ -851,6 +851,7 @@ async function createLiquidityRequest(request: Request, env: Env): Promise<Respo
       return json({ error: "reservation_persistence_failed" }, 500);
     }
 
+    const futureForecast = await buildLiquidityForecast(agent, env);
     await notifyBusiness(
       env,
       agent.business_id,
@@ -868,7 +869,8 @@ async function createLiquidityRequest(request: Request, env: Env): Promise<Respo
       },
       action: "direct_fulfillment",
       reservation: { id: reservationId, expiresAt },
-      note: "Funds are reserved in the internal ledger, not transferred. A separate approved execution step is still required."
+      futureImpact: futureForecast.businessSummary,
+      note: "Funds are reserved in the internal ledger, not transferred. A separate approved execution step is still required. Future impact is a business-wide forecast, not a reservation."
     }, 201);
   }
 
