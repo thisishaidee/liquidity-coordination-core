@@ -488,7 +488,7 @@ async function listTelegramRequests(env: Env, chatId: string, userId: string, bu
   const eligible = [];
   for (const row of rows.results ?? []) {
     const details = await telegramOperationSnapshot(env, row.id, businessId);
-    if (!details || !details.reservations.some(item => item.status === "active")) continue;
+    if (!details || !details.reservations.some(item => item.status === "active" && Date.parse(item.expires_at) > Date.now())) continue;
     const existing = await env.DB.prepare(
       "SELECT decision FROM telegram_operation_approvals WHERE operation_id = ? LIMIT 1"
     ).bind(row.id).first<{ decision: string }>();
@@ -588,7 +588,7 @@ async function handleTelegramApprovalCallback(env: Env, callback: {
   const eligible = Boolean(details &&
     details.operation.status === "reserved" &&
     details.operation.action === "direct_fulfillment" &&
-    details.reservations.some(item => item.status === "active"));
+    details.reservations.some(item => item.status === "active" && Date.parse(item.expires_at) > Date.now()));
   if (!eligible || !details || details.snapshotHash !== action.snapshot_hash) {
     await env.DB.prepare("UPDATE telegram_approval_actions SET consumed_at = datetime('now') WHERE token_hash = ? AND consumed_at IS NULL")
       .bind(tokenHash).run();
