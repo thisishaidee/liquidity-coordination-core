@@ -1200,15 +1200,17 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
         ? "conversion_unverified"
         : "conversion_settled";
 
-  await env.DB.prepare(
+  const finalUpdate = await env.DB.prepare(
     "UPDATE operations SET status = ?, received_output_atoms = ?, settlement_note = ? WHERE id = ? AND status = 'conversion_submitted'"
   ).bind(nextStatus, outputAtoms.toString(), settlementNote, operationId).run();
 
-  await notifyBusiness(
-    env,
-    agent.business_id,
-    `Conversion update for ${operationId}: ${nextStatus}. ${outputAtoms > 0n ? formatTokenAmount(outputAtoms, 6) + " USDC received." : ""}`
-  );
+  if ((finalUpdate.meta?.changes ?? 0) === 1) {
+    await notifyBusiness(
+      env,
+      agent.business_id,
+      `Conversion update for ${operationId}: ${nextStatus}. ${outputAtoms > 0n ? formatTokenAmount(outputAtoms, 6) + " USDC received." : ""}`
+    );
+  }
 
   return json({
     operationId,
