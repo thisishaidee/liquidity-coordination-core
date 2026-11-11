@@ -5,7 +5,7 @@ compatibility_date = "2026-11-11"
 [[d1_databases]]
 binding = "DB"
 database_name = "liquidity-coordination"
-database_id = "REPLACE_WITH_CLOUDFLARE_D1_DATABASE_ID"
+database_id = "1b3d32d5-6e1c-490d-a550-c06baf8b918e"
 migrations_dir = "migrations"
 
 [triggers]
