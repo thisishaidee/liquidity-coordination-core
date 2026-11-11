@@ -884,6 +884,7 @@ async function createLiquidityRequest(request: Request, env: Env): Promise<Respo
     decision.shortfallAtoms.toString(), decision.sourceWalletId
   ).run();
 
+  const futureForecast = await buildLiquidityForecast(agent, env);
   await notifyBusiness(
     env,
     agent.business_id,
@@ -903,7 +904,8 @@ async function createLiquidityRequest(request: Request, env: Env): Promise<Respo
     action: decision.action,
     eligibleSourceTokens: decision.eligibleSourceTokens,
     sourceWalletId: decision.sourceWalletId,
-    note: "No conversion, signing or transfer has occurred."
+    futureImpact: futureForecast.businessSummary,
+    note: "No conversion, signing or transfer has occurred. Future impact is a business-wide forecast, not a reservation."
   }, 201);
 }
 
