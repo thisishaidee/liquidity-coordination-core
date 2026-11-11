@@ -930,6 +930,11 @@ async function expireReservations(env: Env): Promise<{ expired: number; skipped:
       UPDATE reservations
       SET status = 'expired', released_at = datetime('now')
       WHERE id = ? AND status = 'active' AND julianday(expires_at) <= julianday('now')
+        AND EXISTS (
+          SELECT 1 FROM operations o
+          WHERE o.id = reservations.operation_id
+            AND o.status IN ('reserved', 'preparing_conversion')
+        )
     `).bind(reservation.id).run();
 
     if ((claim.meta?.changes ?? 0) !== 1) {
