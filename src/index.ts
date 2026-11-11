@@ -2220,7 +2220,7 @@ export default {
         const database = await env.DB.prepare("SELECT 1 AS ok").first<{ ok: number }>();
         if (database?.ok !== 1) throw new Error("D1 health query returned no result");
         return json({
-          service: "liquidity-coordination-api",
+          service: "nerith-api",
           status: "ok",
           version: "0.3.0",
           database: "connected",
@@ -2229,7 +2229,7 @@ export default {
         });
       } catch {
         return json({
-          service: "liquidity-coordination-api",
+          service: "nerith-api",
           status: "degraded",
           database: "unavailable"
         }, 503);
