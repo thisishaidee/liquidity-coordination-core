@@ -1321,7 +1321,7 @@ async function expireReservations(env: Env): Promise<{ expired: number; skipped:
       AND julianday(r.expires_at) <= julianday('now')
       AND o.status IN (
         'reserved', 'awaiting_conversion', 'preparing_conversion',
-        'conversion_settled', 'conversion_settled_shortfall', 'conversion_unverified'
+        'conversion_submitted', 'conversion_settled', 'conversion_settled_shortfall', 'conversion_unverified'
       )
     ORDER BY o.created_at ASC
     LIMIT 100
@@ -1442,6 +1442,10 @@ async function trackSwapTransaction(request: Request, env: Env): Promise<Respons
     "UPDATE operations SET status = 'conversion_submitted', transaction_hash = ? WHERE id = ? AND status = 'preparing_conversion' AND EXISTS (SELECT 1 FROM reservations r WHERE r.id = operations.source_reservation_id AND r.status = 'active')"
   ).bind(transactionHash, operationId).run();
   if ((update.meta?.changes ?? 0) !== 1) return json({ error: "operation_state_changed" }, 409);
+
+  await env.DB.prepare(
+    "UPDATE reservations SET expires_at = datetime('now', '+1 hour') WHERE operation_id = ? AND status = 'active'"
+  ).bind(operationId).run();
 
   await notifyBusiness(
     env,
