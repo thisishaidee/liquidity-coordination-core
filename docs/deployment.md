@@ -33,7 +33,7 @@ Use long, random values. Never commit secrets or wallet private keys.
 npm install
 npm run typecheck
 npm test
-npx wrangler dev
+npm run dev
 ```
 
 Test the scheduled expiry handler locally with:
