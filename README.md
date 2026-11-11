@@ -17,6 +17,8 @@ API-first infrastructure for coordinating authorized liquidity across AI agents.
 | POST | `/v1/liquidity/requests` | Submit a task funding request |
 | POST | `/v1/conversions/quote` | Request a paid Swap.io quote through x402 |
 | POST | `/v1/conversions/prepare` | Build an unsigned Swap.io transaction through x402 |
+| POST | `/v1/conversions/track` | Record the transaction signature after wallet broadcast |
+| GET | `/v1/conversions/status/:operationId` | Poll and verify conversion settlement |
 | GET | `/v1/operations/:id` | Read an agent's operation |
 | POST | `/v1/operations/:id/release` | Release an active internal reservation |
 
@@ -165,10 +167,11 @@ Example client shape (the signing wallet stays in the business-controlled agent 
 import { createX402Client } from "x402-solana/client";
 
 const client = createX402Client({
+  // Separate USDC-funded wallet used only for x402 API payments.
   wallet: {
-    address: businessWallet.publicKey.toString(),
+    address: apiPaymentWallet.publicKey.toString(),
     signTransaction: async (tx) => {
-      tx.sign([businessWallet]);
+      tx.sign([apiPaymentWallet]);
       return tx;
     }
   },
@@ -183,14 +186,14 @@ const quoteResponse = await client.fetch("https://YOUR_API/v1/conversions/quote"
   },
   body: JSON.stringify({
     operationId: "op_...",
-    userAddress: businessWallet.publicKey.toString(),
+    userAddress: operatingWallet.publicKey.toString(),
     sourceAmount: "0.1",
     slippageBps: 50
   })
 });
 ```
 
-The wallet used by the x402 client needs a separate USDC reserve for Hermes API charges. That is distinct from SOL being converted. The returned swap transaction is unsigned; signing and broadcasting remain outside this Worker. No paid API request has been made by this repository's implementation.
+The x402 client wallet needs a separate USDC reserve for Hermes API charges. That is distinct from the operating wallet's SOL being converted. The build endpoint reserves the requested SOL amount before preparing the unsigned transaction. After the business-controlled signer broadcasts it, call `POST /v1/conversions/track` with the operation ID and Solana signature, then poll `GET /v1/conversions/status/:operationId`. The status handler checks Hermes status and independently verifies the finalized Solana transaction: the registered wallet must have spent the reserved SOL and received USDC. It marks the wallet snapshots stale after terminal settlement so they must be refreshed before further liquidity decisions. No paid API request has been made by this repository's implementation.
 
 ## Next milestones
 
