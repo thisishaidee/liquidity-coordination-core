@@ -1353,6 +1353,7 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
   }>();
 
   const remaining = new Map([...wallets.values()].map((wallet) => [wallet.walletId, wallet.usdc]));
+  const conversionUsedWallets = new Set<string>();
   const forecast = (obligations.results ?? []).map((obligation) => {
     const amount = BigInt(obligation.amount_atoms);
     const candidates = [...wallets.values()];
@@ -1381,7 +1382,7 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
     }
 
     const conversionWallet = candidates
-      .filter((wallet) => wallet.sol > 0n && wallet.solFresh)
+      .filter((wallet) => wallet.sol > 0n && wallet.solFresh && !conversionUsedWallets.has(wallet.walletId))
       .sort((a, b) => {
         const aRemain = remaining.get(a.walletId) ?? 0n;
         const bRemain = remaining.get(b.walletId) ?? 0n;
@@ -1389,6 +1390,7 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
       })[0];
 
     if (conversionWallet) {
+      conversionUsedWallets.add(conversionWallet.walletId);
       const available = remaining.get(conversionWallet.walletId) ?? 0n;
       const allocated = available < amount ? available : amount;
       remaining.set(conversionWallet.walletId, available - allocated);
@@ -1432,7 +1434,8 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
     if (status === "covered") acc.covered++;
     else if (status === "conversion_required") acc.conversionRequired++;
     else acc.blocked++;
-    acc.totalShortfallAtoms += parseTokenAmount(String(item.shortfallUSDC || "0"));
+    const shortfall = String(item.shortfallUSDC || "0");
+    if (shortfall !== "0") acc.totalShortfallAtoms += parseTokenAmount(shortfall);
     return acc;
   }, { covered: 0, conversionRequired: 0, blocked: 0, totalShortfallAtoms: 0n });
 
