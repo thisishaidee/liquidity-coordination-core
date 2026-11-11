@@ -219,7 +219,7 @@ async function handleTelegramCommand(
         SELECT b.token,
           CAST(SUM(CAST(b.confirmed_atoms AS INTEGER)) AS TEXT) AS confirmed_atoms,
           CAST(SUM(CAST(b.reserved_atoms AS INTEGER)) AS TEXT) AS reserved_atoms,
-          MAX(b.observed_at) AS observed_at
+          MIN(b.observed_at) AS observed_at
         FROM wallets w
         JOIN wallet_balances b ON b.wallet_id = w.id
         WHERE w.business_id = ? AND w.status = 'active' AND w.purpose = 'operating'
@@ -402,6 +402,14 @@ async function telegramWebhook(request: Request, env: Env): Promise<Response> {
   ).bind(codeHash).first<{ id: string; business_id: string }>();
   if (!linkCode) {
     await sendTelegramMessage(env, chatId, "That invitation is invalid or expired. Ask your business administrator for a new one.");
+    return json({ ok: true });
+  }
+
+  const existingConnection = await env.DB.prepare(
+    "SELECT business_id FROM telegram_connections WHERE chat_id = ? AND telegram_user_id = ? AND status = 'active' LIMIT 1"
+  ).bind(chatId, userId).first<{ business_id: string }>();
+  if (existingConnection && existingConnection.business_id !== linkCode.business_id) {
+    await sendTelegramMessage(env, chatId, "This Telegram account is already linked to another NERITH business. Send /disconnect in that business chat before linking a different business.");
     return json({ ok: true });
   }
 
