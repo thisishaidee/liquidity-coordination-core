@@ -13,6 +13,7 @@ interface Env {
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_BOT_USERNAME?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
+  ASSETS?: { fetch(request: Request): Promise<Response> };
 }
 
 type AgentRow = {
@@ -1352,7 +1353,13 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") {
-      return json({ service: "liquidity-coordination-api", status: "ok", version: "0.2.0" });
+      return json({
+        service: "liquidity-coordination-api",
+        status: "ok",
+        version: "0.3.0",
+        dashboard: true,
+        telegramConfigured: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_WEBHOOK_SECRET)
+      });
     }
     if (request.method === "POST" && url.pathname === "/v1/admin/bootstrap") return bootstrapBusiness(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/telegram/link-codes") return createTelegramLinkCode(request, env);
@@ -1373,6 +1380,8 @@ export default {
     if (request.method === "POST" && releaseMatch) return releaseOperation(request, env, releaseMatch[1]);
     const operationMatch = url.pathname.match(/^\/v1\/operations\/([a-zA-Z0-9_-]+)$/);
     if (request.method === "GET" && operationMatch) return getOperation(request, env, operationMatch[1]);
+    if (url.pathname.startsWith("/v1/")) return json({ error: "not_found" }, 404);
+    if (env.ASSETS) return env.ASSETS.fetch(request);
     return json({ error: "not_found" }, 404);
   }
 };
