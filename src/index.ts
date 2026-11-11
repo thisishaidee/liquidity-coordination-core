@@ -162,13 +162,13 @@ async function handleTelegramCommand(
   userId: string,
   rawText: string
 ): Promise<void> {
-  const command = (rawText.trim().split(/\\s+/, 1)[0] ?? "").split("@", 1)[0].toLowerCase();
+  const command = (rawText.trim().split(/\s+/, 1)[0] ?? "").split("@", 1)[0].toLowerCase();
 
-  if (command === "/start" && !rawText.trim().match(/^\\/start\\s+[a-f0-9]{64}$/i)) {
+  if (command === "/start" && !rawText.trim().match(/^\/start\s+[a-f0-9]{64}$/i)) {
     await sendTelegramMessage(
       env,
       chatId,
-      "Welcome to NERITH. I can give your business a private view of liquidity, forecasts, agents and recent operations.\\n\\nTo connect, ask your business administrator to generate a one-time Telegram invitation, then open that link here.\\n\\nCommands: /help"
+      "Welcome to NERITH. I can give your business a private view of liquidity, forecasts, agents and recent operations.\n\nTo connect, ask your business administrator to generate a one-time Telegram invitation, then open that link here.\n\nCommands: /help"
     );
     return;
   }
@@ -196,7 +196,7 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      `NERITH · ${connection.business_name}\\n\\n/status — business overview\\n/liquidity — available and reserved operating balances\\n/forecast — upcoming planned obligations\\n/agents — connected agent status\\n/operations — recent liquidity operations\\n/disconnect — disconnect this Telegram chat\\n\\nThis bot is read-only. It cannot sign transactions or authorize spending.`
+      `NERITH · ${connection.business_name}\n\n/status — business overview\n/liquidity — available and reserved operating balances\n/forecast — upcoming planned obligations\n/agents — connected agent status\n/operations — recent liquidity operations\n/disconnect — disconnect this Telegram chat\n\nThis bot is read-only. It cannot sign transactions or authorize spending.`
     );
     return;
   }
@@ -237,8 +237,8 @@ async function handleTelegramCommand(
       return `• ${row.token}: ${formatTokenAmount(available, decimals)} available · ${formatTokenAmount(reserved, decimals)} reserved (${freshness})`;
     });
     const body = command === "/status"
-      ? `NERITH · ${connection.business_name}\\n\\nAgents: ${agents?.active ?? 0}/${agents?.total ?? 0} active\\nOpen operations: ${operations?.pending ?? 0}\\n\\nOperating liquidity:\\n${balanceLines.length ? balanceLines.join("\\n") : "No operating balance snapshots are available."}\\n\\nUse /forecast for upcoming obligations.`
-      : `Operating liquidity · ${connection.business_name}\\n\\n${balanceLines.length ? balanceLines.join("\\n") : "No operating balance snapshots are available."}\\n\\nAvailable = confirmed balance minus internal reservations. Snapshots can be stale; check the observation status before acting.`;
+      ? `NERITH · ${connection.business_name}\n\nAgents: ${agents?.active ?? 0}/${agents?.total ?? 0} active\nOpen operations: ${operations?.pending ?? 0}\n\nOperating liquidity:\n${balanceLines.length ? balanceLines.join("\n") : "No operating balance snapshots are available."}\n\nUse /forecast for upcoming obligations.`
+      : `Operating liquidity · ${connection.business_name}\n\n${balanceLines.length ? balanceLines.join("\n") : "No operating balance snapshots are available."}\n\nAvailable = confirmed balance minus internal reservations. Snapshots can be stale; check the observation status before acting.`;
     await sendTelegramMessage(env, chatId, body);
     return;
   }
@@ -256,12 +256,12 @@ async function handleTelegramCommand(
     const total = await env.DB.prepare("SELECT COUNT(*) AS count FROM liquidity_obligations WHERE business_id = ? AND status = 'planned'")
       .bind(businessId).first<{ count: number }>();
     const lines = items.map((item) =>
-      `• ${item.agent_name} · ${formatTokenAmount(BigInt(item.amount_atoms), 6)} USDC\\n  ${item.due_at} · ${item.purpose}`
+      `• ${item.agent_name} · ${formatTokenAmount(BigInt(item.amount_atoms), 6)} USDC\n  ${item.due_at} · ${item.purpose}`
     );
     await sendTelegramMessage(
       env,
       chatId,
-      `Planned obligations · ${connection.business_name}\\n\\n${lines.length ? lines.join("\\n") : "No planned obligations recorded."}${(total?.count ?? 0) > items.length ? `\\n\\nShowing ${items.length} of ${total?.count} planned obligations.` : ""}\\n\\nThese are recorded plans, not a guarantee that funds are reserved or available.`
+      `Planned obligations · ${connection.business_name}\n\n${lines.length ? lines.join("\n") : "No planned obligations recorded."}${(total?.count ?? 0) > items.length ? `\n\nShowing ${items.length} of ${total?.count} planned obligations.` : ""}\n\nThese are recorded plans, not a guarantee that funds are reserved or available.`
     );
     return;
   }
@@ -274,7 +274,7 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      `Agents · ${connection.business_name}\\n\\n${agents.length ? agents.map((agent) => `• ${agent.name} — ${agent.status}`).join("\\n") : "No agents have been provisioned."}`
+      `Agents · ${connection.business_name}\n\n${agents.length ? agents.map((agent) => `• ${agent.name} — ${agent.status}`).join("\n") : "No agents have been provisioned."}`
     );
     return;
   }
@@ -292,7 +292,7 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      `Recent operations · ${connection.business_name}\\n\\n${operations.length ? operations.map((operation) => `• ${operation.agent_name} · ${formatTokenAmount(BigInt(operation.amount_atoms), 6)} ${operation.token}\\n  ${operation.action} · ${operation.status} · ${operation.created_at}`).join("\\n") : "No operations recorded yet."}`
+      `Recent operations · ${connection.business_name}\n\n${operations.length ? operations.map((operation) => `• ${operation.agent_name} · ${formatTokenAmount(BigInt(operation.amount_atoms), 6)} ${operation.token}\n  ${operation.action} · ${operation.status} · ${operation.created_at}`).join("\n") : "No operations recorded yet."}`
     );
     return;
   }
