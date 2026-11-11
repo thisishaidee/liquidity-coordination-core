@@ -382,11 +382,14 @@ async function validateConversionContext(
 async function proxyHermes(
   request: Request,
   path: string,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  extraHeaders: Record<string, string> = {}
 ): Promise<Response> {
   const headers = new Headers({ "content-type": "application/json" });
   const payment = request.headers.get("x-payment");
+  const paymentSignature = request.headers.get("payment-signature");
   if (payment) headers.set("X-PAYMENT", payment);
+  if (paymentSignature) headers.set("PAYMENT-SIGNATURE", paymentSignature);
 
   const upstream = await fetch(`https://hermes.swap.io${path}`, {
     method: "POST",
@@ -402,6 +405,7 @@ async function proxyHermes(
     const value = upstream.headers.get(name);
     if (value) responseHeaders.set(name, value);
   }
+  for (const [name, value] of Object.entries(extraHeaders)) responseHeaders.set(name, value);
   return new Response(await upstream.arrayBuffer(), {
     status: upstream.status,
     headers: responseHeaders
@@ -427,6 +431,9 @@ async function requestSwapQuote(request: Request, env: Env): Promise<Response> {
     output: { token: USDC_MINT, chainKey: "sol" },
     userAddress: context.userAddress,
     slippageBps
+  }, {
+    "X-Liquidity-Operation-ID": context.operationId,
+    "X-Liquidity-Required-USDC": formatTokenAmount(context.shortfallAtoms, 6)
   });
 }
 
@@ -450,6 +457,9 @@ async function prepareSwapTransaction(request: Request, env: Env): Promise<Respo
     userAddress: context.userAddress,
     chainKey: "sol",
     quoteResponse: body.providerQuote
+  }, {
+    "X-Liquidity-Operation-ID": context.operationId,
+    "X-Liquidity-Required-USDC": formatTokenAmount(context.shortfallAtoms, 6)
   });
 }
 
