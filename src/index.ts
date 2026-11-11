@@ -1004,15 +1004,13 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
     return json({ error: "source_reservation_already_reconciled", reservationStatus: reservation.status }, 409);
   }
 
-  if (effectiveStatus !== "failed") {
-    const walletId = await env.DB.prepare(
-      "SELECT wallet_id FROM wallet_balances WHERE id = ?"
-    ).bind(reservation.wallet_balance_id).first<{ wallet_id: string }>();
-    if (walletId) {
-      await env.DB.prepare(
-        "UPDATE wallet_balances SET observed_at = datetime('now', '-10 minutes') WHERE wallet_id = ?"
-      ).bind(walletId.wallet_id).run();
-    }
+  const walletId = await env.DB.prepare(
+    "SELECT wallet_id FROM wallet_balances WHERE id = ?"
+  ).bind(reservation.wallet_balance_id).first<{ wallet_id: string }>();
+  if (walletId) {
+    await env.DB.prepare(
+      "UPDATE wallet_balances SET observed_at = datetime('now', '-10 minutes') WHERE wallet_id = ?"
+    ).bind(walletId.wallet_id).run();
   }
 
   const nextStatus = effectiveStatus === "failed"
