@@ -234,6 +234,58 @@ async function bootstrapBusiness(request: Request, env: Env): Promise<Response> 
   }, 201);
 }
 
+async function provisionAgent(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const body = await readJson(request);
+  if (!body || typeof body.businessId !== "string" || typeof body.agentName !== "string" ||
+      body.agentName.trim().length < 2 || body.agentName.length > 100) {
+    return json({ error: "invalid_request", message: "Provide businessId and agentName." }, 400);
+  }
+
+  const business = await env.DB.prepare("SELECT id FROM businesses WHERE id = ?")
+    .bind(body.businessId).first<{ id: string }>();
+  if (!business) return json({ error: "business_not_found" }, 404);
+
+  const agentId = "agt_" + crypto.randomUUID().replaceAll("-", "");
+  const apiKey = newSecret("lci_");
+  const apiKeyHash = await sha256(apiKey);
+  const canUseBusinessTreasury = body.canUseBusinessTreasury === true ? 1 : 0;
+  await env.DB.prepare(
+    "INSERT INTO agents (id, business_id, name, api_key_hash, can_use_business_treasury) VALUES (?, ?, ?, ?, ?)"
+  ).bind(agentId, business.id, body.agentName.trim(), apiKeyHash, canUseBusinessTreasury).run();
+
+  return json({
+    agent: { id: agentId, name: body.agentName.trim(), canUseBusinessTreasury: Boolean(canUseBusinessTreasury) },
+    apiKey,
+    warning: "Store this key securely. It is returned once and cannot be retrieved later."
+  }, 201);
+}
+
+async function listBusinessAgents(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const url = new URL(request.url);
+  const businessId = url.searchParams.get("businessId");
+  if (!businessId) return json({ error: "business_id_required" }, 400);
+  const agents = await env.DB.prepare(
+    "SELECT id, name, status, can_use_business_treasury, created_at FROM agents WHERE business_id = ? ORDER BY created_at ASC"
+  ).bind(businessId).all<{
+    id: string;
+    name: string;
+    status: string;
+    can_use_business_treasury: number;
+    created_at: string;
+  }>();
+  return json({
+    agents: (agents.results ?? []).map((agent) => ({
+      id: agent.id,
+      name: agent.name,
+      status: agent.status,
+      canUseBusinessTreasury: agent.can_use_business_treasury === 1,
+      createdAt: agent.created_at
+    }))
+  });
+}
+
 async function registerWallet(request: Request, env: Env): Promise<Response> {
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
   const body = await readJson(request);
@@ -1378,6 +1430,8 @@ export default {
       });
     }
     if (request.method === "POST" && url.pathname === "/v1/admin/bootstrap") return bootstrapBusiness(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/admin/agents") return provisionAgent(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/admin/agents") return listBusinessAgents(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/telegram/link-codes") return createTelegramLinkCode(request, env);
     if (request.method === "POST" && url.pathname === "/v1/telegram/webhook") return telegramWebhook(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/wallets") return registerWallet(request, env);
