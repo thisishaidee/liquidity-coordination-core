@@ -1050,58 +1050,91 @@ async function releaseOperation(request: Request, env: Env, operationId: string)
 }
 
 async function expireReservations(env: Env): Promise<{ expired: number; skipped: number }> {
-  const due = await env.DB.prepare(`
-    SELECT r.id, r.operation_id, r.wallet_balance_id, r.amount_atoms, r.token, o.business_id
-    FROM reservations r
-    JOIN operations o ON o.id = r.operation_id
+  const dueOperations = await env.DB.prepare(`
+    SELECT DISTINCT o.id, o.business_id, o.status
+    FROM operations o
+    JOIN reservations r ON r.operation_id = o.id
     WHERE r.status = 'active'
-      AND o.status IN ('reserved', 'preparing_conversion')
       AND julianday(r.expires_at) <= julianday('now')
-    ORDER BY r.expires_at ASC
+      AND o.status IN (
+        'reserved', 'awaiting_conversion', 'preparing_conversion',
+        'conversion_settled', 'conversion_settled_shortfall', 'conversion_unverified'
+      )
+    ORDER BY o.created_at ASC
     LIMIT 100
-  `).all<{ id: string; operation_id: string; wallet_balance_id: string; amount_atoms: string; token: string; business_id: string }>();
+  `).all<{ id: string; business_id: string; status: string }>();
 
   let expired = 0;
   let skipped = 0;
-  for (const reservation of due.results ?? []) {
-    const claim = await env.DB.prepare(`
-      UPDATE reservations
-      SET status = 'expired', released_at = datetime('now')
-      WHERE id = ? AND status = 'active' AND julianday(expires_at) <= julianday('now')
+  for (const operation of dueOperations.results ?? []) {
+    const claimOperation = await env.DB.prepare(`
+      UPDATE operations SET status = 'expired'
+      WHERE id = ? AND status = ?
         AND EXISTS (
-          SELECT 1 FROM operations o
-          WHERE o.id = reservations.operation_id
-            AND o.status IN ('reserved', 'preparing_conversion')
+          SELECT 1 FROM reservations r
+          WHERE r.operation_id = operations.id
+            AND r.status = 'active'
+            AND julianday(r.expires_at) <= julianday('now')
         )
-    `).bind(reservation.id).run();
+    `).bind(operation.id, operation.status).run();
 
-    if ((claim.meta?.changes ?? 0) !== 1) {
+    if ((claimOperation.meta?.changes ?? 0) !== 1) {
       skipped++;
       continue;
     }
 
-    const amount = BigInt(reservation.amount_atoms);
-    const debit = await env.DB.prepare(`
-      UPDATE wallet_balances
-      SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?
-      WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?
-    `).bind(amount.toString(), reservation.wallet_balance_id, amount.toString()).run();
+    const reservations = await env.DB.prepare(
+      "SELECT id, wallet_balance_id, amount_atoms FROM reservations WHERE operation_id = ? AND status = 'active'"
+    ).bind(operation.id).all<{
+      id: string;
+      wallet_balance_id: string;
+      amount_atoms: string;
+    }>();
 
-    if ((debit.meta?.changes ?? 0) !== 1) {
-      await env.DB.prepare(
-        "UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = 'expired'"
+    const processed: Array<{ id: string; wallet_balance_id: string; amount_atoms: string; debited: boolean }> = [];
+    let failed = false;
+    for (const reservation of reservations.results ?? []) {
+      const claim = await env.DB.prepare(
+        "UPDATE reservations SET status = 'expired', released_at = datetime('now') WHERE id = ? AND status = 'active'"
       ).bind(reservation.id).run();
+      if ((claim.meta?.changes ?? 0) !== 1) continue;
+
+      const debit = await env.DB.prepare(`
+        UPDATE wallet_balances
+        SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?
+        WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?
+      `).bind(reservation.amount_atoms, reservation.wallet_balance_id, reservation.amount_atoms).run();
+
+      if ((debit.meta?.changes ?? 0) !== 1) {
+        await env.DB.prepare(
+          "UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = 'expired'"
+        ).bind(reservation.id).run();
+        failed = true;
+        break;
+      }
+      processed.push({ ...reservation, debited: true });
+    }
+
+    if (failed) {
+      for (const item of processed) {
+        await env.DB.prepare(
+          "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) + ? WHERE id = ?"
+        ).bind(item.amount_atoms, item.wallet_balance_id).run();
+        await env.DB.prepare(
+          "UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = 'expired'"
+        ).bind(item.id).run();
+      }
+      await env.DB.prepare(
+        "UPDATE operations SET status = ? WHERE id = ? AND status = 'expired'"
+      ).bind(operation.status, operation.id).run();
       skipped++;
       continue;
     }
 
-    await env.DB.prepare(
-      "UPDATE operations SET status = 'expired' WHERE id = ? AND status IN ('reserved', 'preparing_conversion')"
-    ).bind(reservation.operation_id).run();
     await notifyBusiness(
       env,
-      reservation.business_id,
-      `Reservation expired for operation ${reservation.operation_id}. The held ${formatTokenAmount(amount, reservation.token === "SOL" ? 9 : 6)} ${reservation.token} is available again.`
+      operation.business_id,
+      `Reservation expired for operation ${operation.id}. All active internal holds were released back to available liquidity.`
     );
     expired++;
   }
