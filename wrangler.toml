@@ -1,0 +1,9 @@
+name = "liquidity-coordination-api"
+main = "src/index.ts"
+compatibility_date = "2026-11-11"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "liquidity-coordination"
+database_id = "REPLACE_WITH_CLOUDFLARE_D1_DATABASE_ID"
+migrations_dir = "migrations"
