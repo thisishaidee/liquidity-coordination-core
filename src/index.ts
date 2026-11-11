@@ -674,7 +674,7 @@ async function requestSwapQuote(request: Request, env: Env): Promise<Response> {
     return json({ error: "invalid_slippage", message: "slippageBps must be an integer from 1 to 300." }, 400);
   }
 
-  return proxyHermes(request, "/v1/swap/quote", {
+  const upstream = await proxyHermes(request, "/v1/swap/quote", {
     input: { token: SOL_MINT, amount: context.sourceAtoms.toString(), chainKey: "sol" },
     output: { token: USDC_MINT, chainKey: "sol" },
     userAddress: context.userAddress,
@@ -683,21 +683,157 @@ async function requestSwapQuote(request: Request, env: Env): Promise<Response> {
     "X-Liquidity-Operation-ID": context.operationId,
     "X-Liquidity-Required-USDC": formatTokenAmount(context.shortfallAtoms, 6)
   });
+
+  if (upstream.status !== 200) return upstream;
+
+  let payload: { quotes?: Array<Record<string, unknown>> };
+  try {
+    payload = await upstream.clone().json() as { quotes?: Array<Record<string, unknown>> };
+  } catch {
+    return json({ error: "invalid_hermes_quote_response" }, 502);
+  }
+
+  const quotes = payload.quotes;
+  if (!Array.isArray(quotes) || quotes.length === 0) {
+    return json({ error: "no_swap_routes", message: "Hermes returned no usable SOL-to-USDC routes." }, 502);
+  }
+  if (JSON.stringify(quotes).length > 250_000) {
+    return json({ error: "quote_payload_too_large" }, 502);
+  }
+
+  const quoteId = "qte_" + crypto.randomUUID().replaceAll("-", "");
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  try {
+    await env.DB.prepare(`
+      INSERT INTO swap_quotes
+        (id, operation_id, agent_id, source_wallet_id, user_address,
+         source_amount_atoms, required_output_atoms, quotes_json, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      quoteId,
+      context.operationId,
+      agent.id,
+      context.walletBalanceId,
+      context.userAddress,
+      context.sourceAtoms.toString(),
+      context.shortfallAtoms.toString(),
+      JSON.stringify(quotes),
+      expiresAt
+    ).run();
+  } catch {
+    return json({ error: "quote_cache_failed" }, 500);
+  }
+
+  const summaries = quotes.map((quote, index) => {
+    const providerValue = quote.provider as { key?: string } | string | undefined;
+    const provider = typeof providerValue === "string" ? providerValue : providerValue?.key ?? null;
+    const output = quote.output as { amount?: string; minAmount?: string } | undefined;
+    const minOutput = output?.minAmount;
+    let minOutputCoversShortfall = false;
+    if (typeof minOutput === "string" && /^\d+$/.test(minOutput)) {
+      minOutputCoversShortfall = BigInt(minOutput) >= context.shortfallAtoms;
+    }
+    return {
+      index,
+      provider,
+      outputAmount: output?.amount ?? null,
+      minOutputAmount: minOutput ?? null,
+      minOutputCoversShortfall,
+      priceImpactPct: quote.priceImpactPct ?? null
+    };
+  });
+
+  return json({
+    quoteId,
+    expiresAt,
+    requiredOutputUSDC: formatTokenAmount(context.shortfallAtoms, 6),
+    quotes: summaries,
+    note: "Only select a quote whose minimum output covers the required USDC shortfall. The quote is cached server-side and expires in five minutes."
+  }, 200);
 }
 
 async function prepareSwapTransaction(request: Request, env: Env): Promise<Response> {
   const agent = await authenticate(request, env.DB);
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
   const body = await readJson(request);
-  if (!body) return json({ error: "invalid_json" }, 400);
-
-  const context = await validateConversionContext(agent, body, env, true);
-  if (context instanceof Response) return context;
-  if (typeof body.provider !== "string" || body.provider.length < 1 || body.provider.length > 100) {
-    return json({ error: "invalid_provider" }, 400);
+  if (!body || typeof body.quoteId !== "string" || !/^qte_[a-f0-9-]{36}$/i.test(body.quoteId)) {
+    return json({ error: "invalid_quote_id" }, 400);
   }
-  if (!body.providerQuote || typeof body.providerQuote !== "object" || Array.isArray(body.providerQuote)) {
-    return json({ error: "invalid_provider_quote" }, 400);
+
+  const quote = await env.DB.prepare(`
+    SELECT id, operation_id, agent_id, source_wallet_id, user_address,
+           source_amount_atoms, required_output_atoms, quotes_json, expires_at,
+           build_response_json, build_payment_receipt
+    FROM swap_quotes
+    WHERE id = ? AND agent_id = ? AND operation_id = ?
+      AND julianday(expires_at) > julianday('now')
+    LIMIT 1
+  `).bind(body.quoteId, agent.id, body.operationId).first<{
+    id: string;
+    operation_id: string;
+    agent_id: string;
+    source_wallet_id: string;
+    user_address: string;
+    source_amount_atoms: string;
+    required_output_atoms: string;
+    quotes_json: string;
+    expires_at: string;
+    build_response_json: string | null;
+    build_payment_receipt: string | null;
+  }>();
+  if (!quote) return json({ error: "quote_not_found_or_expired" }, 404);
+
+  const selectedIndex = body.index === undefined ? 0 : body.index;
+  if (typeof selectedIndex !== "number" || !Number.isInteger(selectedIndex) || selectedIndex < 0) {
+    return json({ error: "invalid_quote_index" }, 400);
+  }
+
+  let quotes: Array<Record<string, unknown>>;
+  try {
+    quotes = JSON.parse(quote.quotes_json) as Array<Record<string, unknown>>;
+  } catch {
+    return json({ error: "cached_quote_corrupt" }, 500);
+  }
+  const selected = quotes[selectedIndex];
+  if (!selected) return json({ error: "quote_index_not_found" }, 404);
+
+  const providerValue = selected.provider as { key?: string } | string | undefined;
+  const provider = typeof providerValue === "string" ? providerValue : providerValue?.key;
+  const providerQuote = selected.providerQuote;
+  const output = selected.output as { minAmount?: string } | undefined;
+  const minOutput = output?.minAmount;
+
+  if (typeof provider !== "string" || !provider || !providerQuote || typeof providerQuote !== "object" || Array.isArray(providerQuote)) {
+    return json({ error: "cached_provider_quote_invalid" }, 409);
+  }
+  if (typeof minOutput !== "string" || !/^\d+$/.test(minOutput) || BigInt(minOutput) < BigInt(quote.required_output_atoms)) {
+    return json({
+      error: "quote_below_required_shortfall",
+      requiredUSDC: formatTokenAmount(BigInt(quote.required_output_atoms), 6),
+      minimumOutputUSDC: typeof minOutput === "string" && /^\d+$/.test(minOutput)
+        ? formatTokenAmount(BigInt(minOutput), 6)
+        : null
+    }, 409);
+  }
+
+  if (quote.build_response_json) {
+    const cachedHeaders = new Headers({
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store"
+    });
+    if (quote.build_payment_receipt) cachedHeaders.set("X-PAYMENT-RESPONSE", quote.build_payment_receipt);
+    return new Response(quote.build_response_json, { status: 200, headers: cachedHeaders });
+  }
+
+  const context = await validateConversionContext(agent, {
+    operationId: quote.operation_id,
+    userAddress: quote.user_address,
+    paymentWalletAddress: body.paymentWalletAddress,
+    sourceAmount: formatTokenAmount(BigInt(quote.source_amount_atoms), 9)
+  }, env, true);
+  if (context instanceof Response) return context;
+  if (context.walletBalanceId !== quote.source_wallet_id || context.sourceAtoms.toString() !== quote.source_amount_atoms) {
+    return json({ error: "quote_context_mismatch" }, 409);
   }
 
   if (!context.sourceReservationId) {
@@ -724,7 +860,7 @@ async function prepareSwapTransaction(request: Request, env: Env): Promise<Respo
           UPDATE operations
           SET status = 'preparing_conversion', source_reservation_id = ?, provider_key = ?
           WHERE id = ? AND status = 'awaiting_conversion'
-        `).bind(reservationId, body.provider, context.operationId)
+        `).bind(reservationId, provider, context.operationId)
       ]);
       const refreshed = await env.DB.prepare(
         "SELECT source_reservation_id FROM operations WHERE id = ? AND status = 'preparing_conversion'"
@@ -740,22 +876,47 @@ async function prepareSwapTransaction(request: Request, env: Env): Promise<Respo
       await env.DB.prepare("DELETE FROM reservations WHERE id = ? AND status = 'active'").bind(reservationId).run();
       return json({ error: "source_reservation_failed" }, 409);
     }
-  } else {
-    await env.DB.prepare(
-      "UPDATE operations SET provider_key = ? WHERE id = ? AND status = 'preparing_conversion'"
-    ).bind(body.provider, context.operationId).run();
   }
 
-  return proxyHermes(request, "/v1/swap/build-tx", {
-    provider: body.provider,
+  const upstream = await proxyHermes(request, "/v1/swap/build-tx", {
+    provider,
     userAddress: context.userAddress,
     chainKey: "sol",
-    quoteResponse: body.providerQuote
+    quoteResponse: providerQuote
   }, {
     "X-Liquidity-Operation-ID": context.operationId,
     "X-Liquidity-Required-USDC": formatTokenAmount(context.shortfallAtoms, 6),
     "X-Liquidity-Source-Reserved-SOL": context.sourceAmount
   });
+
+  if (upstream.status !== 200) return upstream;
+
+  let buildPayload: Record<string, unknown>;
+  try {
+    buildPayload = await upstream.clone().json() as Record<string, unknown>;
+  } catch {
+    return json({ error: "invalid_hermes_build_response" }, 502);
+  }
+  const transaction = buildPayload.transaction ?? buildPayload.swapTransaction ?? buildPayload.tx;
+  if (typeof transaction !== "string" || transaction.length < 20) {
+    return json({ error: "unsigned_transaction_missing" }, 502);
+  }
+
+  const receipt = upstream.headers.get("x-payment-response") ?? upstream.headers.get("payment-response");
+  const cached = await env.DB.prepare(
+    "UPDATE swap_quotes SET build_response_json = ?, build_payment_receipt = ?, built_at = datetime('now') WHERE id = ? AND agent_id = ? AND build_response_json IS NULL"
+  ).bind(JSON.stringify(buildPayload), receipt, quote.id, agent.id).run();
+  if ((cached.meta?.changes ?? 0) !== 1) {
+    const saved = await env.DB.prepare(
+      "SELECT build_response_json, build_payment_receipt FROM swap_quotes WHERE id = ? AND agent_id = ?"
+    ).bind(quote.id, agent.id).first<{ build_response_json: string | null; build_payment_receipt: string | null }>();
+    if (!saved?.build_response_json) return json({ error: "build_cache_failed" }, 500);
+    const headers = new Headers({ "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+    if (saved.build_payment_receipt) headers.set("X-PAYMENT-RESPONSE", saved.build_payment_receipt);
+    return new Response(saved.build_response_json, { status: 200, headers });
+  }
+
+  return upstream;
 }
 
 async function createLiquidityRequest(request: Request, env: Env): Promise<Response> {
