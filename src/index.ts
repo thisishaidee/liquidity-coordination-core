@@ -437,6 +437,45 @@ async function handleTelegramCommand(
   await sendTelegramMessage(env, chatId, "I don't recognise that command. Send /help to see available commands.");
 }
 
+async function sendTelegramTestAlert(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  if (!env.TELEGRAM_BOT_TOKEN) return json({ error: "telegram_not_configured" }, 409);
+  const body = await readJson(request);
+  if (!body || typeof body.businessId !== "string" || !/^biz_[a-f0-9]{32}$/i.test(body.businessId)) {
+    return json({ error: "invalid_request", message: "Provide a valid businessId." }, 400);
+  }
+  const business = await env.DB.prepare("SELECT id, name FROM businesses WHERE id = ?")
+    .bind(body.businessId).first<{ id: string; name: string }>();
+  if (!business) return json({ error: "business_not_found" }, 404);
+  const connections = await env.DB.prepare(
+    "SELECT chat_id FROM telegram_connections WHERE business_id = ? AND status = 'active'"
+  ).bind(business.id).all<{ chat_id: string }>();
+  const chats = connections.results ?? [];
+  if (!chats.length) return json({ error: "telegram_not_linked", message: "Connect a private Telegram chat before sending a test alert." }, 409);
+  const ids = chats.map(() => "tn_" + crypto.randomUUID().replaceAll("-", ""));
+  const message = "NERITH test alert\n\nYour Telegram connection is working. Business event notifications are enabled for " + business.name + ".\n\nThis is a delivery test only. No liquidity operation or transaction was created.";
+  await env.DB.batch(chats.map((chat, index) => env.DB.prepare(`
+    INSERT INTO telegram_notification_outbox
+      (id, business_id, chat_id, message, status, attempts, next_attempt_at)
+    VALUES (?, ?, ?, ?, 'pending', 0, datetime('now'))
+  `).bind(ids[index], business.id, chat.chat_id, message)));
+  await deliverTelegramOutbox(env);
+  const placeholders = ids.map(() => "?").join(",");
+  const states = await env.DB.prepare(
+    "SELECT status, COUNT(*) AS count FROM telegram_notification_outbox WHERE id IN (" + placeholders + ") GROUP BY status"
+  ).bind(...ids).all<{ status: string; count: number }>();
+  const result = Object.fromEntries((states.results ?? []).map(row => [row.status, row.count]));
+  return json({
+    queued: chats.length,
+    delivered: result.sent ?? 0,
+    pending: result.pending ?? 0,
+    failed: result.failed ?? 0,
+    message: (result.sent ?? 0) === chats.length
+      ? "Test alert delivered to every connected Telegram chat."
+      : "Test alert queued. Any delivery failure will be retried automatically."
+  }, 202);
+}
+
 async function configureTelegramWebhook(request: Request, env: Env): Promise<Response> {
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
   if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_WEBHOOK_SECRET) {
@@ -2722,6 +2761,7 @@ export default {
     if (request.method === "POST" && disableAgentMatch) return disableAgent(request, env, disableAgentMatch[1]);
     const disableWalletMatch = url.pathname.match(/^\/v1\/admin\/wallets\/([a-zA-Z0-9_-]+)\/disable$/);
     if (request.method === "POST" && disableWalletMatch) return disableWallet(request, env, disableWalletMatch[1]);
+    if (request.method === "POST" && url.pathname === "/v1/admin/telegram/test") return sendTelegramTestAlert(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/telegram/setup") return configureTelegramWebhook(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/telegram/link-codes") return createTelegramLinkCode(request, env);
     if (request.method === "POST" && url.pathname === "/v1/telegram/webhook") return telegramWebhook(request, env);
