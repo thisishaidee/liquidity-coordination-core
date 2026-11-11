@@ -903,11 +903,11 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
     if ((claim.meta?.changes ?? 0) !== 1) return json({ error: "reservation_already_reconciled" }, 409);
 
     const amount = BigInt(reservation.amount_atoms);
-    const debit = await env.DB.prepare(\`
+    const debit = await env.DB.prepare(`
       UPDATE wallet_balances
       SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?
       WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?
-    \`).bind(amount.toString(), reservation.wallet_balance_id, amount.toString()).run();
+    `).bind(amount.toString(), reservation.wallet_balance_id, amount.toString()).run();
 
     if ((debit.meta?.changes ?? 0) !== 1) {
       await env.DB.prepare(
