@@ -702,59 +702,66 @@ async function releaseOperation(request: Request, env: Env, operationId: string)
     "SELECT id, status FROM operations WHERE id = ? AND agent_id = ?"
   ).bind(operationId, agent.id).first<{ id: string; status: string }>();
   if (!operation) return json({ error: "operation_not_found" }, 404);
-  if (operation.status !== "reserved") return json({ error: "operation_not_releasable", status: operation.status }, 409);
+  if (operation.status !== "reserved" && operation.status !== "preparing_conversion") {
+    return json({ error: "operation_not_releasable", status: operation.status }, 409);
+  }
 
   const reservation = await env.DB.prepare(
-    "SELECT id, wallet_balance_id, amount_atoms FROM reservations WHERE operation_id = ? AND status = 'active' LIMIT 1"
-  ).bind(operationId).first<{ id: string; wallet_balance_id: string; amount_atoms: string }>();
+    "SELECT id, wallet_balance_id, amount_atoms, token FROM reservations WHERE operation_id = ? AND status = 'active' LIMIT 1"
+  ).bind(operationId).first<{ id: string; wallet_balance_id: string; amount_atoms: string; token: string }>();
   if (!reservation) return json({ error: "active_reservation_not_found" }, 409);
 
   const amount = BigInt(reservation.amount_atoms);
-
-  // Claim the reservation first. Only one concurrent release can change active -> released.
+  const previousStatus = operation.status;
   const claim = await env.DB.prepare(
     "UPDATE reservations SET status = 'released', released_at = datetime('now') WHERE id = ? AND status = 'active'"
   ).bind(reservation.id).run();
-  if ((claim.meta?.changes ?? 0) !== 1) {
-    return json({ error: "reservation_already_released" }, 409);
-  }
+  if ((claim.meta?.changes ?? 0) !== 1) return json({ error: "reservation_already_released" }, 409);
 
   const operationClaim = await env.DB.prepare(
-    "UPDATE operations SET status = 'released' WHERE id = ? AND status = 'reserved'"
-  ).bind(operationId).run();
+    "UPDATE operations SET status = 'released' WHERE id = ? AND status = ?"
+  ).bind(operationId, previousStatus).run();
   if ((operationClaim.meta?.changes ?? 0) !== 1) {
     await env.DB.prepare("UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = 'released'")
       .bind(reservation.id).run();
     return json({ error: "operation_state_changed" }, 409);
   }
 
-  const debit = await env.DB.prepare(`
+  const debit = await env.DB.prepare(\`
     UPDATE wallet_balances
     SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?
     WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?
-  `).bind(amount.toString(), reservation.wallet_balance_id, amount.toString()).run();
+  \`).bind(amount.toString(), reservation.wallet_balance_id, amount.toString()).run();
 
   if ((debit.meta?.changes ?? 0) !== 1) {
     await env.DB.batch([
       env.DB.prepare("UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = 'released'")
         .bind(reservation.id),
-      env.DB.prepare("UPDATE operations SET status = 'reserved' WHERE id = ? AND status = 'released'")
-        .bind(operationId)
+      env.DB.prepare("UPDATE operations SET status = ? WHERE id = ? AND status = 'released'")
+        .bind(previousStatus, operationId)
     ]);
     return json({ error: "reservation_ledger_mismatch" }, 409);
   }
 
-  return json({ operationId, status: "released", releasedAmount: formatTokenAmount(amount), token: "USDC" });
+  return json({
+    operationId,
+    status: "released",
+    releasedAmount: formatTokenAmount(amount, reservation.token === "SOL" ? 9 : 6),
+    token: reservation.token
+  });
 }
 
 async function expireReservations(env: Env): Promise<{ expired: number; skipped: number }> {
   const due = await env.DB.prepare(`
-    SELECT id, operation_id, wallet_balance_id, amount_atoms
-    FROM reservations
-    WHERE status = 'active' AND julianday(expires_at) <= julianday('now')
-    ORDER BY expires_at ASC
+    SELECT r.id, r.operation_id, r.wallet_balance_id, r.amount_atoms, r.token
+    FROM reservations r
+    JOIN operations o ON o.id = r.operation_id
+    WHERE r.status = 'active'
+      AND o.status IN ('reserved', 'preparing_conversion')
+      AND julianday(r.expires_at) <= julianday('now')
+    ORDER BY r.expires_at ASC
     LIMIT 100
-  `).all<{ id: string; operation_id: string; wallet_balance_id: string; amount_atoms: string }>();
+  `).all<{ id: string; operation_id: string; wallet_balance_id: string; amount_atoms: string; token: string }>();
 
   let expired = 0;
   let skipped = 0;
@@ -786,7 +793,7 @@ async function expireReservations(env: Env): Promise<{ expired: number; skipped:
     }
 
     await env.DB.prepare(
-      "UPDATE operations SET status = 'expired' WHERE id = ? AND status = 'reserved'"
+      "UPDATE operations SET status = 'expired' WHERE id = ? AND status IN ('reserved', 'preparing_conversion')"
     ).bind(reservation.operation_id).run();
     expired++;
   }
@@ -811,8 +818,8 @@ async function getOperation(request: Request, env: Env, operationId: string): Pr
   if (!operation) return json({ error: "operation_not_found" }, 404);
 
   const reservation = await env.DB.prepare(
-    "SELECT id, amount_atoms, status, expires_at FROM reservations WHERE operation_id = ? ORDER BY created_at DESC LIMIT 1"
-  ).bind(operationId).first<{ id: string; amount_atoms: string; status: string; expires_at: string }>();
+    "SELECT id, amount_atoms, status, expires_at, token FROM reservations WHERE operation_id = ? ORDER BY created_at DESC LIMIT 1"
+  ).bind(operationId).first<{ id: string; amount_atoms: string; status: string; expires_at: string; token: string }>();
 
   return json({
     operationId: operation.id,
@@ -828,7 +835,8 @@ async function getOperation(request: Request, env: Env, operationId: string): Pr
     },
     reservation: reservation ? {
       id: reservation.id,
-      amount: formatTokenAmount(BigInt(reservation.amount_atoms)),
+      amount: formatTokenAmount(BigInt(reservation.amount_atoms), reservation.token === "SOL" ? 9 : 6),
+      token: reservation.token,
       status: reservation.status,
       expiresAt: reservation.expires_at
     } : null,
