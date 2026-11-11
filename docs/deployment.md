@@ -6,7 +6,7 @@
 - Database ID is configured in `wrangler.toml`.
 - Migrations `0001` through `0012` have been applied to the dedicated database and recorded in `d1_migrations`.
 - The Worker name is `liquidity-coordination-api`.
-- Static dashboard assets are configured from `./public`.
+- The read-only dashboard is embedded into the Worker module from `public/index.html` during build.
 - A one-minute Cron Trigger is configured for reservation expiry.
 
 ## Required secrets before deployment
