@@ -145,6 +145,150 @@ async function createTelegramLinkCode(request: Request, env: Env): Promise<Respo
   }, 201);
 }
 
+async function handleTelegramCommand(
+  env: Env,
+  chatId: string,
+  userId: string,
+  rawText: string
+): Promise<void> {
+  const command = (rawText.trim().split(/\\s+/, 1)[0] ?? "").split("@", 1)[0].toLowerCase();
+
+  if (command === "/start" && !rawText.trim().match(/^\\/start\\s+[a-f0-9]{64}$/i)) {
+    await sendTelegramMessage(
+      env,
+      chatId,
+      "Welcome to NERITH. I can give your business a private view of liquidity, forecasts, agents and recent operations.\\n\\nTo connect, ask your business administrator to generate a one-time Telegram invitation, then open that link here.\\n\\nCommands: /help"
+    );
+    return;
+  }
+
+  const connection = await env.DB.prepare(`
+    SELECT c.business_id, b.name AS business_name
+    FROM telegram_connections c
+    JOIN businesses b ON b.id = c.business_id
+    WHERE c.chat_id = ? AND c.telegram_user_id = ? AND c.status = 'active'
+    ORDER BY c.linked_at DESC
+    LIMIT 1
+  `).bind(chatId, userId).first<{ business_id: string; business_name: string }>();
+
+  if (!connection) {
+    await sendTelegramMessage(
+      env,
+      chatId,
+      "This private chat is not connected to a NERITH business yet. Ask your business administrator for a one-time linking invitation. Use /help to see what I can do."
+    );
+    return;
+  }
+
+  const businessId = connection.business_id;
+  if (command === "/help" || command === "/commands" || command === "/start") {
+    await sendTelegramMessage(
+      env,
+      chatId,
+      `NERITH · ${connection.business_name}\\n\\n/status — business overview\\n/liquidity — available and reserved operating balances\\n/forecast — upcoming planned obligations\\n/agents — connected agent status\\n/operations — recent liquidity operations\\n/disconnect — disconnect this Telegram chat\\n\\nThis bot is read-only. It cannot sign transactions or authorize spending.`
+    );
+    return;
+  }
+
+  if (command === "/disconnect") {
+    await env.DB.prepare(
+      "UPDATE telegram_connections SET status = 'disabled' WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? AND status = 'active'"
+    ).bind(businessId, chatId, userId).run();
+    await sendTelegramMessage(env, chatId, "This Telegram chat has been disconnected from NERITH business alerts and commands.");
+    return;
+  }
+
+  if (command === "/liquidity" || command === "/status") {
+    const [balances, agents, operations] = await Promise.all([
+      env.DB.prepare(`
+        SELECT b.token,
+          CAST(SUM(CAST(b.confirmed_atoms AS INTEGER)) AS TEXT) AS confirmed_atoms,
+          CAST(SUM(CAST(b.reserved_atoms AS INTEGER)) AS TEXT) AS reserved_atoms,
+          MAX(b.observed_at) AS observed_at
+        FROM wallets w
+        JOIN wallet_balances b ON b.wallet_id = w.id
+        WHERE w.business_id = ? AND w.status = 'active' AND w.purpose = 'operating'
+        GROUP BY b.token
+        ORDER BY b.token
+      `).bind(businessId).all<{ token: string; confirmed_atoms: string; reserved_atoms: string; observed_at: string }>(),
+      env.DB.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active FROM agents WHERE business_id = ?")
+        .bind(businessId).first<{ total: number; active: number }>(),
+      env.DB.prepare("SELECT COUNT(*) AS pending FROM operations WHERE business_id = ? AND status NOT IN ('settled', 'failed', 'cancelled')")
+        .bind(businessId).first<{ pending: number }>()
+    ]);
+    const balanceLines = (balances.results ?? []).map((row) => {
+      const decimals = row.token === "SOL" ? 9 : 6;
+      const confirmed = BigInt(row.confirmed_atoms ?? "0");
+      const reserved = BigInt(row.reserved_atoms ?? "0");
+      const available = confirmed > reserved ? confirmed - reserved : 0n;
+      const age = Date.now() - Date.parse(row.observed_at);
+      const freshness = Number.isFinite(age) && age <= 5 * 60 * 1000 ? "fresh" : "stale snapshot";
+      return `• ${row.token}: ${formatTokenAmount(available, decimals)} available · ${formatTokenAmount(reserved, decimals)} reserved (${freshness})`;
+    });
+    const body = command === "/status"
+      ? `NERITH · ${connection.business_name}\\n\\nAgents: ${agents?.active ?? 0}/${agents?.total ?? 0} active\\nOpen operations: ${operations?.pending ?? 0}\\n\\nOperating liquidity:\\n${balanceLines.length ? balanceLines.join("\\n") : "No operating balance snapshots are available."}\\n\\nUse /forecast for upcoming obligations.`
+      : `Operating liquidity · ${connection.business_name}\\n\\n${balanceLines.length ? balanceLines.join("\\n") : "No operating balance snapshots are available."}\\n\\nAvailable = confirmed balance minus internal reservations. Snapshots can be stale; check the observation status before acting.`;
+    await sendTelegramMessage(env, chatId, body);
+    return;
+  }
+
+  if (command === "/forecast") {
+    const rows = await env.DB.prepare(`
+      SELECT a.name AS agent_name, o.task_id, o.amount_atoms, o.due_at, o.purpose
+      FROM liquidity_obligations o
+      JOIN agents a ON a.id = o.agent_id
+      WHERE o.business_id = ? AND o.status = 'planned'
+      ORDER BY o.due_at ASC
+      LIMIT 8
+    `).bind(businessId).all<{ agent_name: string; task_id: string; amount_atoms: string; due_at: string; purpose: string }>();
+    const items = rows.results ?? [];
+    const total = await env.DB.prepare("SELECT COUNT(*) AS count FROM liquidity_obligations WHERE business_id = ? AND status = 'planned'")
+      .bind(businessId).first<{ count: number }>();
+    const lines = items.map((item) =>
+      `• ${item.agent_name} · ${formatTokenAmount(BigInt(item.amount_atoms), 6)} USDC\\n  ${item.due_at} · ${item.purpose}`
+    );
+    await sendTelegramMessage(
+      env,
+      chatId,
+      `Planned obligations · ${connection.business_name}\\n\\n${lines.length ? lines.join("\\n") : "No planned obligations recorded."}${(total?.count ?? 0) > items.length ? `\\n\\nShowing ${items.length} of ${total?.count} planned obligations.` : ""}\\n\\nThese are recorded plans, not a guarantee that funds are reserved or available.`
+    );
+    return;
+  }
+
+  if (command === "/agents") {
+    const rows = await env.DB.prepare(
+      "SELECT name, status, created_at FROM agents WHERE business_id = ? ORDER BY created_at DESC LIMIT 12"
+    ).bind(businessId).all<{ name: string; status: string; created_at: string }>();
+    const agents = rows.results ?? [];
+    await sendTelegramMessage(
+      env,
+      chatId,
+      `Agents · ${connection.business_name}\\n\\n${agents.length ? agents.map((agent) => `• ${agent.name} — ${agent.status}`).join("\\n") : "No agents have been provisioned."}`
+    );
+    return;
+  }
+
+  if (command === "/operations") {
+    const rows = await env.DB.prepare(`
+      SELECT a.name AS agent_name, o.task_id, o.token, o.amount_atoms, o.status, o.action, o.created_at
+      FROM operations o
+      JOIN agents a ON a.id = o.agent_id
+      WHERE o.business_id = ?
+      ORDER BY o.created_at DESC
+      LIMIT 8
+    `).bind(businessId).all<{ agent_name: string; task_id: string; token: string; amount_atoms: string; status: string; action: string; created_at: string }>();
+    const operations = rows.results ?? [];
+    await sendTelegramMessage(
+      env,
+      chatId,
+      `Recent operations · ${connection.business_name}\\n\\n${operations.length ? operations.map((operation) => `• ${operation.agent_name} · ${formatTokenAmount(BigInt(operation.amount_atoms), 6)} ${operation.token}\\n  ${operation.action} · ${operation.status} · ${operation.created_at}`).join("\\n") : "No operations recorded yet."}`
+    );
+    return;
+  }
+
+  await sendTelegramMessage(env, chatId, "I don't recognise that command. Send /help to see available commands.");
+}
+
 async function telegramWebhook(request: Request, env: Env): Promise<Response> {
   const secret = env.TELEGRAM_WEBHOOK_SECRET;
   const supplied = request.headers.get("x-telegram-bot-api-secret-token") ?? "";
@@ -162,8 +306,12 @@ async function telegramWebhook(request: Request, env: Env): Promise<Response> {
   const userId = message?.from?.id === undefined ? "" : String(message.from.id);
   const match = text.match(/^\/(?:start|link)\s+([a-f0-9]{64})$/i);
 
-  if (!match || !chatId || !userId || message?.chat?.type !== "private") {
-    if (chatId) await sendTelegramMessage(env, chatId, "To connect this chat, ask your business administrator for a one-time linking invitation.");
+  if (!chatId || !userId || message?.chat?.type !== "private") {
+    return json({ ok: true });
+  }
+
+  if (!match) {
+    await handleTelegramCommand(env, chatId, userId, text);
     return json({ ok: true });
   }
 
@@ -192,7 +340,7 @@ async function telegramWebhook(request: Request, env: Env): Promise<Response> {
     return json({ ok: true });
   }
 
-  await sendTelegramMessage(env, chatId, "This Telegram chat is now connected to your business liquidity alerts.");
+  await sendTelegramMessage(env, chatId, "This Telegram chat is now connected to your business.\\n\\nTry /status, /liquidity, /forecast, /agents or /operations.\\nUse /help to see all commands. This bot is read-only and cannot sign transactions or authorize spending.");
   return json({ ok: true, linked: true });
 }
 
