@@ -445,6 +445,10 @@ async function handleTelegramCommand(
 
   const businessId = connection.business_id;
   if (command === "/request") {
+    if (connection.permission !== "approver") {
+      await sendTelegramMessage(env, chatId, "Request creation is restricted to linked accounts with approver access. Ask your business administrator to review your Telegram permissions.");
+      return;
+    }
     await startTelegramLiquidityRequest(env, chatId, userId, businessId);
     return;
   }
@@ -3098,6 +3102,7 @@ async function getOperation(request: Request, env: Env, operationId: string): Pr
 export default {
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
     await expireReservations(env);
+    await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE expires_at <= datetime('now')").run();
     await deliverTelegramOutbox(env);
   },
   async fetch(request: Request, env: Env): Promise<Response> {
