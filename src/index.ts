@@ -2127,6 +2127,48 @@ async function manageX402Budgets(request: Request, env: Env): Promise<Response> 
   });
 }
 
+async function reconcileX402PaymentAdmin(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const body = await readJson(request);
+  if (!body || typeof body.reservationId !== "string") {
+    return json({ error: "invalid_request", message: "Provide reservationId." }, 400);
+  }
+  const row = await env.DB.prepare(`
+    SELECT r.id, r.status, r.receipt_tx, r.payment_wallet_address, r.amount_atoms,
+      c.id AS challenge_id, c.resource, c.pay_to, c.asset, c.fee_payer
+    FROM x402_payment_reservations r
+    JOIN x402_payment_challenges c ON c.id = r.challenge_id
+    WHERE r.id = ?
+  `).bind(body.reservationId).first<{
+    id: string; status: string; receipt_tx: string | null; payment_wallet_address: string;
+    amount_atoms: string; challenge_id: string; resource: string; pay_to: string; asset: string; fee_payer: string;
+  }>();
+  if (!row) return json({ error: "x402_reservation_not_found" }, 404);
+  if (row.status === "settled") return json({ reservationId: row.id, status: "settled", transaction: row.receipt_tx });
+  if (row.status !== "pending" || !row.receipt_tx) {
+    return json({ error: "x402_reservation_not_reconcilable", status: row.status, message: "A finalized receipt transaction is required before reconciliation." }, 409);
+  }
+  const requirement: HermesPaymentRequirement = {
+    scheme: "exact", network: "solana", maxAmountRequired: row.amount_atoms,
+    resource: row.resource, payTo: row.pay_to, asset: row.asset, feePayer: row.fee_payer, maxTimeoutSeconds: 60
+  };
+  const verification = await verifyX402Settlement(
+    env,
+    { transaction: row.receipt_tx, network: "solana" },
+    requirement,
+    row.payment_wallet_address
+  );
+  if (verification.pending) return json({ reservationId: row.id, status: "pending", message: verification.reason }, 202);
+  if (!verification.verified) return json({ reservationId: row.id, status: "pending", error: "x402_settlement_mismatch", message: verification.reason }, 409);
+  await env.DB.prepare(
+    "UPDATE x402_payment_reservations SET status = 'settled', settled_at = datetime('now') WHERE id = ? AND status = 'pending'"
+  ).bind(row.id).run();
+  await env.DB.prepare(
+    "UPDATE x402_payment_challenges SET status = 'settled' WHERE id = ? AND status = 'reserved'"
+  ).bind(row.challenge_id).run();
+  return json({ reservationId: row.id, status: "settled", transaction: row.receipt_tx });
+}
+
 async function proxyHermes(
   request: Request,
   path: string,
@@ -4173,6 +4215,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/v1/admin/operations") return getAdminBusinessOperations(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/forecast") return getAdminBusinessForecast(request, env);
     if ((request.method === "GET" || request.method === "POST") && url.pathname === "/v1/admin/x402/budgets") return manageX402Budgets(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/admin/x402/reconcile") return reconcileX402PaymentAdmin(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/bootstrap") return bootstrapBusiness(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/agents") return provisionAgent(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/agents") return listBusinessAgents(request, env);
