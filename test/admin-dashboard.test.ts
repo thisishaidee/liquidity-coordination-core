@@ -146,3 +146,114 @@ describe("admin dashboard read endpoints", () => {
     expect(await response.json()).toEqual({ error: "internal_error" });
   });
 });
+
+
+describe("existing agent endpoints remain compatible after forecast extraction", () => {
+  async function agentEnv(allRows: (sql: string) => unknown[]) {
+    const apiKey = "agent-regression-fixture-key";
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(apiKey));
+    const hash = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+    const agent = { id: "agent_own", business_id: "biz_fixture", status: "active", can_use_business_treasury: 1 };
+    const db = {
+      prepare(sql: string) {
+        let values: unknown[] = [];
+        const statement = {
+          bind(...args: unknown[]) { values = args; return statement; },
+          async first<T>() {
+            if (sql.includes("api_key_hash")) return agent as T;
+            return null;
+          },
+          async all<T>() { return { results: allRows(sql) as T[] }; },
+          async run() { return { success: true, meta: { changes: 0 } }; }
+        };
+        return statement;
+      }
+    };
+    return { apiKey, hash, env: { DB: db as unknown as D1Database } as TestEnv };
+  }
+
+  it("preserves the agent forecast response for a seeded shared-wallet fixture", async () => {
+    const ownDue = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const otherDue = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+    const observedAt = new Date().toISOString();
+    const fixture = await agentEnv(sql => {
+      if (sql.includes("FROM wallets w") && sql.includes("wallet_balances")) return [
+        { wallet_id: "w-business", address: "So11111111111111111111111111111111111111112", scope: "business", agent_id: null, token: "USDC", confirmed_atoms: "50000000", reserved_atoms: "10000000", observed_at: observedAt },
+        { wallet_id: "w-business", address: "So11111111111111111111111111111111111111112", scope: "business", agent_id: null, token: "SOL", confirmed_atoms: "1000000000", reserved_atoms: "0", observed_at: observedAt }
+      ];
+      if (sql.includes("FROM liquidity_obligations o")) return [
+        { agent_id: "agent_own", agent_name: "Primary Agent", task_id: "task-own", amount_atoms: "30000000", due_at: ownDue, purpose: "Own obligation", can_use_business_treasury: 1 },
+        { agent_id: "agent_other", agent_name: "Second Agent", task_id: "task-other", amount_atoms: "20000000", due_at: otherDue, purpose: "Other obligation", can_use_business_treasury: 1 }
+      ];
+      return [];
+    });
+    const response = await worker.fetch(new Request("https://nerith.test/v1/liquidity/forecast", {
+      headers: { authorization: "Bearer " + fixture.apiKey }
+    }), fixture.env);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      windowDays: 30,
+      balanceDataFresh: true,
+      businessBalanceDataFresh: true,
+      walletsObserved: 1,
+      obligations: [{
+        taskId: "task-own",
+        dueAt: ownDue,
+        purpose: "Own obligation",
+        amountUSDC: "30",
+        availableUSDC: "40",
+        shortfallUSDC: "0",
+        status: "covered",
+        sourceWalletId: "w-business",
+        sourceAsset: null
+      }],
+      summary: { planned: 1, covered: 1, conversionRequired: 0, blocked: 0, totalShortfallUSDC: "0" },
+      businessSummary: { planned: 2, covered: 1, conversionRequired: 1, blocked: 0, totalShortfallUSDC: "10", otherAgentObligations: 1 },
+      note: "Business-wide forecast allocates shared business wallets across all agents in due-date order. Private wallets remain agent-isolated. Conversion availability is indicative until a live Swap.io quote is obtained; no future funds are reserved."
+    });
+  });
+
+  it("preserves the existing agent operations response shape", async () => {
+    const fixture = await agentEnv(sql => {
+      if (sql.includes("FROM operations o") && sql.includes("LEFT JOIN telegram_operation_approvals")) return [{
+        id: "op_fixture",
+        task_id: "task_fixture",
+        token: "USDC",
+        amount_atoms: "12500000",
+        status: "completed",
+        action: "direct_fulfillment",
+        available_atoms: "12000000",
+        shortfall_atoms: "500000",
+        source_wallet_id: "wallet_fixture",
+        transaction_hash: "signature_fixture",
+        received_output_atoms: "11900000",
+        created_at: "2026-11-12 10:00:00",
+        telegram_decision: null,
+        telegram_decided_at: null
+      }];
+      return [];
+    });
+    const response = await worker.fetch(new Request("https://nerith.test/v1/operations", {
+      headers: { authorization: "Bearer " + fixture.apiKey }
+    }), fixture.env);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      operations: [{
+        operationId: "op_fixture",
+        taskId: "task_fixture",
+        token: "USDC",
+        amount: "12.5",
+        status: "completed",
+        action: "direct_fulfillment",
+        available: "12",
+        shortfall: "0.5",
+        sourceWalletId: "wallet_fixture",
+        transactionHash: "signature_fixture",
+        receivedUSDC: "11.9",
+        telegramDecision: null,
+        telegramDecidedAt: null,
+        createdAt: "2026-11-12 10:00:00"
+      }]
+    });
+  });
+});
