@@ -9,9 +9,10 @@
     "test:watch": "vitest",
     "typecheck": "npm run build:dashboard && tsc --noEmit",
     "deploy": "npm run build:dashboard && wrangler deploy",
-    "build:dashboard": "node scripts/embed-dashboard.mjs && npm run build:landing && npm run build:control",
+    "build:dashboard": "node scripts/embed-dashboard.mjs && npm run build:landing && npm run build:control && npm run build:business-dashboard",
     "build:landing": "node scripts/embed-landing.mjs",
-    "build:control": "node scripts/embed-control.mjs"
+    "build:control": "node scripts/embed-control.mjs",
+    "build:business-dashboard": "node scripts/embed-business-dashboard.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261110.1",
