@@ -26,3 +26,5 @@ CREATE TABLE IF NOT EXISTS telegram_pending_approvals (
 
 CREATE INDEX IF NOT EXISTS idx_telegram_pending_approvals_expiry
   ON telegram_pending_approvals(expires_at);
+
+ALTER TABLE telegram_connections ADD COLUMN last_totp_step INTEGER;
