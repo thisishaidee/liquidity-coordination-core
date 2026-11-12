@@ -526,7 +526,8 @@ async function handleTelegramCommand(
   }
   if (command === "/confirmapproval") {
     const code = rawText.trim().match(/^\\/confirmapproval\\s+(\\d{6})$/i)?.[1] ?? "";
-    if (!code || !env.TELEGRAM_TOTP_ENCRYPTION_KEY) {
+    const encryptionKey = env.TELEGRAM_TOTP_ENCRYPTION_KEY;
+    if (!code || !encryptionKey) {
       await sendTelegramMessage(env, chatId, "Send /confirmapproval followed by the current six-digit Google Authenticator code.");
       return;
     }
@@ -542,7 +543,7 @@ async function handleTelegramCommand(
       await sendTelegramMessage(env, chatId, "Google Authenticator is not enabled. Send /setupauth first.");
       return;
     }
-    const secret = await decryptTotpSecret(auth.totp_secret_enc, env.TELEGRAM_TOTP_ENCRYPTION_KEY);
+    const secret = await decryptTotpSecret(auth.totp_secret_enc, encryptionKey);
     const step = await verifyTotpStep(secret, code);
     if (step === null) {
       await env.DB.prepare("UPDATE telegram_pending_approvals SET attempts = attempts + 1 WHERE id = ?").bind(pending.id).run();
