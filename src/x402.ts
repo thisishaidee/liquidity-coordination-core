@@ -117,3 +117,74 @@ export function parseHermesPaymentReceipt(header: string): HermesPaymentReceipt 
     return null;
   }
 }
+
+
+export type HermesPaymentTransaction = {
+  transaction?: {
+    message?: {
+      accountKeys?: Array<string | { pubkey?: string; signer?: boolean }>;
+      instructions?: Array<{
+        program?: string;
+        parsed?: { type?: string; info?: Record<string, unknown> };
+      }>;
+    };
+  };
+  meta?: {
+    err?: unknown | null;
+    preTokenBalances?: Array<{ accountIndex?: number; owner?: string; mint?: string }>;
+    postTokenBalances?: Array<{ accountIndex?: number; owner?: string; mint?: string }>;
+  };
+};
+
+export function verifyHermesPaymentTransaction(
+  transaction: HermesPaymentTransaction,
+  requirement: HermesPaymentRequirement,
+  payerAddress: string
+): { verified: boolean; reason: string } {
+  const fail = (reason: string) => ({ verified: false, reason });
+  const keys = transaction.transaction?.message?.accountKeys;
+  const instructions = transaction.transaction?.message?.instructions;
+  const meta = transaction.meta;
+  if (!keys || !instructions || !meta || !Array.isArray(meta.preTokenBalances) || !Array.isArray(meta.postTokenBalances)) {
+    return fail("Settled x402 transaction is missing parsed account or token-balance metadata.");
+  }
+  if (meta.err) return fail("Settled x402 transaction contains an execution error.");
+  const keyAddress = (entry: string | { pubkey?: string }) => typeof entry === "string" ? entry : entry.pubkey;
+  const payer = keys.find((entry) => keyAddress(entry) === payerAddress);
+  const feePayer = keys[0];
+  if (!payer || typeof payer === "string" || payer.signer !== true) {
+    return fail("Dedicated x402 payment wallet did not sign the settlement transaction.");
+  }
+  if (!feePayer || typeof feePayer === "string" || keyAddress(feePayer) !== requirement.feePayer || feePayer.signer !== true) {
+    return fail("Hermes settlement did not use the fee payer advertised by the payment challenge.");
+  }
+  const preOwners = new Map(meta.preTokenBalances.map((balance) => [balance.accountIndex, { owner: balance.owner, mint: balance.mint }]));
+  const postOwners = new Map(meta.postTokenBalances.map((balance) => [balance.accountIndex, { owner: balance.owner, mint: balance.mint }]));
+  const accountIndex = new Map(keys.map((entry, index) => [keyAddress(entry), index]));
+  const amount = requirement.maxAmountRequired;
+  const matches = instructions.filter((instruction) => {
+    if (instruction.program !== "spl-token" && instruction.program !== "spl-token-2022") return false;
+    if (instruction.parsed?.type !== "transferChecked") return false;
+    const info = instruction.parsed.info ?? {};
+    const source = info.source;
+    const destination = info.destination;
+    const authority = info.authority;
+    const mint = info.mint;
+    const tokenAmount = info.tokenAmount as { amount?: unknown } | undefined;
+    const sourceIndex = typeof source === "string" ? accountIndex.get(source) : undefined;
+    const destinationIndex = typeof destination === "string" ? accountIndex.get(destination) : undefined;
+    return authority === payerAddress &&
+      mint === requirement.asset &&
+      tokenAmount?.amount === amount &&
+      sourceIndex !== undefined &&
+      destinationIndex !== undefined &&
+      preOwners.get(sourceIndex)?.owner === payerAddress &&
+      preOwners.get(sourceIndex)?.mint === requirement.asset &&
+      postOwners.get(destinationIndex)?.owner === requirement.payTo &&
+      postOwners.get(destinationIndex)?.mint === requirement.asset;
+  });
+  if (matches.length !== 1) {
+    return fail("Settlement transaction does not contain exactly one authorized USDC TransferChecked for the challenged amount and recipient.");
+  }
+  return { verified: true, reason: "Settlement transaction matches the challenged USDC amount, recipient, payer and facilitator fee payer." };
+}
