@@ -1,6 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { Script } from "node:vm";
 import worker from "../src/index";
 
 type QueryRecord = { sql: string; values: unknown[] };
@@ -532,12 +530,14 @@ it("returns approval, execution and verified settlement as separate operation st
 
 
 describe("browser page script syntax", () => {
-  it("parses the inline scripts for the landing page and business dashboard", () => {
-    for (const path of ["../public/landing.html", "../public/dashboard.html"]) {
-      const html = readFileSync(new URL(path, import.meta.url), "utf8");
-      const match = html.match(/<script>([\s\S]*?)<\/script>/);
+  it("parses the inline scripts served for the landing page and business dashboard", async () => {
+    const { env } = makeEnv();
+    for (const path of ["/", "/dashboard"]) {
+      const response = await worker.fetch(new Request("https://nerith.test" + path), env);
+      const html = await response.text();
+      const match = html.match(/<script>([\\s\\S]*?)<\\/script>/);
       expect(match).not.toBeNull();
-      expect(() => new Script(match![1])).not.toThrow();
+      expect(() => new Function(match![1])).not.toThrow();
     }
   });
 });
