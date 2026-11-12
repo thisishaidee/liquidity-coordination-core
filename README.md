@@ -38,7 +38,7 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 | POST | `/v1/admin/balances/sync` | Refresh registered wallet balances from Solana RPC |
 | POST | `/v1/admin/reservations/expire` | Manually sweep expired reservations |
 | POST | `/v1/admin/telegram/setup` | Verify the bot, register its webhook and publish bot commands |
-| GET/POST | `/v1/admin/x402/budgets` | Read or set business-wide and per-agent daily x402 USDC spending limits |
+| GET/POST | `/v1/admin/x402/budgets` | Read or set business-wide and per-agent daily x402 USDC spending limits |\n| POST | `/v1/admin/x402/reconcile` | Reconcile a pending x402 reservation with its finalized on-chain receipt |
 | POST | `/v1/admin/telegram/link-codes` | Create a one-time private Telegram linking invitation |
 | POST | `/v1/telegram/webhook` | Receive verified Telegram bot updates |
 | POST | `/v1/liquidity/requests` | Submit a task funding request |
@@ -94,7 +94,7 @@ Set a business-wide limit or an individual agent limit (zero disables paid calls
 
 Send that body to `POST /v1/admin/x402/budgets` using an authenticated admin session. Omit `agentId` to change the business-wide cap.
 
-The Worker stores the actual Hermes V1 Solana challenge for the exact operation/request, reserves its quoted amount before forwarding the payment, rejects payment replay, and verifies the finalized receipt transaction against the challenge's USDC mint, amount, recipient, payer signature and advertised facilitator fee payer before marking spend as settled. A timeout, missing receipt or RPC uncertainty keeps the reservation pending instead of silently freeing budget. These limits govern paid calls routed through NERITH; they are not a wallet-level spending lock for direct transfers made outside NERITH.
+The Worker stores the actual Hermes V1 Solana challenge for the exact operation/request, reserves its quoted amount before forwarding the payment, rejects payment replay, and verifies the finalized receipt transaction against the challenge's USDC mint, exact payer debit, exact recipient credit, payer signature and advertised facilitator fee payer before marking spend as settled. A timeout, missing receipt or RPC uncertainty keeps the reservation pending instead of silently freeing budget. GET budgets also lists pending reservations; after a receipt transaction is available, an authenticated admin can POST `{ "reservationId": "x4r_..." }` to `/v1/admin/x402/reconcile` to retry verification. These limits govern paid calls routed through NERITH; they are not a wallet-level spending lock for direct transfers made outside NERITH.
 
 ## Important safety boundaries
 
