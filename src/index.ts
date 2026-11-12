@@ -1129,12 +1129,24 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        description: "Welcome to NERITH. Monitor business liquidity, agents and operations, create liquidity requests, and let authorised approvers review prepared requests. Decisions are recorded against the exact operation. Wallet signing and transaction execution remain separately secured."
+        description: "Monitor business liquidity, forecasts, agents and operations. A linked Operator can create and review requests; Google Authenticator protects decisions on requests they created. Wallet signing and transaction execution remain business-controlled."
       })
     });
     const descriptionResult = await descriptionResponse.json() as { ok?: boolean; description?: string };
     if (!descriptionResponse.ok || !descriptionResult.ok) {
       return json({ error: "telegram_description_setup_failed", message: descriptionResult.description ?? "Telegram rejected the bot description." }, 502);
+    }
+
+    const shortDescriptionResponse = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setMyShortDescription`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        short_description: "Business liquidity coordination for autonomous agents. Secure request review; signing stays with your business."
+      })
+    });
+    const shortDescriptionResult = await shortDescriptionResponse.json() as { ok?: boolean; description?: string };
+    if (!shortDescriptionResponse.ok || !shortDescriptionResult.ok) {
+      return json({ error: "telegram_short_description_setup_failed", message: shortDescriptionResult.description ?? "Telegram rejected the bot short description." }, 502);
     }
 
     return json({
