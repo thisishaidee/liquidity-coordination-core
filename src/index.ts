@@ -307,7 +307,7 @@ async function createTelegramLinkCode(request: Request, env: Env): Promise<Respo
     code,
     expiresAt,
     deepLink: `https://t.me/${botUsername}?start=${code}`,
-    instruction: "Open the bot link from the Telegram account that should receive business alerts. This code works once and expires in 15 minutes."
+    instruction: "Open the bot link from the private Telegram account that should operate this business. The linked account can create and review requests; Google Authenticator is required for decisions on its own requests. This code works once and expires in 15 minutes."
   }, 201);
 }
 
@@ -455,7 +455,7 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      "Welcome to NERITH. Monitor business liquidity, agents and operations, create liquidity requests, and let authorised approvers review prepared requests.\n\nTo connect, ask your business administrator to generate a one-time Telegram invitation, then open that link here.\n\nCommands: /help"
+      "Welcome to NERITH. Use one linked Telegram account to monitor business liquidity, create requests and review prepared operations. Google Authenticator protects decisions on your own requests.\n\nTo connect, ask your business administrator to generate a one-time Telegram invitation, then open that link here.\n\nCommands: /help"
     );
     return;
   }
@@ -605,7 +605,7 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      `NERITH · ${connection.business_name}\n\n/status  Business overview\n/liquidity  Available and reserved balances\n/forecast  Upcoming planned obligations\n/agents  Agent status\n/operations  Recent liquidity activity\n/newrequest  Create a liquidity request\n/review  Review prepared liquidity requests\n/setupauth  Set up Google Authenticator\n/verifyauth  Verify authenticator setup\n/cancel  Cancel a request draft\n/disconnect  Disconnect this chat\n\nRequests are checked against authorised, fresh liquidity and reservations. Approvals record a business decision only. This bot cannot sign or broadcast transactions.`,
+      `NERITH · ${connection.business_name}\n\n/status  Business overview\n/liquidity  Available and reserved balances\n/forecast  Upcoming planned obligations\n/agents  Agent status\n/operations  Recent liquidity activity\n/newrequest  Create a liquidity request\n/review  Review prepared liquidity requests\n/setupauth  Set up Google Authenticator\n/verifyauth  Verify authenticator setup\n/confirmapproval  Confirm a self-approval\n/cancel  Cancel a request draft\n/disconnect  Disconnect this chat\n\nRequests are checked against authorised, fresh liquidity and reservations. Approvals record a business decision only. This bot cannot sign or broadcast transactions.`,
       telegramSupportMarkup(env)
     );
     return;
