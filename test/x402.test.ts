@@ -121,7 +121,8 @@ function settledTransaction(overrides: Record<string, unknown> = {}) {
         { accountIndex: 2, owner: payerAddress, mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", uiTokenAmount: { amount: "100000" } }
       ],
       postTokenBalances: [
-        { accountIndex: 2, owner: payerAddress, mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", uiTokenAmount: { amount: "96993" } },\n        { accountIndex: 3, owner: payToAddress, mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", uiTokenAmount: { amount: "3007" } }
+        { accountIndex: 2, owner: payerAddress, mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", uiTokenAmount: { amount: "96993" } },
+        { accountIndex: 3, owner: payToAddress, mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", uiTokenAmount: { amount: "3007" } }
       ]
     },
     ...overrides
