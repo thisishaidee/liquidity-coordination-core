@@ -1211,19 +1211,53 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
 }
 
 async function telegramWebhook(request: Request, env: Env): Promise<Response> {
+  const update = await readJson(request.clone());
+  if (!update) return json({ error: "invalid_update" }, 400);
+  const updateId = update.update_id;
+  if (!(typeof updateId === "number" && Number.isSafeInteger(updateId) && updateId >= 0)) {
+    return json({ error: "invalid_update_id" }, 400);
+  }
+  const id = String(updateId);
+  const claim = await env.DB.prepare("INSERT OR IGNORE INTO telegram_processed_updates (update_id) VALUES (?)")
+    .bind(id).run();
+  if ((claim.meta?.changes ?? 0) !== 1) {
+    const existing = await env.DB.prepare("SELECT status, locked_until FROM telegram_processed_updates WHERE update_id = ?")
+      .bind(id).first<{ status: string; locked_until: string }>();
+    if (existing?.status === "completed" ||
+        (existing?.status === "processing" && existing.locked_until > new Date().toISOString().replace("T", " ").slice(0, 19))) {
+      return json({ ok: true, duplicate: true });
+    }
+    const reclaimed = await env.DB.prepare(`
+      UPDATE telegram_processed_updates
+      SET status = 'processing', locked_until = datetime('now', '+2 minutes'), processed_at = datetime('now')
+      WHERE update_id = ? AND (status != 'processing' OR locked_until <= datetime('now'))
+    `).bind(id).run();
+    if ((reclaimed.meta?.changes ?? 0) !== 1) return json({ ok: true, duplicate: true });
+  }
+  try {
+    const response = await processTelegramWebhook(request, env);
+    if (response.ok) {
+      await env.DB.prepare("UPDATE telegram_processed_updates SET status = 'completed', locked_until = datetime('now') WHERE update_id = ?")
+        .bind(id).run();
+    } else {
+      await env.DB.prepare("DELETE FROM telegram_processed_updates WHERE update_id = ? AND status = 'processing'")
+        .bind(id).run();
+    }
+    return response;
+  } catch (error) {
+    await env.DB.prepare("DELETE FROM telegram_processed_updates WHERE update_id = ? AND status = 'processing'")
+      .bind(id).run();
+    throw error;
+  }
+}
+
+async function processTelegramWebhook(request: Request, env: Env): Promise<Response> {
   const secret = env.TELEGRAM_WEBHOOK_SECRET;
   const supplied = request.headers.get("x-telegram-bot-api-secret-token") ?? "";
   if (!secret || !(await constantTimeEqual(secret, supplied))) return json({ error: "unauthorized" }, 401);
 
   const update = await readJson(request);
   if (!update) return json({ error: "invalid_update" }, 400);
-  const updateId = update.update_id;
-  if (!(typeof updateId === "number" && Number.isSafeInteger(updateId) && updateId >= 0)) {
-    return json({ error: "invalid_update_id" }, 400);
-  }
-  const claimed = await env.DB.prepare("INSERT OR IGNORE INTO telegram_processed_updates (update_id) VALUES (?)")
-    .bind(String(updateId)).run();
-  if ((claimed.meta?.changes ?? 0) !== 1) return json({ ok: true, duplicate: true });
   const callback = update.callback_query as {
     id?: string;
     data?: string;
