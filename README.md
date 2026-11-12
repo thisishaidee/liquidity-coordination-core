@@ -38,7 +38,8 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 | POST | `/v1/admin/balances/sync` | Refresh registered wallet balances from Solana RPC |
 | POST | `/v1/admin/reservations/expire` | Manually sweep expired reservations |
 | POST | `/v1/admin/telegram/setup` | Verify the bot, register its webhook and publish bot commands |
-| GET/POST | `/v1/admin/x402/budgets` | Read or set business-wide and per-agent daily x402 USDC spending limits |\n| POST | `/v1/admin/x402/reconcile` | Reconcile a pending x402 reservation with its finalized on-chain receipt |
+| GET/POST | `/v1/admin/x402/budgets` | Read or set business-wide and per-agent daily x402 USDC spending limits |
+| POST | `/v1/admin/x402/reconcile` | Reconcile a pending x402 reservation with its finalized on-chain receipt |
 | POST | `/v1/admin/telegram/link-codes` | Create a one-time private Telegram linking invitation |
 | POST | `/v1/telegram/webhook` | Receive verified Telegram bot updates |
 | POST | `/v1/liquidity/requests` | Submit a task funding request |
