@@ -2124,11 +2124,25 @@ async function proxyHermes(
   request: Request,
   path: string,
   payload: Record<string, unknown>,
-  extraHeaders: Record<string, string> = {}
+  extraHeaders: Record<string, string> = {},
+  x402Context?: X402ProxyContext
 ): Promise<Response> {
-  const headers = new Headers({ "content-type": "application/json" });
   const payment = request.headers.get("x-payment");
   const paymentSignature = request.headers.get("payment-signature");
+  if (paymentSignature && !payment) {
+    return json({ error: "unsupported_x402_version", message: "Hermes requires its documented V1 X-PAYMENT envelope." }, 400);
+  }
+  if (payment && !x402Context) return json({ error: "x402_budget_context_missing" }, 500);
+
+  let paymentReservation: { reservationId: string; challenge: X402ChallengeRow } | null = null;
+  if (payment && x402Context) {
+    const reserved = await reserveX402Payment(request, x402Context);
+    if (reserved instanceof Response) return reserved;
+    paymentReservation = reserved;
+    if (!paymentReservation) return json({ error: "x402_payment_not_reserved" }, 500);
+  }
+
+  const headers = new Headers({ "content-type": "application/json" });
   if (payment) headers.set("X-PAYMENT", payment);
   if (paymentSignature) headers.set("PAYMENT-SIGNATURE", paymentSignature);
 
@@ -2139,6 +2153,8 @@ async function proxyHermes(
       signal: AbortSignal.timeout(12_000), redirect: "error"
     });
   } catch {
+    // A timeout after forwarding a payment is ambiguous. Keep its budget reservation
+    // pending rather than incorrectly making the same daily allowance available again.
     return json({ error: "swap_provider_unavailable", message: "Hermes did not respond within the allowed time." }, 504);
   }
 
@@ -2172,6 +2188,7 @@ async function proxyHermes(
   const responseBody = new Uint8Array(total);
   let offset = 0;
   for (const chunk of chunks) { responseBody.set(chunk, offset); offset += chunk.byteLength; }
+  const responseText = new TextDecoder().decode(responseBody);
 
   const responseHeaders = new Headers({
     "content-type": upstream.headers.get("content-type") ?? "application/json",
@@ -2184,14 +2201,67 @@ async function proxyHermes(
   }
   for (const [name, value] of Object.entries(extraHeaders)) responseHeaders.set(name, value);
 
-  if (upstream.status === 200 && (path === "/v1/swap/quote" || path === "/v1/swap/build-tx")) {
-    const receiptHeader = upstream.headers.get("x-payment-response") ?? upstream.headers.get("payment-response");
-    let receipt: { success?: boolean } | null = null;
-    try { if (receiptHeader) receipt = JSON.parse(atob(receiptHeader)) as { success?: boolean }; } catch { receipt = null; }
-    if (!receipt?.success) {
-      return json({ error: "swap_payment_receipt_missing_or_invalid", message: "Hermes returned HTTP 200 without a successful x402 settlement receipt. The response was not accepted." }, 502);
-    }
+  if (upstream.status === 402 && !payment && x402Context) {
+    await storeX402Challenge(x402Context, path, responseText);
   }
+
+  if (paymentReservation && x402Context) {
+    const receiptHeader = upstream.headers.get("x-payment-response") ?? upstream.headers.get("payment-response");
+    if (receiptHeader) {
+      const receipt = parseHermesPaymentReceipt(receiptHeader);
+      if (!receipt) {
+        return json({ error: "x402_receipt_invalid", message: "Hermes returned a receipt that could not be safely reconciled. The budget remains reserved pending review." }, 502);
+      }
+      await x402Context.env.DB.prepare(
+        "UPDATE x402_payment_reservations SET receipt_tx = ? WHERE id = ? AND status = 'pending' AND (receipt_tx IS NULL OR receipt_tx = ?)"
+      ).bind(receipt.transaction, paymentReservation.reservationId, receipt.transaction).run();
+      const requirement: HermesPaymentRequirement = {
+        scheme: "exact",
+        network: "solana",
+        maxAmountRequired: paymentReservation.challenge.amount_atoms,
+        resource: paymentReservation.challenge.resource,
+        payTo: paymentReservation.challenge.pay_to,
+        asset: paymentReservation.challenge.asset,
+        feePayer: paymentReservation.challenge.fee_payer,
+        maxTimeoutSeconds: 60
+      };
+      const verification = await verifyX402Settlement(
+        x402Context.env,
+        receipt,
+        requirement,
+        x402Context.paymentWalletAddress
+      );
+      if (verification.pending) {
+        return json({ error: "x402_settlement_pending", message: verification.reason, paymentReservationId: paymentReservation.reservationId }, 202);
+      }
+      if (!verification.verified) {
+        return json({ error: "x402_settlement_mismatch", message: verification.reason, paymentReservationId: paymentReservation.reservationId }, 502);
+      }
+      await x402Context.env.DB.prepare(
+        "UPDATE x402_payment_reservations SET status = 'settled', settled_at = datetime('now') WHERE id = ? AND status = 'pending'"
+      ).bind(paymentReservation.reservationId).run();
+      await x402Context.env.DB.prepare(
+        "UPDATE x402_payment_challenges SET status = 'settled' WHERE id = ? AND status = 'reserved'"
+      ).bind(paymentReservation.challenge.id).run();
+    } else if (upstream.status === 200 || upstream.status === 504) {
+      // Missing receipt on a nominal success, or an ambiguous timeout: retain the hold.
+      if (upstream.status === 200) {
+        return json({ error: "swap_payment_receipt_missing_or_invalid", message: "Hermes returned HTTP 200 without a successful x402 settlement receipt. The payment remains reserved until reconciled." }, 502);
+      }
+    } else {
+      // Hermes documents failed upstream calls as uncharged; absent a receipt, release
+      // the hold and require a fresh challenge before another payment attempt.
+      await x402Context.env.DB.prepare(
+        "UPDATE x402_payment_reservations SET status = 'released' WHERE id = ? AND status = 'pending' AND receipt_tx IS NULL"
+      ).bind(paymentReservation.reservationId).run();
+      await x402Context.env.DB.prepare(
+        "UPDATE x402_payment_challenges SET status = 'expired' WHERE id = ? AND status = 'reserved'"
+      ).bind(paymentReservation.challenge.id).run();
+    }
+  } else if (upstream.status === 200 && (path === "/v1/swap/quote" || path === "/v1/swap/build-tx")) {
+    return json({ error: "swap_payment_receipt_missing_or_untracked", message: "A successful paid Hermes response must have a tracked, reconciled x402 payment." }, 502);
+  }
+
   return new Response(responseBody, { status: upstream.status, headers: responseHeaders });
 }
 
