@@ -2,6 +2,12 @@ import { parseTokenAmount } from "./core";
 
 const MAX_LEDGER_ATOMS = 9_000_000_000_000_000_000n;
 
+export function normalizeTelegramCommand(command: string): string {
+  if (command === "/request") return "/newrequest";
+  if (command === "/requests") return "/review";
+  return command;
+}
+
 export function canCreateTelegramRequest(permission: string | null | undefined): boolean {
   return permission === "requester" || permission === "approver";
 }
