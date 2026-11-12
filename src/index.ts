@@ -3458,6 +3458,8 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/admin/session") return createAdminSession(request, env);
     if (request.method === "DELETE" && url.pathname === "/v1/admin/session") return endAdminSession(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/workspace") return getBusinessWorkspace(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/admin/operations") return getAdminBusinessOperations(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/admin/forecast") return getAdminBusinessForecast(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/bootstrap") return bootstrapBusiness(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/agents") return provisionAgent(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/agents") return listBusinessAgents(request, env);
