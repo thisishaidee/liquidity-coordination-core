@@ -13,6 +13,7 @@ import {
 import { canCreateTelegramRequest, canReviewTelegramRequest, isTelegramDraftCancellable, normalizeTelegramCommand, parseTelegramRequestAmount, isValidTelegramRequestPurpose } from "./telegram-request";
 import { decryptTotpSecret, encryptTotpSecret, generateTotpSecret, verifyTotpStep } from "./telegram-totp";
 import { verifySolSourceDebit, type SolanaSettlementTransaction } from "./settlement";
+import { parseHermesPaymentPayload, parseHermesPaymentRequirement, parseHermesPaymentReceipt, verifyHermesPaymentTransaction, type HermesPaymentRequirement } from "./x402";
 
 interface Env {
   DB: D1Database;
@@ -1874,15 +1875,341 @@ async function validateConversionContext(
   };
 }
 
+
+type X402ProxyContext = {
+  env: Env;
+  agent: AgentRow;
+  paymentWalletAddress: string;
+  requestHash: string;
+};
+
+type X402ChallengeRow = {
+  id: string;
+  amount_atoms: string;
+  pay_to: string;
+  asset: string;
+  fee_payer: string;
+  resource: string;
+};
+
+async function storeX402Challenge(
+  context: X402ProxyContext,
+  path: string,
+  responseBody: string
+): Promise<void> {
+  const requirement = parseHermesPaymentRequirement(responseBody, path);
+  if (!requirement || BigInt(requirement.maxAmountRequired) > 1_000_000_000n) return;
+  const id = "x4c_" + crypto.randomUUID().replaceAll("-", "");
+  const expiresAt = new Date(Date.now() + requirement.maxTimeoutSeconds * 1000).toISOString();
+  await context.env.DB.prepare(
+    "UPDATE x402_payment_challenges SET status = 'expired' WHERE agent_id = ? AND request_hash = ? AND status = 'pending'"
+  ).bind(context.agent.id, context.requestHash).run();
+  await context.env.DB.prepare(`
+    INSERT INTO x402_payment_challenges
+      (id, agent_id, business_id, request_hash, resource, amount_atoms, pay_to, asset, fee_payer, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    id,
+    context.agent.id,
+    context.agent.business_id,
+    context.requestHash,
+    requirement.resource,
+    requirement.maxAmountRequired,
+    requirement.payTo,
+    requirement.asset,
+    requirement.feePayer,
+    expiresAt
+  ).run();
+  await context.env.DB.prepare(
+    "UPDATE x402_payment_challenges SET status = 'expired' WHERE agent_id = ? AND request_hash = ? AND status = 'pending' AND id <> ? AND julianday(expires_at) <= julianday('now')"
+  ).bind(context.agent.id, context.requestHash, id).run();
+}
+
+async function reserveX402Payment(
+  request: Request,
+  context: X402ProxyContext
+): Promise<{ reservationId: string; challenge: X402ChallengeRow } | Response | null> {
+  const paymentHeader = request.headers.get("x-payment");
+  if (!paymentHeader) {
+    if (request.headers.get("payment-signature")) {
+      return json({ error: "unsupported_x402_version", message: "Hermes currently requires its documented x402 V1 X-PAYMENT envelope." }, 400);
+    }
+    return null;
+  }
+  if (!parseHermesPaymentPayload(paymentHeader)) {
+    return json({ error: "invalid_x402_payment_payload" }, 400);
+  }
+  const challenge = await context.env.DB.prepare(`
+    SELECT id, amount_atoms, pay_to, asset, fee_payer, resource
+    FROM x402_payment_challenges
+    WHERE agent_id = ? AND request_hash = ? AND status = 'pending'
+      AND julianday(expires_at) > julianday('now')
+    ORDER BY created_at DESC LIMIT 1
+  `).bind(context.agent.id, context.requestHash).first<X402ChallengeRow>();
+  if (!challenge) {
+    return json({ error: "x402_challenge_missing_or_expired", message: "Request a fresh Hermes payment challenge before retrying with payment." }, 409);
+  }
+
+  const paymentHash = await sha256(paymentHeader);
+  const prior = await context.env.DB.prepare(
+    "SELECT id, status FROM x402_payment_reservations WHERE payment_hash = ? OR challenge_id = ? LIMIT 1"
+  ).bind(paymentHash, challenge.id).first<{ id: string; status: string }>();
+  if (prior) {
+    return json({ error: "x402_payment_replay_or_pending", status: prior.status }, 409);
+  }
+
+  const businessScope = "business:" + context.agent.business_id;
+  const agentScope = "agent:" + context.agent.id;
+  await context.env.DB.prepare(`
+    INSERT OR IGNORE INTO x402_spend_limits (scope_key, business_id, agent_id, daily_limit_atoms)
+    VALUES (?, ?, NULL, 50000), (?, ?, ?, 10000)
+  `).bind(
+    businessScope, context.agent.business_id,
+    agentScope, context.agent.business_id, context.agent.id
+  ).run();
+
+  const amount = Number(challenge.amount_atoms);
+  if (!Number.isSafeInteger(amount) || amount <= 0) {
+    return json({ error: "invalid_x402_challenge_amount" }, 502);
+  }
+  const day = new Date().toISOString().slice(0, 10);
+  const reservationId = "x4r_" + crypto.randomUUID().replaceAll("-", "");
+  let reserved;
+  try {
+    reserved = await context.env.DB.prepare(`
+      INSERT INTO x402_payment_reservations
+        (id, challenge_id, payment_hash, business_id, agent_id, payment_wallet_address, spend_day, amount_atoms, status)
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'pending'
+      WHERE EXISTS (
+        SELECT 1 FROM x402_payment_challenges
+        WHERE id = ? AND agent_id = ? AND status = 'pending' AND julianday(expires_at) > julianday('now')
+      )
+      AND COALESCE((
+        SELECT SUM(amount_atoms) FROM x402_payment_reservations
+        WHERE business_id = ? AND spend_day = ? AND status IN ('pending', 'settled')
+      ), 0) + ? <= (
+        SELECT daily_limit_atoms FROM x402_spend_limits WHERE scope_key = ?
+      )
+      AND COALESCE((
+        SELECT SUM(amount_atoms) FROM x402_payment_reservations
+        WHERE agent_id = ? AND spend_day = ? AND status IN ('pending', 'settled')
+      ), 0) + ? <= (
+        SELECT daily_limit_atoms FROM x402_spend_limits WHERE scope_key = ?
+      )
+    `).bind(
+      reservationId, challenge.id, paymentHash, context.agent.business_id,
+      context.agent.id, context.paymentWalletAddress, day, amount,
+      challenge.id, context.agent.id,
+      context.agent.business_id, day, amount, businessScope,
+      context.agent.id, day, amount, agentScope
+    ).run();
+  } catch {
+    return json({ error: "x402_payment_already_reserved" }, 409);
+  }
+  if ((reserved.meta?.changes ?? 0) !== 1) {
+    return json({
+      error: "x402_daily_budget_exceeded",
+      amountUSDC: formatTokenAmount(BigInt(challenge.amount_atoms), 6),
+      note: "The payment would exceed the configured daily limit for this agent or business. Default limits are 0.01 USDC per agent and 0.05 USDC per business."
+    }, 429);
+  }
+  await context.env.DB.prepare(
+    "UPDATE x402_payment_challenges SET status = 'reserved' WHERE id = ? AND status = 'pending'"
+  ).bind(challenge.id).run();
+  return { reservationId, challenge };
+}
+
+async function verifyX402Settlement(
+  env: Env,
+  receipt: { transaction: string; network: string; payer?: string },
+  requirement: HermesPaymentRequirement,
+  payerAddress: string
+): Promise<{ verified: boolean; pending: boolean; reason: string }> {
+  if (receipt.payer && receipt.payer !== payerAddress) {
+    return { verified: false, pending: false, reason: "x402 receipt payer does not match the configured payment wallet." };
+  }
+  type PaymentTx = Parameters<typeof verifyHermesPaymentTransaction>[0];
+  let transaction: PaymentTx | null;
+  try {
+    transaction = await solanaRpc<PaymentTx | null>(
+      env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com",
+      "getTransaction",
+      [receipt.transaction, {
+        commitment: "finalized",
+        encoding: "jsonParsed",
+        maxSupportedTransactionVersion: 0
+      }]
+    );
+  } catch {
+    return { verified: false, pending: true, reason: "Solana RPC could not verify the x402 settlement yet." };
+  }
+  if (!transaction?.meta) {
+    return { verified: false, pending: true, reason: "x402 settlement transaction is not yet available at finalized commitment." };
+  }
+  const result = verifyHermesPaymentTransaction(transaction, requirement, payerAddress);
+  return { ...result, pending: false };
+}
+
+async function manageX402Budgets(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  if (request.method === "GET") {
+    const businessId = new URL(request.url).searchParams.get("businessId");
+    if (!businessId) return json({ error: "business_id_required" }, 400);
+    const business = await env.DB.prepare("SELECT id FROM businesses WHERE id = ?").bind(businessId).first<{ id: string }>();
+    if (!business) return json({ error: "business_not_found" }, 404);
+    await env.DB.prepare(`
+      INSERT OR IGNORE INTO x402_spend_limits (scope_key, business_id, agent_id, daily_limit_atoms)
+      VALUES (?, ?, NULL, 50000)
+    `).bind("business:" + businessId, businessId).run();
+    await env.DB.prepare(`
+      INSERT OR IGNORE INTO x402_spend_limits (scope_key, business_id, agent_id, daily_limit_atoms)
+      SELECT 'agent:' || id, business_id, id, 10000 FROM agents WHERE business_id = ?
+    `).bind(businessId).run();
+    const rows = await env.DB.prepare(`
+      SELECT l.scope_key, l.agent_id, a.name AS agent_name, l.daily_limit_atoms,
+        COALESCE((
+          SELECT SUM(r.amount_atoms) FROM x402_payment_reservations r
+          WHERE r.business_id = l.business_id AND r.spend_day = ? AND r.status IN ('pending', 'settled')
+            AND ((l.agent_id IS NULL AND r.agent_id IS NOT NULL) OR r.agent_id = l.agent_id)
+        ), 0) AS used_atoms
+      FROM x402_spend_limits l
+      LEFT JOIN agents a ON a.id = l.agent_id
+      WHERE l.business_id = ?
+      ORDER BY CASE WHEN l.agent_id IS NULL THEN 0 ELSE 1 END, a.name
+    `).bind(new Date().toISOString().slice(0, 10), businessId).all<{
+      scope_key: string; agent_id: string | null; agent_name: string | null; daily_limit_atoms: number; used_atoms: number;
+    }>();
+    const pendingPayments = await env.DB.prepare(`
+      SELECT id, agent_id, payment_wallet_address, amount_atoms, receipt_tx, created_at
+      FROM x402_payment_reservations
+      WHERE business_id = ? AND status = 'pending'
+      ORDER BY created_at DESC LIMIT 50
+    `).bind(businessId).all<{
+      id: string; agent_id: string; payment_wallet_address: string; amount_atoms: number;
+      receipt_tx: string | null; created_at: string;
+    }>();
+    return json({
+      businessId,
+      defaults: { businessDailyUSDC: "0.05", agentDailyUSDC: "0.01" },
+      budgets: (rows.results ?? []).map((row) => ({
+        scope: row.agent_id ? "agent" : "business",
+        agentId: row.agent_id,
+        agentName: row.agent_name,
+        dailyLimitUSDC: formatTokenAmount(BigInt(row.daily_limit_atoms), 6),
+        usedTodayUSDC: formatTokenAmount(BigInt(row.used_atoms), 6)
+      })),
+      pendingPayments: (pendingPayments.results ?? []).map((row) => ({
+        reservationId: row.id,
+        agentId: row.agent_id,
+        paymentWalletAddress: row.payment_wallet_address,
+        amountUSDC: formatTokenAmount(BigInt(row.amount_atoms), 6),
+        receiptTransaction: row.receipt_tx,
+        createdAt: row.created_at,
+        canReconcile: Boolean(row.receipt_tx)
+      }))
+    });
+  }
+
+  const body = await readJson(request);
+  if (!body || typeof body.businessId !== "string" || typeof body.dailyLimitUSDC !== "string") {
+    return json({ error: "invalid_request", message: "Provide businessId and dailyLimitUSDC; optionally provide agentId for an agent-specific cap." }, 400);
+  }
+  if (!/^\d{1,9}(?:\.\d{1,6})?$/.test(body.dailyLimitUSDC)) {
+    return json({ error: "invalid_daily_limit", message: "dailyLimitUSDC must be a non-negative amount with up to six decimals." }, 400);
+  }
+  const [whole, fraction = ""] = body.dailyLimitUSDC.split(".");
+  const limitAtoms = BigInt(whole) * 1_000_000n + BigInt((fraction + "000000").slice(0, 6));
+  if (limitAtoms > 1_000_000_000_000n) return json({ error: "daily_limit_too_large" }, 400);
+  const business = await env.DB.prepare("SELECT id FROM businesses WHERE id = ?").bind(body.businessId).first<{ id: string }>();
+  if (!business) return json({ error: "business_not_found" }, 404);
+  let scopeKey = "business:" + body.businessId;
+  let agentId: string | null = null;
+  if (body.agentId !== undefined) {
+    if (typeof body.agentId !== "string") return json({ error: "invalid_agent_id" }, 400);
+    const agent = await env.DB.prepare("SELECT id FROM agents WHERE id = ? AND business_id = ?")
+      .bind(body.agentId, body.businessId).first<{ id: string }>();
+    if (!agent) return json({ error: "agent_not_found" }, 404);
+    agentId = agent.id;
+    scopeKey = "agent:" + agent.id;
+  }
+  await env.DB.prepare(`
+    INSERT INTO x402_spend_limits (scope_key, business_id, agent_id, daily_limit_atoms)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(scope_key) DO UPDATE SET daily_limit_atoms = excluded.daily_limit_atoms, updated_at = datetime('now')
+  `).bind(scopeKey, body.businessId, agentId, limitAtoms.toString()).run();
+  return json({
+    scope: agentId ? "agent" : "business",
+    businessId: body.businessId,
+    agentId,
+    dailyLimitUSDC: formatTokenAmount(limitAtoms, 6)
+  });
+}
+
+async function reconcileX402PaymentAdmin(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const body = await readJson(request);
+  if (!body || typeof body.reservationId !== "string") {
+    return json({ error: "invalid_request", message: "Provide reservationId." }, 400);
+  }
+  const row = await env.DB.prepare(`
+    SELECT r.id, r.status, r.receipt_tx, r.payment_wallet_address, r.amount_atoms,
+      c.id AS challenge_id, c.resource, c.pay_to, c.asset, c.fee_payer
+    FROM x402_payment_reservations r
+    JOIN x402_payment_challenges c ON c.id = r.challenge_id
+    WHERE r.id = ?
+  `).bind(body.reservationId).first<{
+    id: string; status: string; receipt_tx: string | null; payment_wallet_address: string;
+    amount_atoms: string; challenge_id: string; resource: string; pay_to: string; asset: string; fee_payer: string;
+  }>();
+  if (!row) return json({ error: "x402_reservation_not_found" }, 404);
+  if (row.status === "settled") return json({ reservationId: row.id, status: "settled", transaction: row.receipt_tx });
+  if (row.status !== "pending" || !row.receipt_tx) {
+    return json({ error: "x402_reservation_not_reconcilable", status: row.status, message: "A finalized receipt transaction is required before reconciliation." }, 409);
+  }
+  const requirement: HermesPaymentRequirement = {
+    scheme: "exact", network: "solana", maxAmountRequired: row.amount_atoms,
+    resource: row.resource, payTo: row.pay_to, asset: row.asset, feePayer: row.fee_payer, maxTimeoutSeconds: 60
+  };
+  const verification = await verifyX402Settlement(
+    env,
+    { transaction: row.receipt_tx, network: "solana" },
+    requirement,
+    row.payment_wallet_address
+  );
+  if (verification.pending) return json({ reservationId: row.id, status: "pending", message: verification.reason }, 202);
+  if (!verification.verified) return json({ reservationId: row.id, status: "pending", error: "x402_settlement_mismatch", message: verification.reason }, 409);
+  await env.DB.prepare(
+    "UPDATE x402_payment_reservations SET status = 'settled', settled_at = datetime('now') WHERE id = ? AND status = 'pending'"
+  ).bind(row.id).run();
+  await env.DB.prepare(
+    "UPDATE x402_payment_challenges SET status = 'settled' WHERE id = ? AND status = 'reserved'"
+  ).bind(row.challenge_id).run();
+  return json({ reservationId: row.id, status: "settled", transaction: row.receipt_tx });
+}
+
 async function proxyHermes(
   request: Request,
   path: string,
   payload: Record<string, unknown>,
-  extraHeaders: Record<string, string> = {}
+  extraHeaders: Record<string, string> = {},
+  x402Context?: X402ProxyContext
 ): Promise<Response> {
-  const headers = new Headers({ "content-type": "application/json" });
   const payment = request.headers.get("x-payment");
   const paymentSignature = request.headers.get("payment-signature");
+  if (paymentSignature) {
+    return json({ error: "unsupported_x402_version", message: "Hermes requires its documented V1 X-PAYMENT envelope." }, 400);
+  }
+  if (payment && !x402Context) return json({ error: "x402_budget_context_missing" }, 500);
+
+  let paymentReservation: { reservationId: string; challenge: X402ChallengeRow } | null = null;
+  if (payment && x402Context) {
+    const reserved = await reserveX402Payment(request, x402Context);
+    if (reserved instanceof Response) return reserved;
+    paymentReservation = reserved;
+    if (!paymentReservation) return json({ error: "x402_payment_not_reserved" }, 500);
+  }
+
+  const headers = new Headers({ "content-type": "application/json" });
   if (payment) headers.set("X-PAYMENT", payment);
   if (paymentSignature) headers.set("PAYMENT-SIGNATURE", paymentSignature);
 
@@ -1893,6 +2220,8 @@ async function proxyHermes(
       signal: AbortSignal.timeout(12_000), redirect: "error"
     });
   } catch {
+    // A timeout after forwarding a payment is ambiguous. Keep its budget reservation
+    // pending rather than incorrectly making the same daily allowance available again.
     return json({ error: "swap_provider_unavailable", message: "Hermes did not respond within the allowed time." }, 504);
   }
 
@@ -1926,6 +2255,7 @@ async function proxyHermes(
   const responseBody = new Uint8Array(total);
   let offset = 0;
   for (const chunk of chunks) { responseBody.set(chunk, offset); offset += chunk.byteLength; }
+  const responseText = new TextDecoder().decode(responseBody);
 
   const responseHeaders = new Headers({
     "content-type": upstream.headers.get("content-type") ?? "application/json",
@@ -1938,14 +2268,67 @@ async function proxyHermes(
   }
   for (const [name, value] of Object.entries(extraHeaders)) responseHeaders.set(name, value);
 
-  if (upstream.status === 200 && (path === "/v1/swap/quote" || path === "/v1/swap/build-tx")) {
-    const receiptHeader = upstream.headers.get("x-payment-response") ?? upstream.headers.get("payment-response");
-    let receipt: { success?: boolean } | null = null;
-    try { if (receiptHeader) receipt = JSON.parse(atob(receiptHeader)) as { success?: boolean }; } catch { receipt = null; }
-    if (!receipt?.success) {
-      return json({ error: "swap_payment_receipt_missing_or_invalid", message: "Hermes returned HTTP 200 without a successful x402 settlement receipt. The response was not accepted." }, 502);
-    }
+  if (upstream.status === 402 && x402Context) {
+    await storeX402Challenge(x402Context, path, responseText);
   }
+
+  if (paymentReservation && x402Context) {
+    const receiptHeader = upstream.headers.get("x-payment-response") ?? upstream.headers.get("payment-response");
+    if (receiptHeader) {
+      const receipt = parseHermesPaymentReceipt(receiptHeader);
+      if (!receipt) {
+        return json({ error: "x402_receipt_invalid", message: "Hermes returned a receipt that could not be safely reconciled. The budget remains reserved pending review." }, 502);
+      }
+      await x402Context.env.DB.prepare(
+        "UPDATE x402_payment_reservations SET receipt_tx = ? WHERE id = ? AND status = 'pending' AND (receipt_tx IS NULL OR receipt_tx = ?)"
+      ).bind(receipt.transaction, paymentReservation.reservationId, receipt.transaction).run();
+      const requirement: HermesPaymentRequirement = {
+        scheme: "exact",
+        network: "solana",
+        maxAmountRequired: paymentReservation.challenge.amount_atoms,
+        resource: paymentReservation.challenge.resource,
+        payTo: paymentReservation.challenge.pay_to,
+        asset: paymentReservation.challenge.asset,
+        feePayer: paymentReservation.challenge.fee_payer,
+        maxTimeoutSeconds: 60
+      };
+      const verification = await verifyX402Settlement(
+        x402Context.env,
+        receipt,
+        requirement,
+        x402Context.paymentWalletAddress
+      );
+      if (verification.pending) {
+        return json({ error: "x402_settlement_pending", message: verification.reason, paymentReservationId: paymentReservation.reservationId }, 202);
+      }
+      if (!verification.verified) {
+        return json({ error: "x402_settlement_mismatch", message: verification.reason, paymentReservationId: paymentReservation.reservationId }, 502);
+      }
+      await x402Context.env.DB.prepare(
+        "UPDATE x402_payment_reservations SET status = 'settled', settled_at = datetime('now') WHERE id = ? AND status = 'pending'"
+      ).bind(paymentReservation.reservationId).run();
+      await x402Context.env.DB.prepare(
+        "UPDATE x402_payment_challenges SET status = 'settled' WHERE id = ? AND status = 'reserved'"
+      ).bind(paymentReservation.challenge.id).run();
+    } else if (upstream.status === 200 || upstream.status === 504) {
+      // Missing receipt on a nominal success, or an ambiguous timeout: retain the hold.
+      if (upstream.status === 200) {
+        return json({ error: "swap_payment_receipt_missing_or_invalid", message: "Hermes returned HTTP 200 without a successful x402 settlement receipt. The payment remains reserved until reconciled." }, 502);
+      }
+    } else {
+      // Hermes documents failed upstream calls as uncharged; absent a receipt, release
+      // the hold and require a fresh challenge before another payment attempt.
+      await x402Context.env.DB.prepare(
+        "UPDATE x402_payment_reservations SET status = 'released' WHERE id = ? AND status = 'pending' AND receipt_tx IS NULL"
+      ).bind(paymentReservation.reservationId).run();
+      await x402Context.env.DB.prepare(
+        "UPDATE x402_payment_challenges SET status = 'expired' WHERE id = ? AND status = 'reserved'"
+      ).bind(paymentReservation.challenge.id).run();
+    }
+  } else if (upstream.status === 200 && (path === "/v1/swap/quote" || path === "/v1/swap/build-tx")) {
+    return json({ error: "swap_payment_receipt_missing_or_untracked", message: "A successful paid Hermes response must have a tracked, reconciled x402 payment." }, 502);
+  }
+
   return new Response(responseBody, { status: upstream.status, headers: responseHeaders });
 }
 
@@ -1965,15 +2348,20 @@ async function requestSwapQuote(request: Request, env: Env): Promise<Response> {
     return json({ error: "invalid_slippage", message: "slippageBps must be an integer from 1 to 300." }, 400);
   }
 
-  const upstream = await proxyHermes(request, "/v1/swap/quote", {
+  const hermesPayload = {
     input: { token: SOL_MINT, amount: context.sourceAtoms.toString(), chainKey: "sol" },
     output: { token: USDC_MINT, chainKey: "sol" },
     userAddress: context.userAddress,
     slippageBps
-  }, {
+  };
+  const x402Context: X402ProxyContext = {
+    env, agent, paymentWalletAddress: context.paymentWalletAddress,
+    requestHash: await sha256(context.operationId + "\n" + context.paymentWalletAddress + "\n/v1/swap/quote\n" + JSON.stringify(hermesPayload))
+  };
+  const upstream = await proxyHermes(request, "/v1/swap/quote", hermesPayload, {
     "X-Liquidity-Operation-ID": context.operationId,
     "X-Liquidity-Required-USDC": formatTokenAmount(context.shortfallAtoms, 6)
-  });
+  }, x402Context);
 
   if (upstream.status !== 200) return upstream;
 
@@ -2179,16 +2567,21 @@ async function prepareSwapTransaction(request: Request, env: Env): Promise<Respo
     }
   }
 
-  const upstream = await proxyHermes(request, "/v1/swap/build-tx", {
+  const hermesPayload = {
     provider,
     userAddress: context.userAddress,
     chainKey: "sol",
     quoteResponse: providerQuote
-  }, {
+  };
+  const x402Context: X402ProxyContext = {
+    env, agent, paymentWalletAddress: context.paymentWalletAddress,
+    requestHash: await sha256(context.operationId + "\n" + context.paymentWalletAddress + "\n/v1/swap/build-tx\n" + JSON.stringify(hermesPayload))
+  };
+  const upstream = await proxyHermes(request, "/v1/swap/build-tx", hermesPayload, {
     "X-Liquidity-Operation-ID": context.operationId,
     "X-Liquidity-Required-USDC": formatTokenAmount(context.shortfallAtoms, 6),
     "X-Liquidity-Source-Reserved-SOL": context.sourceAmount
-  });
+  }, x402Context);
 
   if (upstream.status !== 200) return upstream;
 
@@ -3788,6 +4181,11 @@ export default {
     await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE expires_at <= datetime('now')").run();
     await env.DB.prepare("DELETE FROM telegram_processed_updates WHERE processed_at < datetime('now', '-30 days')").run();
     await env.DB.prepare("DELETE FROM api_rate_limits WHERE updated_at < datetime('now', '-2 days')").run();
+    await env.DB.prepare(`
+      DELETE FROM x402_payment_challenges
+      WHERE status = 'expired' AND created_at < datetime('now', '-30 days')
+        AND NOT EXISTS (SELECT 1 FROM x402_payment_reservations r WHERE r.challenge_id = x402_payment_challenges.id)
+    `).run();
     await deliverTelegramOutbox(env);
   },
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -3839,6 +4237,8 @@ export default {
     if (request.method === "GET" && url.pathname === "/v1/admin/workspace") return getBusinessWorkspace(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/operations") return getAdminBusinessOperations(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/forecast") return getAdminBusinessForecast(request, env);
+    if ((request.method === "GET" || request.method === "POST") && url.pathname === "/v1/admin/x402/budgets") return manageX402Budgets(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/admin/x402/reconcile") return reconcileX402PaymentAdmin(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/bootstrap") return bootstrapBusiness(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/agents") return provisionAgent(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/agents") return listBusinessAgents(request, env);
