@@ -485,3 +485,42 @@ it("returns all active agents' obligations in the business forecast", async () =
   expect(body.truncated).toBe(false);
   expect(queries.filter(q => q.sql.includes("business_id = ?")).every(q => q.values.includes("biz_multi"))).toBe(true);
 });
+
+
+it("returns approval, execution and verified settlement as separate operation states", async () => {
+  const row = {
+    id: "op_settled", agent_id: "agent_a", agent_name: "Agent A", task_id: "task_settled",
+    network: "solana", token: "USDC", amount_atoms: "10000000", purpose: "Approved conversion",
+    status: "conversion_settled", action: "conversion_required", available_atoms: "2000000",
+    shortfall_atoms: "8000000", source_wallet_id: "wallet_a", transaction_hash: "solana_signature",
+    received_output_atoms: "9500000", settlement_note: "Verified finalized output",
+    created_at: "2026-11-12 10:00:00", approval_decision: "approved",
+    approval_decided_at: "2026-11-12 09:55:00", approval_telegram_user_id: "telegram-user-42",
+    has_active_reservation: 0
+  };
+  const db = {
+    prepare(sql: string) {
+      let values: unknown[] = [];
+      const statement = {
+        bind(...args: unknown[]) { values = args; return statement; },
+        async first<T>() { return sql.includes("FROM businesses") ? { id: values[0] } as T : null; },
+        async all<T>() {
+          if (sql.includes("COUNT(*) AS count FROM operations")) return { results: [{ status: "conversion_settled", count: 1 }] as T[] };
+          if (sql.includes("FROM operations o")) return { results: [row] as unknown as T[] };
+          return { results: [] as T[] };
+        },
+        async run() { return { success: true, meta: { changes: 0 } }; }
+      };
+      return statement;
+    }
+  };
+  const env = { DB: db as unknown as D1Database, ADMIN_BOOTSTRAP_TOKEN: token } as TestEnv;
+  const response = await worker.fetch(new Request("https://nerith.test/v1/admin/operations?businessId=biz_settled", { headers: bearer }), env);
+  expect(response.status).toBe(200);
+  const body = await response.json() as Record<string, any>;
+  expect(body.operations[0]).toMatchObject({
+    approval: { state: "approved", decidedByTelegramUserId: "telegram-user-42" },
+    execution: { transactionHash: "solana_signature" },
+    settlement: { receivedUSDC: "9.5", note: "Verified finalized output", status: "conversion_settled" }
+  });
+});
