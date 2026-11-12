@@ -538,6 +538,15 @@ describe("browser page script syntax", () => {
       const match = html.match(/<script>([\s\S]*?)<\/script>/);
       expect(match).not.toBeNull();
       expect(() => new Function(match![1])).not.toThrow();
+      if (path === "/dashboard") {
+        for (const breakpoint of [1100, 900, 560, 360]) {
+          expect(html).toContain("@media(max-width:" + breakpoint + "px)");
+        }
+        expect(html).toContain('.table-wrap{width:100%;overflow-x:auto');
+        expect(html).toContain("drawer-backdrop.open");
+        expect(html).toContain('id="drawerBackdrop"');
+        expect(html).toContain("prefers-reduced-motion:reduce");
+      }
     }
   });
 });
