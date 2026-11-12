@@ -131,27 +131,29 @@ function settledTransaction(overrides: Record<string, unknown> = {}) {
 describe("on-chain Hermes payment receipt verification", () => {
   const req = parseHermesPaymentRequirement(JSON.stringify(requirement), "/v1/swap/quote")!;
 
-  it("requires the exact USDC transfer, payer, recipient and advertised facilitator", async () => {
-    const { verifyHermesPaymentTransaction } = await import("../src/x402");
+  it("requires the exact USDC transfer, payer, recipient and advertised facilitator", () => {
     expect(verifyHermesPaymentTransaction(settledTransaction(), req, payerAddress).verified).toBe(true);
   });
 
-  it("rejects a payment amount different from the challenge", async () => {
-    const { verifyHermesPaymentTransaction } = await import("../src/x402");
+  it("rejects a payment amount different from the challenge", () => {
     const tx = settledTransaction() as any;
     tx.transaction.message.instructions[0].parsed.info.tokenAmount.amount = "3008";
     expect(verifyHermesPaymentTransaction(tx, req, payerAddress).verified).toBe(false);
   });
 
-  it("rejects a different recipient or facilitator", async () => {
-    const { verifyHermesPaymentTransaction } = await import("../src/x402");
+  it("rejects a different recipient or facilitator", () => {
     const tx = settledTransaction() as any;
     tx.transaction.message.accountKeys[0].pubkey = "OtherFeePayer111111111111111111111111111";
     expect(verifyHermesPaymentTransaction(tx, req, payerAddress).verified).toBe(false);
   });
 
-  it("rejects a payer that did not sign", async () => {
-    const { verifyHermesPaymentTransaction } = await import("../src/x402");
+  it("rejects a transfer whose destination token account is not owned by payTo", () => {
+    const tx = settledTransaction() as any;
+    tx.meta.postTokenBalances[0].owner = payerAddress;
+    expect(verifyHermesPaymentTransaction(tx, req, payerAddress).verified).toBe(false);
+  });
+
+  it("rejects a payer that did not sign", () => {
     const tx = settledTransaction() as any;
     tx.transaction.message.accountKeys[1].signer = false;
     expect(verifyHermesPaymentTransaction(tx, req, payerAddress).verified).toBe(false);
