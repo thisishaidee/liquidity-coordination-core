@@ -373,6 +373,39 @@ it("serves the redesigned landing page without hardcoded example balances", asyn
 });
 
 
+describe("public legal pages and shared footer navigation", () => {
+  it("serves the privacy overview with no external scripts or data collection forms", async () => {
+    const { env } = makeEnv();
+    const response = await worker.fetch(new Request("https://nerith.test/privacy"), env);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    expect(response.headers.get("content-security-policy")).toContain("default-src 'none'");
+    const html = await response.text();
+    expect(html).toContain("Information processed");
+    expect(html).toContain("Agent API credentials");
+    expect(html).toContain("does not sell personal information");
+    expect(html).toContain('href="/terms"');
+    expect(html).not.toContain("<script");
+  });
+
+  it("serves terms covering custody, signing and third-party risks", async () => {
+    const { env } = makeEnv();
+    const response = await worker.fetch(new Request("https://nerith.test/terms"), env);
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain("No custody or signing service");
+    expect(html).toContain("business-controlled signer");
+    expect(html).toContain("Third-party services and networks");
+    expect(html).toContain('href="/privacy"');
+  });
+
+  it("returns 404 for unknown legal routes", async () => {
+    const { env } = makeEnv();
+    const response = await worker.fetch(new Request("https://nerith.test/legal"), env);
+    expect(response.status).toBe(404);
+  });
+});
+
 it("marks stale forecast balances and resulting shortfalls as indicative", async () => {
   const queries: QueryRecord[] = [];
   const db = {
