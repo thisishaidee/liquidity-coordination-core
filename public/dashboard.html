@@ -183,6 +183,22 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     if(!response.ok) throw new Error(body.message || body.error || ("request_failed_"+response.status));
     return body;
   }
+  function requireArray(payload,key,label) {
+    if(!payload || !Array.isArray(payload[key])) throw new Error("invalid_"+label+"_response");
+    return payload[key];
+  }
+  function validateForecast(payload) {
+    if(!payload || !payload.summary || !Array.isArray(payload.obligations) || !Array.isArray(payload.wallets)) {
+      throw new Error("invalid_forecast_response");
+    }
+    return payload;
+  }
+  function validateOperations(payload) {
+    if(!payload || !Array.isArray(payload.operations) || !payload.statusCounts || typeof payload.statusCounts!=="object" || Array.isArray(payload.statusCounts)) {
+      throw new Error("invalid_operations_response");
+    }
+    return payload;
+  }
   function setPage(page) {
     document.querySelectorAll(".page").forEach(el=>el.classList.toggle("active",el.id==="page-"+page));
     document.querySelectorAll("[data-page]").forEach(el=>el.classList.toggle("active",el.dataset.page===page));
@@ -293,7 +309,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     const params=new URLSearchParams({businessId:state.businessId,limit:"50"});
     if(state.operationStatus)params.set("status",state.operationStatus);
     if(append&&state.nextCursor)params.set("cursor",state.nextCursor);
-    const result=await api("/v1/admin/operations?"+params.toString());
+    const result=validateOperations(await api("/v1/admin/operations?"+params.toString()));
     state.operations=append?state.operations.concat(result.operations):result.operations;
     state.nextCursor=result.nextCursor;
     state.operationCounts=result.statusCounts;
@@ -312,19 +328,21 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       $("topBusiness").textContent=(workspace.business?.name||"Business")+" · "+state.businessId;
       $("sideBusiness").textContent=state.businessId;
       const requests=[
-        ["Agents",api("/v1/admin/agents?businessId="+id),value=>{state.agents=value.agents||[];}],
-        ["Wallets",api("/v1/admin/wallets?businessId="+id),value=>{state.wallets=value.wallets||[];}],
-        ["Telegram connections",api("/v1/admin/telegram/connections?businessId="+id),value=>{state.telegram=value.connections||[];}],
-        ["Forecast",api("/v1/admin/forecast?businessId="+id),value=>{state.forecast=value;}],
-        ["Operations",api("/v1/admin/operations?"+operationParams.toString()),value=>{state.operations=value.operations||[];state.nextCursor=value.nextCursor;state.operationCounts=value.statusCounts||{};}]
+        ["Agents",api("/v1/admin/agents?businessId="+id),value=>{state.agents=requireArray(value,"agents","agents");}],
+        ["Wallets",api("/v1/admin/wallets?businessId="+id),value=>{state.wallets=requireArray(value,"wallets","wallets");if(state.wallets.some(wallet=>!Array.isArray(wallet.balances)))throw new Error("invalid_wallet_balances_response");}],
+        ["Telegram connections",api("/v1/admin/telegram/connections?businessId="+id),value=>{state.telegram=requireArray(value,"connections","telegram_connections");}],
+        ["Forecast",api("/v1/admin/forecast?businessId="+id),value=>{state.forecast=validateForecast(value);}],
+        ["Operations",api("/v1/admin/operations?"+operationParams.toString()),value=>{const data=validateOperations(value);state.operations=data.operations;state.nextCursor=data.nextCursor;state.operationCounts=data.statusCounts;}]
       ];
       const results=await Promise.allSettled(requests.map(item=>item[1]));
       const failed=[];
       state.loadErrors={};
       results.forEach((result,index)=>{
         const [label,,apply]=requests[index];
-        if(result.status==="fulfilled")apply(result.value);
-        else {state.loadErrors[label]=true;failed.push({label,error:result.reason});}
+        if(result.status==="fulfilled") {
+          try { apply(result.value); }
+          catch(error) { state.loadErrors[label]=true;failed.push({label,error}); }
+        } else {state.loadErrors[label]=true;failed.push({label,error:result.reason});}
       });
       if(failed.some(item=>String(item.error?.message||item.error)==="unauthorized")){
         $("app").hidden=true;$("access").hidden=false;
