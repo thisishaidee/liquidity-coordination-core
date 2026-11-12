@@ -82,7 +82,7 @@ describe("finalized SOL source debit reconciliation", () => {
     tx.meta!.preBalances!.unshift(5_000_000);
     tx.meta!.postBalances!.unshift(4_995_000);
     tx.meta!.preBalances![1] = 1_000_000_000;
-    tx.meta!.postBalances![1] = 897_955_720;
+    tx.meta!.postBalances![1] = 897_960_720;
     tx.meta!.preBalances![2] = 0;
     tx.meta!.postBalances![2] = 2_039_280;
     tx.meta!.postTokenBalances![0].accountIndex = 2;
