@@ -125,7 +125,7 @@ The system is **not ready to be represented as a fully secured multi-tenant prod
 Continue controlled internal testing. Do not claim audited, trustless, fully autonomous or production-ready funds execution. Close the two High findings around business authorization and source-debit settlement verification, implement rate limits and x402 spend budgets, then run the outstanding end-to-end tests before onboarding external businesses.
 
 
-## Follow-up hardening PR #29 (in verification; not yet deployed)
+## Follow-up hardening PR #29 (merged and deployed)
 
 The follow-up branch adds the following controls:
 
@@ -139,4 +139,11 @@ These are abuse and resource controls, not a complete x402 monetary budget. The 
 
 The SOL settlement verifier remains incomplete for exact source debit. It must parse the finalized Solana transaction's relevant native SOL transfers, fee payer, token-account creation/rent and any rent refunds, then compare net debit against the quoted source input plus evidenced costs. A guessed tolerance is unsafe.
 
-The PR is not production-ready until the latest head commit passes typecheck, tests and Wrangler dry-run, and the D1 migration is applied through the deployment workflow.
+PR #29 passed typecheck, tests and Wrangler dry-run; its production D1 migration and Worker deployment completed successfully in the main-branch workflow.
+
+
+## Follow-up settlement verification PR
+
+The settlement verifier now compares the registered operating wallet's finalized native SOL balance delta against the exact source reservation amount, any network fee paid by that wallet, and only evidenced rent for newly-created, still-open USDC/WSOL token accounts owned by that wallet. The verifier fails closed on incomplete balance metadata, signer mismatch, unexplained excess debit, or a debit that does not reconcile. Unit tests cover fee payer attribution, token-account rent evidence, excess debit, under-debit, wrong ownership, signer failure and incomplete metadata.
+
+This check is a net-debit reconciliation. It does not replace a full transaction-instruction policy audit or an end-to-end live swap test.
