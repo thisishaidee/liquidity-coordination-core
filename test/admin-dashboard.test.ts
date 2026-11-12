@@ -343,7 +343,7 @@ describe("business operations aggregation and dashboard route", () => {
     expect(html).toContain("Support / Privacy / Terms: not yet published");
     expect(html).toContain('true,"business"');
     expect(html).toContain('true,"agent"');
-    expect(html).toContain("Isolated by agent · not pooled");
+    expect(html).toContain("isolated by agent, not pooled");
     expect(html).toContain("let total=0n");
     expect(html).toContain("parseDecimalAtoms(balance[field],decimals)");
     expect(html).not.toContain("Number(balance[field]");
