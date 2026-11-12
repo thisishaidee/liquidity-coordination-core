@@ -55,7 +55,7 @@ a{color:inherit}.shell{max-width:1020px;margin:0 auto;padding:28px 24px 44px}.to
 <section id="telegramAccessSection" class="hidden">
 <div class="divider"></div>
 <h2>Telegram permissions</h2>
-<p class="sub">Every linked Telegram account starts as a viewer. Requesters can create liquidity requests. Approvers can create requests and independently review prepared operations. Viewers can only read business information. A requester cannot approve their own request. No Telegram role can sign transactions or move funds. A requester cannot approve their own Telegram-originated request. This permission does not sign transactions or move funds.</p>
+<p class="sub">Newly linked Telegram accounts start with Operator access: one account can create liquidity requests, review prepared operations, and manage its own requests. Google Authenticator is required to approve or reject a request created by that same account. Requester is a legacy create-only permission; upgrade it to Operator to use one account for the full workflow. Viewers can only read business information. No Telegram role can sign transactions or move funds.</p>
 <div class="btnrow"><button class="btn secondary" id="refreshTelegramAccess" type="button">Refresh Telegram access</button></div>
 <div id="telegramAccessList" class="keybox"></div>
 <div id="telegramAccessStatus" class="status"></div>
@@ -94,7 +94,7 @@ a{color:inherit}.shell{max-width:1020px;margin:0 auto;padding:28px 24px 44px}.to
 <div class="step"><div class="num">3</div><div><strong>Create your workspace</strong><p>Use the form with the same admin token configured in Cloudflare. The first agent key is only shown once.</p></div></div>
 <div class="step"><div class="num">4</div><div><strong>Link your private Telegram</strong><p>Configure the webhook, create an invitation and open it from your own private Telegram account. Group chats are not accepted.</p></div></div>
 </div>
-<div class="notice"><strong>Security boundary</strong><br>Requesters can create liquidity requests. Approvers can create requests and approve or reject requests submitted by someone else. Viewers can only read business information. Self-approval is blocked. Telegram never stores wallet keys and cannot sign, broadcast or transfer funds. Decisions are recorded against the exact operation. Telegram never stores wallet keys and cannot sign, broadcast or transfer funds.</div>
+<div class="notice"><strong>Security boundary</strong><br>Operators can create requests and review prepared operations from one Telegram account. If the same account created the request, Google Authenticator verification is required before the decision is recorded. Viewers can only read business information. Telegram never stores wallet keys and cannot sign, broadcast or move funds. Decisions are recorded against the exact operation.</div>
 </aside>
 </div>
 <footer class="footer"><span>NERITH · Liquidity coordination for autonomous agents</span><nav class="footerlinks" aria-label="Footer navigation"><a href="/">Website</a><a href="/app">Agent console</a><a href="/dashboard">Business dashboard</a><a href="/health">Service status</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/thisishaidee/liquidity-coordination-core" target="_blank" rel="noreferrer">GitHub</a></nav></footer>
@@ -146,7 +146,7 @@ async function loadTelegramAccess(){
       const select=document.createElement("select");
       select.setAttribute("aria-label","Telegram permission");
       select.style.cssText="border:1px solid var(--line);border-radius:7px;padding:9px;background:#fff;color:var(--ink);font:inherit;font-size:11px";
-      for(const [value,label] of [["viewer","Viewer · read only"],["requester","Requester · create requests"],["approver","Approver · create + review"]]){
+      for(const [value,label] of [["viewer","Viewer · read only"],["requester","Requester · legacy create only"],["approver","Operator · create + review"]]){
         const option=document.createElement("option");option.value=value;option.textContent=label;select.appendChild(option);
       }
       select.value=connection.permission;
