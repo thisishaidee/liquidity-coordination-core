@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   decodeBase32, decryptTotpSecret, encodeBase32, encryptTotpSecret,
-  generateTotpSecret, totpUri, verifyTotp
+  generateTotpSecret, totpUri, verifyTotp, verifyTotpStep
 } from "../src/telegram-totp";
 
 describe("Telegram authenticator security", () => {
@@ -21,6 +21,12 @@ describe("Telegram authenticator security", () => {
     const encrypted = await encryptTotpSecret("JBSWY3DPEHPK3PXP", "a-secure-worker-key-with-at-least-32-chars");
     expect(await decryptTotpSecret(encrypted, "a-secure-worker-key-with-at-least-32-chars")).toBe("JBSWY3DPEHPK3PXP");
     await expect(decryptTotpSecret(encrypted, "a-different-worker-key-with-at-least-32-chars")).rejects.toThrow();
+  });
+
+  it("matches the RFC 6238 SHA-1 six-digit test vector", async () => {
+    const secret = encodeBase32(new TextEncoder().encode("12345678901234567890"));
+    expect(await verifyTotp(secret, "287082", 59_000)).toBe(true);
+    expect(await verifyTotpStep(secret, "287082", 59_000)).toBe(1);
   });
 
   it("accepts only six-digit TOTP codes", async () => {
