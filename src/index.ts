@@ -1901,6 +1901,9 @@ async function storeX402Challenge(
   if (!requirement || BigInt(requirement.maxAmountRequired) > 1_000_000_000n) return;
   const id = "x4c_" + crypto.randomUUID().replaceAll("-", "");
   const expiresAt = new Date(Date.now() + requirement.maxTimeoutSeconds * 1000).toISOString();
+  await context.env.DB.prepare(
+    "UPDATE x402_payment_challenges SET status = 'expired' WHERE agent_id = ? AND request_hash = ? AND status = 'pending'"
+  ).bind(context.agent.id, context.requestHash).run();
   await context.env.DB.prepare(`
     INSERT INTO x402_payment_challenges
       (id, agent_id, business_id, request_hash, resource, amount_atoms, pay_to, asset, fee_payer, expires_at)
