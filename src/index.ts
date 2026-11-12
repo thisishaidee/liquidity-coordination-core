@@ -1,5 +1,6 @@
 import { dashboardHtml } from "./dashboard";
 import { businessDashboardHtml } from "./business-dashboard";
+import { pixelFieldSvg } from "./pixel-field";
 import { landingHtml } from "./landing";
 import { controlHtml } from "./control";
 import {
@@ -3436,6 +3437,15 @@ export default {
   },
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/pixel-field.svg") {
+      return new Response(pixelFieldSvg, {
+        headers: {
+          "content-type": "image/svg+xml; charset=utf-8",
+          "cache-control": "public, max-age=3600",
+          "x-content-type-options": "nosniff"
+        }
+      });
+    }
     if (request.method === "GET" && url.pathname === "/health") {
       try {
         const database = await env.DB.prepare("SELECT 1 AS ok").first<{ ok: number }>();
