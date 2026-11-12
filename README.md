@@ -12,7 +12,7 @@ NERITH is an API-first infrastructure layer that anticipates agent funding needs
 
 NERITH keeps business custody in the business's hands. Agents use scoped API credentials; wallet signing remains with the business-controlled signer. The platform coordinates liquidity and prepares transactions, but does not hold private keys or autonomously move funds.
 
-## Current API
+## Product and security documentation\n\n- [Product and architecture overview](docs/PRODUCT_OVERVIEW.md)\n- [Static security audit (12 November 2026)](docs/SECURITY_AUDIT_2026-11-12.md)\n\n## Current API
 
 | Method | Route | Purpose |
 |---|---|---|
@@ -74,7 +74,7 @@ This is still an early backend, not a production funds executor.
 - Swap.io quote and unsigned transaction preparation are proxied through x402. The caller's x402 client signs the separate USDC API payment; this Worker never receives wallet private keys. The caller must still sign the returned swap transaction locally.
 - The manual admin balance endpoint accepts operator-entered snapshots for controlled testing only. The admin sync endpoint reads SOL and USDC balances from Solana RPC at confirmed commitment. Never accept balances from agent requests.
 - A scheduled Worker runs reservation expiry cleanup every minute. The admin expiry endpoint is also available for manual reconciliation. Verify the cron trigger is active after deployment.
-- API-key rotation, user login, business-level dashboard authorization and rate limiting remain future work.
+- Agent API-key rotation is implemented. User login, business-level dashboard authorization and rate limiting remain future work.
 - No wallet private keys or signing secrets belong in this Worker.
 
 The admin bootstrap token must be configured as a Cloudflare secret:
