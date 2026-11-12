@@ -365,3 +365,64 @@ it("serves the redesigned landing page without hardcoded example balances", asyn
   expect(html).not.toContain("10 USDC required");
   expect(html).not.toContain("2 USDC available");
 });
+
+
+it("marks stale forecast balances and resulting shortfalls as indicative", async () => {
+  const queries: QueryRecord[] = [];
+  const db = {
+    prepare(sql: string) {
+      let values: unknown[] = [];
+      const statement = {
+        bind(...args: unknown[]) { values = args; return statement; },
+        async first<T>() {
+          queries.push({ sql, values });
+          if (sql.includes("FROM businesses")) return { id: values[0] } as T;
+          return null;
+        },
+        async all<T>() {
+          queries.push({ sql, values });
+          if (sql.includes("FROM wallets w") && sql.includes("wallet_balances")) return {
+            results: [{
+              wallet_id: "w_stale", address: "So11111111111111111111111111111111111111112",
+              scope: "business", agent_id: null, token: "USDC", confirmed_atoms: "90000000",
+              reserved_atoms: "10000000", observed_at: "2020-01-01T00:00:00.000Z"
+            }] as T[]
+          };
+          if (sql.includes("FROM liquidity_obligations o")) return {
+            results: [{
+              agent_id: "agent_a", agent_name: "Agent A", task_id: "task_stale",
+              amount_atoms: "5000000", due_at: "2026-11-13T10:00:00.000Z",
+              purpose: "Stale balance fixture", can_use_business_treasury: 1
+            }] as T[]
+          };
+          return { results: [] as T[] };
+        },
+        async run() { return { success: true, meta: { changes: 0 } }; }
+      };
+      return statement;
+    }
+  };
+  const env = { DB: db as unknown as D1Database, ADMIN_BOOTSTRAP_TOKEN: token } as TestEnv;
+  const response = await worker.fetch(new Request("https://nerith.test/v1/admin/forecast?businessId=biz_stale", { headers: bearer }), env);
+  expect(response.status).toBe(200);
+  const body = await response.json() as Record<string, any>;
+  expect(body.businessBalanceDataFresh).toBe(false);
+  expect(body.wallets).toEqual([{
+    walletId: "w_stale",
+    address: "So11111111111111111111111111111111111111112",
+    scope: "business",
+    agentId: null,
+    usdcFresh: false,
+    solFresh: false
+  }]);
+  expect(body.obligations[0]).toMatchObject({
+    status: "blocked",
+    availableUSDC: "0",
+    shortfallUSDC: "5"
+  });
+  expect(body.confidence).toBe("not_available");
+  const walletQuery = queries.find(q => q.sql.includes("FROM wallets w") && q.sql.includes("wallet_balances"));
+  expect(walletQuery?.values).toEqual(["biz_stale"]);
+  expect(walletQuery?.sql).toContain("w.purpose = 'operating'");
+  expect(walletQuery?.sql).not.toContain("api_payment");
+});
