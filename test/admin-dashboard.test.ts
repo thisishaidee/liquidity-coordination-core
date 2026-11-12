@@ -336,3 +336,12 @@ describe("business operations aggregation and dashboard route", () => {
     expect(html).toContain("x402 payment reserve");
   });
 });
+
+
+it("serves the shared pixel field as a same-origin SVG asset", async () => {
+  const { env } = makeEnv();
+  const response = await worker.fetch(new Request("https://nerith.test/pixel-field.svg"), env);
+  expect(response.status).toBe(200);
+  expect(response.headers.get("content-type")).toContain("image/svg+xml");
+  expect(await response.text()).toContain("<svg");
+});
