@@ -524,6 +524,67 @@ async function handleTelegramCommand(
       : "This Telegram connection is no longer active. Reconnect it before enabling authenticator approval.");
     return;
   }
+  if (command === "/confirmapproval") {
+    const code = rawText.trim().match(/^\\/confirmapproval\\s+(\\d{6})$/i)?.[1] ?? "";
+    if (!code || !env.TELEGRAM_TOTP_ENCRYPTION_KEY) {
+      await sendTelegramMessage(env, chatId, "Send /confirmapproval followed by the current six-digit Google Authenticator code.");
+      return;
+    }
+    const pending = await env.DB.prepare("SELECT id, operation_id, decision, snapshot_hash FROM telegram_pending_approvals WHERE business_id = ? AND telegram_chat_id = ? AND telegram_user_id = ? AND julianday(expires_at) > julianday('now') ORDER BY created_at DESC LIMIT 1")
+      .bind(businessId, chatId, userId).first<{ id: string; operation_id: string; decision: string; snapshot_hash: string }>();
+    if (!pending) {
+      await sendTelegramMessage(env, chatId, "No active approval challenge. Run /review and choose the request again.");
+      return;
+    }
+    const auth = await env.DB.prepare("SELECT totp_secret_enc FROM telegram_connections WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? AND status = 'active' AND permission = 'approver' AND totp_enabled_at IS NOT NULL LIMIT 1")
+      .bind(businessId, chatId, userId).first<{ totp_secret_enc: string | null }>();
+    if (!auth?.totp_secret_enc) {
+      await sendTelegramMessage(env, chatId, "Google Authenticator is not enabled. Send /setupauth first.");
+      return;
+    }
+    const secret = await decryptTotpSecret(auth.totp_secret_enc, env.TELEGRAM_TOTP_ENCRYPTION_KEY);
+    const step = await verifyTotpStep(secret, code);
+    if (step === null) {
+      await env.DB.prepare("UPDATE telegram_pending_approvals SET attempts = attempts + 1 WHERE id = ?").bind(pending.id).run();
+      const attempts = await env.DB.prepare("SELECT attempts FROM telegram_pending_approvals WHERE id = ? LIMIT 1").bind(pending.id).first<{ attempts: number }>();
+      if ((attempts?.attempts ?? 0) >= 5) await env.DB.prepare("DELETE FROM telegram_pending_approvals WHERE id = ?").bind(pending.id).run();
+      await sendTelegramMessage(env, chatId, (attempts?.attempts ?? 0) >= 5
+        ? "Five incorrect codes. This approval challenge was cancelled; run /review to start again."
+        : "That code is incorrect or expired. Try the current six-digit code.");
+      return;
+    }
+    const consumed = await env.DB.prepare("UPDATE telegram_connections SET last_totp_step = ? WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? AND status = 'active' AND (last_totp_step IS NULL OR last_totp_step < ?)")
+      .bind(step, businessId, chatId, userId, step).run();
+    if ((consumed.meta?.changes ?? 0) !== 1) {
+      await sendTelegramMessage(env, chatId, "That authenticator code has already been used. Wait for the next code.");
+      return;
+    }
+    const origin = await env.DB.prepare("SELECT telegram_chat_id, telegram_user_id FROM telegram_request_origins WHERE operation_id = ? LIMIT 1")
+      .bind(pending.operation_id).first<{ telegram_chat_id: string; telegram_user_id: string }>();
+    if (origin?.telegram_chat_id !== chatId || origin?.telegram_user_id !== userId) {
+      await env.DB.prepare("DELETE FROM telegram_pending_approvals WHERE id = ?").bind(pending.id).run();
+      await sendTelegramMessage(env, chatId, "This approval challenge is no longer valid for this requester.");
+      return;
+    }
+    const details = await telegramOperationSnapshot(env, pending.operation_id, businessId);
+    const eligible = Boolean(details && details.operation.status === "reserved" && details.operation.action === "direct_fulfillment" &&
+      details.snapshotHash === pending.snapshot_hash && details.reservations.some(item => item.status === "active" && Date.parse(item.expires_at) > Date.now()));
+    if (!eligible || !details) {
+      await env.DB.prepare("DELETE FROM telegram_pending_approvals WHERE id = ?").bind(pending.id).run();
+      await sendTelegramMessage(env, chatId, "Request details or reservation changed. Run /review again.");
+      return;
+    }
+    const inserted = await env.DB.prepare("INSERT OR IGNORE INTO telegram_operation_approvals (id, business_id, operation_id, decision, snapshot_hash, telegram_chat_id, telegram_user_id) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind("tap_" + crypto.randomUUID().replaceAll("-", ""), businessId, pending.operation_id, pending.decision, pending.snapshot_hash, chatId, userId).run();
+    await env.DB.prepare("DELETE FROM telegram_pending_approvals WHERE id = ?").bind(pending.id).run();
+    if ((inserted.meta?.changes ?? 0) !== 1) {
+      await sendTelegramMessage(env, chatId, "A decision has already been recorded for this request.");
+      return;
+    }
+    await notifyBusiness(env, businessId, "A Telegram operator " + pending.decision + " their own liquidity request " + pending.operation_id + " using Google Authenticator. No transaction was signed, broadcast or transferred.");
+    await sendTelegramMessage(env, chatId, "Request " + pending.decision + ". Authenticator verification succeeded. The decision is recorded; no transaction was signed, broadcast or transferred.");
+    return;
+  }
   if (command === "/newrequest") {
     if (!canCreateTelegramRequest(connection.permission)) {
       await sendTelegramMessage(env, chatId, "Request creation requires Requester or Approver access. Ask your business administrator to update your Telegram permissions.");
