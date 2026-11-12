@@ -12,7 +12,12 @@ NERITH is an API-first infrastructure layer that anticipates agent funding needs
 
 NERITH keeps business custody in the business's hands. Agents use scoped API credentials; wallet signing remains with the business-controlled signer. The platform coordinates liquidity and prepares transactions, but does not hold private keys or autonomously move funds.
 
-## Product and security documentation\n\n- [Product and architecture overview](docs/PRODUCT_OVERVIEW.md)\n- [Static security audit (12 November 2026)](docs/SECURITY_AUDIT_2026-11-12.md)\n\n## Current API
+## Product and security documentation
+
+- [Product and architecture overview](docs/PRODUCT_OVERVIEW.md)
+- [Static security audit (12 November 2026)](docs/SECURITY_AUDIT_2026-11-12.md)
+
+## Current API
 
 | Method | Route | Purpose |
 |---|---|---|
