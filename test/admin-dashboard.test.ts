@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { Script } from "node:vm";
 import worker from "../src/index";
 
 type QueryRecord = { sql: string; values: unknown[] };
@@ -525,5 +527,17 @@ it("returns approval, execution and verified settlement as separate operation st
     approval: { state: "approved", decidedByTelegramUserId: "telegram-user-42" },
     execution: { transactionHash: "solana_signature" },
     settlement: { receivedUSDC: "9.5", note: "Verified finalized output", status: "conversion_settled" }
+  });
+});
+
+
+describe("browser page script syntax", () => {
+  it("parses the inline scripts for the landing page and business dashboard", () => {
+    for (const path of ["../public/landing.html", "../public/dashboard.html"]) {
+      const html = readFileSync(new URL(path, import.meta.url), "utf8");
+      const match = html.match(/<script>([\\s\\S]*?)<\\/script>/);
+      expect(match).not.toBeNull();
+      expect(() => new Script(match![1])).not.toThrow();
+    }
   });
 });
