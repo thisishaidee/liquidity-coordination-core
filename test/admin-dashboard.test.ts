@@ -634,6 +634,11 @@ describe("browser page script syntax", () => {
         expect(html).toContain("drawer-backdrop.open");
         expect(html).toContain('id="drawerBackdrop"');
         expect(html).toContain("prefers-reduced-motion:reduce");
+        expect(html).toContain("function requireArray(payload,key,label)");
+        expect(html).toContain("invalid_wallet_balances_response");
+        expect(html).toContain("invalid_forecast_response");
+        expect(html).toContain("invalid_operations_response");
+        expect(html).toContain("catch(error) { state.loadErrors[label]=true;failed.push({label,error}); }");
       }
     }
   });
