@@ -20,7 +20,7 @@ function transaction(overrides: Partial<SolanaSettlementTransaction> = {}): Sola
       err: null,
       fee: 5_000,
       preBalances: [1_000_000_000, 0],
-      postBalances: [899_995_000, 2_039_280],
+      postBalances: [897_955_720, 2_039_280],
       preTokenBalances: [],
       postTokenBalances: [{ accountIndex: 1, owner: WALLET, mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" }],
       innerInstructions: [{
@@ -82,7 +82,7 @@ describe("finalized SOL source debit reconciliation", () => {
     tx.meta!.preBalances!.unshift(5_000_000);
     tx.meta!.postBalances!.unshift(4_995_000);
     tx.meta!.preBalances![1] = 1_000_000_000;
-    tx.meta!.postBalances![1] = 899_997_039;
+    tx.meta!.postBalances![1] = 897_955_720;
     tx.meta!.preBalances![2] = 0;
     tx.meta!.postBalances![2] = 2_039_280;
     tx.meta!.postTokenBalances![0].accountIndex = 2;
