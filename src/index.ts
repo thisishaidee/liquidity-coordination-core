@@ -489,7 +489,7 @@ async function handleTelegramCommand(
     const encryptedSecret = await encryptTotpSecret(secret, key);
     await env.DB.prepare(`INSERT INTO telegram_totp_enrollments (business_id, chat_id, telegram_user_id, encrypted_secret, expires_at)
       VALUES (?, ?, ?, ?, datetime('now', '+10 minutes'))
-      ON CONFLICT(business_id, chat_id, telegram_user_id) DO UPDATE SET encrypted_secret = excluded.encrypted_secret, expires_at = excluded.expires_at, created_at = datetime('now')`)
+      ON CONFLICT(business_id, chat_id, telegram_user_id) DO UPDATE SET encrypted_secret = excluded.encrypted_secret, expires_at = excluded.expires_at, attempts = 0, created_at = datetime('now')`)
       .bind(businessId, chatId, userId, encryptedSecret).run();
     await sendTelegramMessage(env, chatId,
       "Set up Google Authenticator\n\nAdd an account manually using this key:\n" + secret +
@@ -512,7 +512,17 @@ async function handleTelegramCommand(
     const secret = await decryptTotpSecret(enrollment.encrypted_secret, key);
     const step = await verifyTotpStep(secret, code);
     if (step === null) {
-      await sendTelegramMessage(env, chatId, "That code is invalid or expired. Check your device time and try again.");
+      await env.DB.prepare("UPDATE telegram_totp_enrollments SET attempts = attempts + 1 WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?")
+        .bind(businessId, chatId, userId).run();
+      const attempts = await env.DB.prepare("SELECT attempts FROM telegram_totp_enrollments WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? LIMIT 1")
+        .bind(businessId, chatId, userId).first<{ attempts: number }>();
+      if ((attempts?.attempts ?? 0) >= 5) {
+        await env.DB.prepare("DELETE FROM telegram_totp_enrollments WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?")
+          .bind(businessId, chatId, userId).run();
+      }
+      await sendTelegramMessage(env, chatId, (attempts?.attempts ?? 0) >= 5
+        ? "Five incorrect codes. Authenticator enrollment was cancelled. Send /setupauth to begin again."
+        : "That code is invalid or expired. Check your device time and try again.");
       return;
     }
     const enabled = await env.DB.prepare("UPDATE telegram_connections SET totp_secret_enc = ?, totp_enabled_at = datetime('now'), last_totp_step = ? WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? AND status = 'active'")
