@@ -235,7 +235,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       const execution=o.execution?.transactionHash;
       const settlement=o.settlement||{};
       const settlementText=settlement.receivedUSDC?money(settlement.receivedUSDC)+" USDC":settlement.note||((o.status==="completed")?"Agent-reported":"Not verified");
-      return '<tr><td>'+escapeHtml(fmtDate(o.createdAt))+'</td><td><strong>'+escapeHtml(o.agentName)+'</strong><div class="muted">'+escapeHtml(o.taskId)+'</div></td><td>'+money(o.amount)+' '+escapeHtml(o.token)+'</td><td><span class="chip">'+escapeHtml(o.status.replaceAll("_"," "))+'</span><div class="muted">'+escapeHtml(o.action)+'</div></td><td><span class="chip '+(approval==="approved"?"lemon":approval==="pending"?"warn":"off")+'">'+escapeHtml(approval)+'</span>'+(o.approval?.decidedAt?'<div class="muted">'+escapeHtml(fmtDate(o.approval.decidedAt))+'</div>':'')+'</td><td>'+(execution?'<span class="mono">'+escapeHtml(execution.slice(0,9))+'…</span>':'<span class="muted">Not submitted</span>')+'</td><td>'+escapeHtml(settlementText)+'<div class="muted">'+escapeHtml(settlement.status||"")+'</div></td></tr>';
+      return '<tr><td>'+escapeHtml(fmtDate(o.createdAt))+'</td><td><strong>'+escapeHtml(o.agentName)+'</strong><div class="muted">'+escapeHtml(o.taskId)+'</div></td><td>'+escapeHtml(o.amount)+' '+escapeHtml(o.token)+'</td><td><span class="chip">'+escapeHtml(o.status.replaceAll("_"," "))+'</span><div class="muted">'+escapeHtml(o.action)+'</div></td><td><span class="chip '+(approval==="approved"?"lemon":approval==="pending"?"warn":"off")+'">'+escapeHtml(approval)+'</span>'+(o.approval?.decidedAt?'<div class="muted">'+escapeHtml(fmtDate(o.approval.decidedAt))+'</div>':'')+'</td><td>'+(execution?'<span class="mono">'+escapeHtml(execution.slice(0,9))+'…</span>':'<span class="muted">Not submitted</span>')+'</td><td>'+escapeHtml(settlementText)+'<div class="muted">'+escapeHtml(settlement.status||"")+'</div></td></tr>';
     }).join(""):'<tr><td colspan="7" class="empty">No operation records match this view.</td></tr>';
     $("loadMoreOperations").disabled=!state.nextCursor;
     $("loadMoreOperations").textContent=state.nextCursor?"Load more":"No more records";
@@ -263,13 +263,14 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     $("refreshBtn").disabled=true;
     try {
       const id=encodeURIComponent(state.businessId);
+      const operationParams=new URLSearchParams({businessId:state.businessId,limit:"50"}); if(state.operationStatus)operationParams.set("status",state.operationStatus);
       const results=await Promise.all([
         api("/v1/admin/workspace?businessId="+id),
         api("/v1/admin/agents?businessId="+id),
         api("/v1/admin/wallets?businessId="+id),
         api("/v1/admin/telegram/connections?businessId="+id),
         api("/v1/admin/forecast?businessId="+id),
-        api("/v1/admin/operations?businessId="+id+"&limit=50")
+        api("/v1/admin/operations?"+operationParams.toString())
       ]);
       [state.workspace,state.agents,state.wallets,state.telegram,state.forecast]=[results[0],results[1].agents||[],results[2].wallets||[],results[3].connections||[],results[4]];
       state.operations=results[5].operations||[];state.nextCursor=results[5].nextCursor;state.operationCounts=results[5].statusCounts||{};
