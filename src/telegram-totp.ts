@@ -78,13 +78,18 @@ async function totpAt(secret: string, counter: number): Promise<string> {
   return String(binary % 1_000_000).padStart(6, "0");
 }
 
-export async function verifyTotp(secret: string, code: string, now = Date.now()): Promise<boolean> {
-  if (!/^\d{6}$/.test(code)) return false;
+export async function verifyTotpStep(secret: string, code: string, now = Date.now()): Promise<number | null> {
+  if (!/^\d{6}$/.test(code)) return null;
   const counter = Math.floor(now / 30_000);
   for (const drift of [-1, 0, 1]) {
-    if (await totpAt(secret, counter + drift) === code) return true;
+    const step = counter + drift;
+    if (step >= 0 && await totpAt(secret, step) === code) return step;
   }
-  return false;
+  return null;
+}
+
+export async function verifyTotp(secret: string, code: string, now = Date.now()): Promise<boolean> {
+  return (await verifyTotpStep(secret, code, now)) !== null;
 }
 
 export function totpUri(secret: string, account: string, issuer = "NERITH"): string {
