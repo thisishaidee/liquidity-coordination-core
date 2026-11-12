@@ -731,14 +731,14 @@ async function handleTelegramApprovalCallback(env: Env, callback: {
     return;
   }
   const permission = await env.DB.prepare(
-    "SELECT id FROM telegram_connections WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? AND status = 'active' AND permission = 'approver' LIMIT 1"
-  ).bind(action.business_id, chatId, userId).first<{ id: string }>();
+    "SELECT id, permission FROM telegram_connections WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? AND status = 'active' AND permission = 'approver' LIMIT 1"
+  ).bind(action.business_id, chatId, userId).first<{ id: string; permission: string }>();
   if (!permission) {
     await answerTelegramCallback(env, callbackId, "Approver permission is no longer active.");
     return;
   }
   const origin = await env.DB.prepare("SELECT telegram_chat_id, telegram_user_id FROM telegram_request_origins WHERE operation_id = ? LIMIT 1").bind(action.operation_id).first<{ telegram_chat_id: string; telegram_user_id: string }>();
-  if (!canReviewTelegramRequest(connection.permission, origin?.telegram_chat_id, origin?.telegram_user_id, chatId, userId)) {
+  if (!canReviewTelegramRequest(permission.permission, origin?.telegram_chat_id, origin?.telegram_user_id, chatId, userId)) {
     await env.DB.prepare("UPDATE telegram_approval_actions SET consumed_at = datetime('now') WHERE token_hash = ?").bind(tokenHash).run();
     await answerTelegramCallback(env, callbackId, "You cannot approve your own request.");
     return;
