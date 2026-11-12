@@ -343,6 +343,8 @@ The Worker serves a public product landing page at `/`, a business-owner setup a
 
 Telegram is a private, business-scoped operations companion. It supports one-time private-chat linking, proactive business alerts and read-only commands for liquidity, forecasts, agents and operations. It never signs transactions, moves funds or authorizes spending. The API and on-chain settlement remain the source of truth.
 
+Request-capable Telegram roles also have two workflow commands: `/newrequest` starts a new liquidity request, while `/review` lists prepared requests for authorised independent review. The previous `/request` and `/requests` commands remain supported as aliases. Requesters cannot approve their own requests; only an authorised approver can review another user's request.
+
 ### Create and configure the bot
 
 1. In Telegram, open [@BotFather](https://t.me/BotFather), send `/newbot`, and follow its prompts to choose a display name and unique username.
