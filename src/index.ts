@@ -843,7 +843,7 @@ async function updateTelegramPermission(request: Request, env: Env): Promise<Res
   const body = await readJson(request);
   if (!body || typeof body.businessId !== "string" ||
       typeof body.chatId !== "string" || typeof body.telegramUserId !== "string" ||
-      (!["viewer", "requester", "approver"].includes(body.permission))) {
+      (typeof body.permission !== "string" || !["viewer", "requester", "approver"].includes(body.permission))) {
     return json({ error: "invalid_request", message: "Provide businessId, chatId, telegramUserId and permission=viewer|requester|approver." }, 400);
   }
   const result = await env.DB.prepare(`
