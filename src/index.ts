@@ -479,6 +479,51 @@ async function handleTelegramCommand(
   }
 
   const businessId = connection.business_id;
+  if (command === "/setupauth") {
+    const key = env.TELEGRAM_TOTP_ENCRYPTION_KEY;
+    if (!key || key.length < 32) {
+      await sendTelegramMessage(env, chatId, "Authenticator setup is unavailable until the business administrator configures the Telegram authenticator encryption secret.");
+      return;
+    }
+    const secret = await generateTotpSecret();
+    const encryptedSecret = await encryptTotpSecret(secret, key);
+    await env.DB.prepare(`INSERT INTO telegram_totp_enrollments (business_id, chat_id, telegram_user_id, encrypted_secret, expires_at)
+      VALUES (?, ?, ?, ?, datetime('now', '+10 minutes'))
+      ON CONFLICT(business_id, chat_id, telegram_user_id) DO UPDATE SET encrypted_secret = excluded.encrypted_secret, expires_at = excluded.expires_at, created_at = datetime('now')`)
+      .bind(businessId, chatId, userId, encryptedSecret).run();
+    await sendTelegramMessage(env, chatId,
+      "Set up Google Authenticator\n\nAdd an account manually using this key:\n" + secret +
+      "\n\nThen send /verifyauth followed by the current six-digit code. This key expires in 10 minutes. Do not share it.");
+    return;
+  }
+  if (command === "/verifyauth") {
+    const code = rawText.trim().match(/^\\/verifyauth\\s+(\\d{6})$/i)?.[1] ?? "";
+    const key = env.TELEGRAM_TOTP_ENCRYPTION_KEY;
+    if (!code || !key) {
+      await sendTelegramMessage(env, chatId, "Send /verifyauth followed by the six-digit code shown in Google Authenticator.");
+      return;
+    }
+    const enrollment = await env.DB.prepare("SELECT encrypted_secret FROM telegram_totp_enrollments WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? AND julianday(expires_at) > julianday('now') LIMIT 1")
+      .bind(businessId, chatId, userId).first<{ encrypted_secret: string }>();
+    if (!enrollment) {
+      await sendTelegramMessage(env, chatId, "No active authenticator setup. Send /setupauth to begin again.");
+      return;
+    }
+    const secret = await decryptTotpSecret(enrollment.encrypted_secret, key);
+    const step = await verifyTotpStep(secret, code);
+    if (step === null) {
+      await sendTelegramMessage(env, chatId, "That code is invalid or expired. Check your device time and try again.");
+      return;
+    }
+    const enabled = await env.DB.prepare("UPDATE telegram_connections SET totp_secret_enc = ?, totp_enabled_at = datetime('now'), last_totp_step = ? WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? AND status = 'active'")
+      .bind(enrollment.encrypted_secret, step, businessId, chatId, userId).run();
+    await env.DB.prepare("DELETE FROM telegram_totp_enrollments WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?")
+      .bind(businessId, chatId, userId).run();
+    await sendTelegramMessage(env, chatId, (enabled.meta?.changes ?? 0) === 1
+      ? "Google Authenticator is enabled. It will be required to approve or reject requests you submitted yourself."
+      : "This Telegram connection is no longer active. Reconnect it before enabling authenticator approval.");
+    return;
+  }
   if (command === "/newrequest") {
     if (!canCreateTelegramRequest(connection.permission)) {
       await sendTelegramMessage(env, chatId, "Request creation requires Requester or Approver access. Ask your business administrator to update your Telegram permissions.");
