@@ -11,6 +11,7 @@ import {
   formatTokenAmount
 } from "./core";
 import { canCreateTelegramRequest, canReviewTelegramRequest, isTelegramDraftCancellable, normalizeTelegramCommand, parseTelegramRequestAmount, isValidTelegramRequestPurpose } from "./telegram-request";
+import { decryptTotpSecret, encryptTotpSecret, generateTotpSecret, verifyTotpStep } from "./telegram-totp";
 
 interface Env {
   DB: D1Database;
@@ -20,6 +21,7 @@ interface Env {
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_BOT_USERNAME?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
+  TELEGRAM_TOTP_ENCRYPTION_KEY?: string;
   NERITH_SUPPORT_URL?: string;
 }
 
