@@ -77,9 +77,9 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       <section class="page active" id="page-overview">
         <div class="page-head"><div><div class="pixel">Business intelligence / 01</div><h1>Overview</h1><p>One view of authorized liquidity, agent activity records and upcoming funding needs.</p></div><div class="actions"><button class="btn" data-page="liquidity">View liquidity ↗</button><button class="btn primary" id="overviewRefresh">Refresh ↻</button></div></div>
         <div class="grid metric-grid">
-          <article class="panel"><div class="metric-label">Confirmed operating USDC</div><div class="metric-value" id="metricConfirmed">—</div><div class="metric-foot" id="metricConfirmedFoot">Waiting for balance snapshots</div></article>
-          <article class="panel"><div class="metric-label">Reserved operating USDC</div><div class="metric-value" id="metricReserved">—</div><div class="metric-foot">Already allocated; not available</div></article>
-          <article class="panel"><div class="metric-label">Available operating USDC</div><div class="metric-value metric-accent" id="metricAvailable">—</div><div class="metric-foot">Fresh confirmed less reserved</div></article>
+          <article class="panel"><div class="metric-label">Confirmed business treasury USDC</div><div class="metric-value" id="metricConfirmed">—</div><div class="metric-foot" id="metricConfirmedFoot">Waiting for balance snapshots</div></article>
+          <article class="panel"><div class="metric-label">Reserved business treasury USDC</div><div class="metric-value" id="metricReserved">—</div><div class="metric-foot">Already allocated; not available</div></article>
+          <article class="panel"><div class="metric-label">Available business treasury USDC</div><div class="metric-value metric-accent" id="metricAvailable">—</div><div class="metric-foot">Fresh business-scope confirmed less reserved</div></article>
           <article class="panel"><div class="metric-label">Planned funding shortfall</div><div class="metric-value" id="metricShortfall">—</div><div class="metric-foot" id="metricShortfallFoot">Forecast data unavailable</div></article>
         </div>
         <div class="grid content-grid">
@@ -167,16 +167,16 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     $("mobileDrawer").classList.remove("open"); $("mobileMenuToggle").setAttribute("aria-expanded","false");
     window.scrollTo({top:0,behavior:"auto"});
   }
-  function sumBalances(wallets,purpose,token,field,onlyFresh=true) {
+  function sumBalances(wallets,purpose,token,field,onlyFresh=true,scope=null) {
     let total=0;
-    for(const wallet of wallets.filter(w=>w.purpose===purpose&&w.status==="active")) {
+    for(const wallet of wallets.filter(w=>w.purpose===purpose&&w.status==="active"&&(!scope||w.scope===scope))) {
       for(const balance of wallet.balances||[]) if(balance.token===token&&(!onlyFresh||balance.fresh)) total+=Number(balance[field]||0);
     }
     return total;
   }
-  function walletFreshCount(wallets,purpose) {
+  function walletFreshCount(wallets,purpose,scope=null) {
     let count=0,total=0;
-    for(const wallet of wallets.filter(w=>w.purpose===purpose&&w.status==="active")) for(const balance of wallet.balances||[]) {total++;if(balance.fresh)count++;}
+    for(const wallet of wallets.filter(w=>w.purpose===purpose&&w.status==="active"&&(!scope||w.scope===scope))) for(const balance of wallet.balances||[]) {total++;if(balance.fresh)count++;}
     return {count,total};
   }
   function metric(label,value,foot,accent=false) {
@@ -184,10 +184,11 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   }
   function renderOverview() {
     const operating=state.wallets.filter(w=>w.purpose==="operating");
-    const fresh=walletFreshCount(operating,"operating");
-    const confirmed=sumBalances(state.wallets,"operating","USDC","confirmed");
-    const reserved=sumBalances(state.wallets,"operating","USDC","reserved");
-    const available=sumBalances(state.wallets,"operating","USDC","available");
+    const fresh=walletFreshCount(state.wallets,"operating","business");
+    const confirmed=sumBalances(state.wallets,"operating","USDC","confirmed",true,"business");
+    const reserved=sumBalances(state.wallets,"operating","USDC","reserved",true,"business");
+    const available=sumBalances(state.wallets,"operating","USDC","available",true,"business");
+    const isolatedAgentUSDC=sumBalances(state.wallets,"operating","USDC","available",true,"agent");
     $("metricConfirmed").textContent=money(confirmed);
     $("metricReserved").textContent=money(reserved);
     $("metricAvailable").textContent=money(available);
@@ -196,7 +197,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     $("metricShortfall").textContent=f?money(f.totalShortfallUSDC):"—";
     $("metricShortfallFoot").textContent=f?(f.blocked+" blocked · "+f.conversionRequired+" may need conversion"):"Forecast unavailable";
     $("overviewAgents").innerHTML=state.agents.length?state.agents.slice(0,6).map(a=>'<div class="balance-row"><span><strong>'+escapeHtml(a.name)+'</strong><br><span class="muted">'+escapeHtml(a.id)+'</span></span><span class="chip '+(a.status==="active"?"lemon":"off")+'">'+escapeHtml(a.status)+'</span></div>').join(""):'<div class="empty"><strong>No agents registered</strong>Agent records will appear here when available.</div>';
-    $("overviewLiquidity").innerHTML='<div class="balance-row"><span>Operating USDC available</span><strong>'+money(available)+' USDC</strong></div><div class="balance-row"><span>Active operating wallets</span><strong>'+operating.filter(w=>w.status==="active").length+'</strong></div><div class="balance-row"><span>Fresh token snapshots</span><strong>'+fresh.count+' / '+fresh.total+'</strong></div>';
+    $("overviewLiquidity").innerHTML='<div class="balance-row"><span>Business treasury available</span><strong>'+money(available)+' USDC</strong></div><div class="balance-row"><span>Business treasury wallets</span><strong>'+operating.filter(w=>w.scope==="business"&&w.status==="active").length+'</strong></div><div class="balance-row"><span>Agent-scoped USDC · isolated</span><strong>'+money(isolatedAgentUSDC)+' USDC</strong></div><div class="balance-row"><span>Fresh treasury snapshots</span><strong>'+fresh.count+' / '+fresh.total+'</strong></div>';
     const x402=state.wallets.filter(w=>w.purpose==="api_payment");
     $("overviewX402").innerHTML=x402.length?x402.map(w=>'<div class="balance-row"><span>'+escapeHtml(w.address.slice(0,7)+"…"+w.address.slice(-5))+'</span><strong>'+money((w.balances||[]).filter(b=>b.token==="USDC"&&b.fresh).reduce((s,b)=>s+Number(b.available),0))+' USDC</strong></div>').join(""):'<div class="empty">No registered x402 reserve wallet.</div>';
   }
@@ -211,12 +212,15 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   function renderLiquidity() {
     const op=state.wallets.filter(w=>w.purpose==="operating");
     const pay=state.wallets.filter(w=>w.purpose==="api_payment");
-    const confirmed=sumBalances(state.wallets,"operating","USDC","confirmed");
-    const reserved=sumBalances(state.wallets,"operating","USDC","reserved");
-    const available=sumBalances(state.wallets,"operating","USDC","available");
-    const fresh=walletFreshCount(state.wallets,"operating");
-    $("liquidityMetrics").innerHTML=metric("Fresh confirmed USDC",money(confirmed),"Operating wallets only")+metric("Reserved USDC",money(reserved),"Internal holds excluded from availability")+metric("Available USDC",money(available),"Fresh confirmed less reserved",true)+metric("Snapshot freshness",fresh.count+"/"+fresh.total,"Fresh token snapshots");
-    $("operatingWallets").innerHTML=op.length?op.map(walletCard).join(""):'<div class="empty">No operating wallets registered.</div>';
+    const confirmed=sumBalances(state.wallets,"operating","USDC","confirmed",true,"business");
+    const reserved=sumBalances(state.wallets,"operating","USDC","reserved",true,"business");
+    const available=sumBalances(state.wallets,"operating","USDC","available",true,"business");
+    const isolated=sumBalances(state.wallets,"operating","USDC","available",true,"agent");
+    const fresh=walletFreshCount(state.wallets,"operating","business");
+    $("liquidityMetrics").innerHTML=metric("Treasury confirmed USDC",money(confirmed),"Business-scope operating wallets")+metric("Treasury reserved USDC",money(reserved),"Internal holds excluded from availability")+metric("Treasury available USDC",money(available),"Fresh confirmed less reserved",true)+metric("Agent-scoped USDC",money(isolated),"Isolated by agent · not pooled");
+    const businessWallets=op.filter(w=>w.scope==="business");
+    const agentWallets=op.filter(w=>w.scope==="agent");
+    $("operatingWallets").innerHTML='<div class="pixel" style="grid-column:1/-1">Business treasury wallets · shared only where agent permission allows</div>'+(businessWallets.length?businessWallets.map(walletCard).join(""):'<div class="empty">No business treasury operating wallets registered.</div>')+'<hr class="dotted" style="grid-column:1/-1"><div class="pixel" style="grid-column:1/-1">Agent-scoped wallets · isolated and never pooled</div>'+(agentWallets.length?agentWallets.map(walletCard).join(""):'<div class="empty">No agent-scoped operating wallets registered.</div>');
     $("paymentWallets").innerHTML=pay.length?pay.map(walletCard).join(""):'<div class="empty">No separate x402 payment reserve is registered.</div>';
   }
   function renderForecast() {
