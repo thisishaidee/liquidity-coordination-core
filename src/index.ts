@@ -2721,7 +2721,29 @@ type ForecastWallet = {
   solFresh: boolean;
 };
 
-async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record<string, unknown>> {
+type BusinessForecastItem = {
+  agentId: string;
+  agentName: string;
+  taskId: string;
+  dueAt: string;
+  purpose: string;
+  amountUSDC: string;
+  availableUSDC: string;
+  shortfallUSDC: string;
+  status: "covered" | "conversion_required" | "blocked";
+  sourceWalletId: string | null;
+  sourceAsset: string | null;
+  sourceSOLAvailable?: string;
+  quoteRequired?: boolean;
+};
+
+async function calculateBusinessLiquidityForecast(businessId: string, env: Env): Promise<{
+  wallets: ForecastWallet[];
+  obligations: BusinessForecastItem[];
+  summary: { planned: number; covered: number; conversionRequired: number; blocked: number; totalShortfallUSDC: string };
+  businessBalanceDataFresh: boolean;
+  truncated: boolean;
+}> {
   const balanceRows = await env.DB.prepare(`
     SELECT w.id AS wallet_id, w.address, w.scope, w.agent_id, b.token,
            b.confirmed_atoms, b.reserved_atoms, b.observed_at
@@ -2729,7 +2751,7 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
     JOIN wallet_balances b ON b.wallet_id = w.id
     WHERE w.business_id = ? AND w.status = 'active' AND w.purpose = 'operating'
       AND w.network = 'solana'
-  `).bind(agent.business_id).all<{
+  `).bind(businessId).all<{
     wallet_id: string;
     address: string;
     scope: string;
@@ -2770,18 +2792,19 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
   }
 
   const obligations = await env.DB.prepare(`
-    SELECT o.agent_id, o.task_id, o.amount_atoms, o.due_at, o.purpose,
+    SELECT o.agent_id, a.name AS agent_name, o.task_id, o.amount_atoms, o.due_at, o.purpose,
            a.can_use_business_treasury
     FROM liquidity_obligations o
-    JOIN agents a ON a.id = o.agent_id
+    JOIN agents a ON a.id = o.agent_id AND a.business_id = o.business_id
     WHERE o.business_id = ? AND o.status = 'planned'
       AND a.status = 'active'
       AND julianday(o.due_at) > julianday('now')
       AND julianday(o.due_at) <= julianday('now', '+30 days')
     ORDER BY o.due_at ASC
     LIMIT 200
-  `).bind(agent.business_id).all<{
+  `).bind(businessId).all<{
     agent_id: string;
+    agent_name: string;
     task_id: string;
     amount_atoms: string;
     due_at: string;
@@ -2793,12 +2816,12 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
   const conversionUsedWallets = new Set<string>();
   const pendingConversions = await env.DB.prepare(
     "SELECT source_wallet_id FROM operations WHERE business_id = ? AND action = 'conversion_required' AND status IN ('awaiting_conversion', 'preparing_conversion', 'conversion_submitted')"
-  ).bind(agent.business_id).all<{ source_wallet_id: string | null }>();
+  ).bind(businessId).all<{ source_wallet_id: string | null }>();
   for (const pending of pendingConversions.results ?? []) {
     if (pending.source_wallet_id) conversionUsedWallets.add(pending.source_wallet_id);
   }
 
-  const allForecast = (obligations.results ?? []).map((obligation) => {
+  const allForecast: BusinessForecastItem[] = (obligations.results ?? []).map((obligation) => {
     const amount = BigInt(obligation.amount_atoms);
     const eligibleWallets = [...wallets.values()].filter((wallet) =>
       (wallet.scope === "agent" && wallet.agentId === obligation.agent_id) ||
@@ -2818,6 +2841,7 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
       remaining.set(coveredWallet.walletId, available - amount);
       return {
         agentId: obligation.agent_id,
+        agentName: obligation.agent_name,
         taskId: obligation.task_id,
         dueAt: obligation.due_at,
         purpose: obligation.purpose,
@@ -2845,6 +2869,7 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
       remaining.set(conversionWallet.walletId, available - allocated);
       return {
         agentId: obligation.agent_id,
+        agentName: obligation.agent_name,
         taskId: obligation.task_id,
         dueAt: obligation.due_at,
         purpose: obligation.purpose,
@@ -2869,6 +2894,7 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
     if (bestWallet && allocated > 0n) remaining.set(bestWallet.walletId, available - allocated);
     return {
       agentId: obligation.agent_id,
+      agentName: obligation.agent_name,
       taskId: obligation.task_id,
       dueAt: obligation.due_at,
       purpose: obligation.purpose,
@@ -2881,28 +2907,47 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
     };
   });
 
-  const summarize = (items: typeof allForecast) => items.reduce((acc, item) => {
+  const summary = allForecast.reduce((acc, item) => {
     if (item.status === "covered") acc.covered++;
     else if (item.status === "conversion_required") acc.conversionRequired++;
     else acc.blocked++;
-    const shortfall = item.shortfallUSDC;
-    if (shortfall !== "0") acc.totalShortfallAtoms += parseTokenAmount(shortfall);
+    if (item.shortfallUSDC !== "0") acc.totalShortfallAtoms += parseTokenAmount(item.shortfallUSDC);
     return acc;
   }, { covered: 0, conversionRequired: 0, blocked: 0, totalShortfallAtoms: 0n });
 
-  const ownForecast = allForecast.filter((item) => item.agentId === agent.id);
-  const ownSummary = summarize(ownForecast);
-  const businessSummary = summarize(allForecast);
-  const relevantWallets = [...wallets.values()].filter((wallet) =>
+  return {
+    wallets: [...wallets.values()],
+    obligations: allForecast,
+    summary: {
+      planned: summary.covered + summary.conversionRequired + summary.blocked,
+      covered: summary.covered,
+      conversionRequired: summary.conversionRequired,
+      blocked: summary.blocked,
+      totalShortfallUSDC: formatTokenAmount(summary.totalShortfallAtoms, 6)
+    },
+    businessBalanceDataFresh: wallets.size > 0 &&
+      [...wallets.values()].every((wallet) => wallet.usdcFresh && wallet.solFresh),
+    truncated: (obligations.results ?? []).length === 200
+  };
+}
+
+async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record<string, unknown>> {
+  const business = await calculateBusinessLiquidityForecast(agent.business_id, env);
+  const ownForecast = business.obligations.filter((item) => item.agentId === agent.id);
+  const ownSummary = ownForecast.reduce((acc, item) => {
+    if (item.status === "covered") acc.covered++;
+    else if (item.status === "conversion_required") acc.conversionRequired++;
+    else acc.blocked++;
+    if (item.shortfallUSDC !== "0") acc.totalShortfallAtoms += parseTokenAmount(item.shortfallUSDC);
+    return acc;
+  }, { covered: 0, conversionRequired: 0, blocked: 0, totalShortfallAtoms: 0n });
+  const relevantWallets = business.wallets.filter((wallet) =>
     (wallet.scope === "agent" && wallet.agentId === agent.id) ||
     (wallet.scope === "business" && agent.can_use_business_treasury === 1)
   );
   const balanceDataFresh = relevantWallets.length > 0 &&
     relevantWallets.every((wallet) => wallet.usdcFresh && wallet.solFresh);
-  const businessBalanceDataFresh = wallets.size > 0 &&
-    [...wallets.values()].every((wallet) => wallet.usdcFresh && wallet.solFresh);
-
-  const toSummary = (summary: ReturnType<typeof summarize>) => ({
+  const toSummary = (summary: typeof ownSummary) => ({
     planned: summary.covered + summary.conversionRequired + summary.blocked,
     covered: summary.covered,
     conversionRequired: summary.conversionRequired,
@@ -2913,16 +2958,50 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
   return {
     windowDays: 30,
     balanceDataFresh,
-    businessBalanceDataFresh,
+    businessBalanceDataFresh: business.businessBalanceDataFresh,
     walletsObserved: relevantWallets.length,
-    obligations: ownForecast.map(({ agentId: _agentId, ...item }) => item),
+    obligations: ownForecast.map(({ agentId: _agentId, agentName: _agentName, ...item }) => item),
     summary: toSummary(ownSummary),
     businessSummary: {
-      ...toSummary(businessSummary),
-      otherAgentObligations: allForecast.filter((item) => item.agentId !== agent.id).length
+      ...business.summary,
+      otherAgentObligations: business.obligations.filter((item) => item.agentId !== agent.id).length
     },
     note: "Business-wide forecast allocates shared business wallets across all agents in due-date order. Private wallets remain agent-isolated. Conversion availability is indicative until a live Swap.io quote is obtained; no future funds are reserved."
   };
+}
+
+async function getAdminBusinessForecast(request: Request, env: Env): Promise<Response> {
+  try {
+    if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+    const businessId = new URL(request.url).searchParams.get("businessId");
+    if (!businessId) return json({ error: "business_id_required" }, 400);
+    const business = await env.DB.prepare("SELECT id FROM businesses WHERE id = ?")
+      .bind(businessId).first<{ id: string }>();
+    if (!business) return json({ error: "business_not_found" }, 404);
+
+    const forecast = await calculateBusinessLiquidityForecast(businessId, env);
+    return json({
+      windowDays: 30,
+      generatedAt: new Date().toISOString(),
+      businessBalanceDataFresh: forecast.businessBalanceDataFresh,
+      walletsObserved: forecast.wallets.length,
+      wallets: forecast.wallets.map((wallet) => ({
+        walletId: wallet.walletId,
+        address: wallet.address,
+        scope: wallet.scope,
+        agentId: wallet.agentId,
+        usdcFresh: wallet.usdcFresh,
+        solFresh: wallet.solFresh
+      })),
+      obligations: forecast.obligations,
+      summary: forecast.summary,
+      truncated: forecast.truncated,
+      confidence: "not_available",
+      note: "Forecasts are indicative, not reservations. Stale balance snapshots are treated as zero available and can overstate shortfalls. Conversion-required items identify a possible SOL source only; no live quote, fees, slippage, price impact or route availability has been checked."
+    });
+  } catch {
+    return json({ error: "internal_error" }, 500);
+  }
 }
 
 async function safeBusinessForecast(agent: AgentRow, env: Env): Promise<unknown | null> {
