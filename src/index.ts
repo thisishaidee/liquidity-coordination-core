@@ -2293,7 +2293,7 @@ async function requestSwapQuote(request: Request, env: Env): Promise<Response> {
   };
   const x402Context: X402ProxyContext = {
     env, agent, paymentWalletAddress: context.paymentWalletAddress,
-    requestHash: await sha256("/v1/swap/quote\n" + JSON.stringify(hermesPayload))
+    requestHash: await sha256(context.operationId + "\n" + context.paymentWalletAddress + "\n/v1/swap/quote\n" + JSON.stringify(hermesPayload))
   };
   const upstream = await proxyHermes(request, "/v1/swap/quote", hermesPayload, {
     "X-Liquidity-Operation-ID": context.operationId,
@@ -2512,7 +2512,7 @@ async function prepareSwapTransaction(request: Request, env: Env): Promise<Respo
   };
   const x402Context: X402ProxyContext = {
     env, agent, paymentWalletAddress: context.paymentWalletAddress,
-    requestHash: await sha256("/v1/swap/build-tx\n" + JSON.stringify(hermesPayload))
+    requestHash: await sha256(context.operationId + "\n" + context.paymentWalletAddress + "\n/v1/swap/build-tx\n" + JSON.stringify(hermesPayload))
   };
   const upstream = await proxyHermes(request, "/v1/swap/build-tx", hermesPayload, {
     "X-Liquidity-Operation-ID": context.operationId,
