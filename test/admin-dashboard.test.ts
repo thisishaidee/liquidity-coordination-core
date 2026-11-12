@@ -340,6 +340,8 @@ describe("business operations aggregation and dashboard route", () => {
     expect(html).toContain("bottom-nav");
     expect(html).toContain('href="/privacy"');
     expect(html).toContain('href="/terms"');
+    expect(html).toContain("Read about NERITH ↗");
+    expect(html).not.toContain("Need help? Visit NERITH support");
     expect(html).toContain('true,"business"');
     expect(html).toContain('true,"agent"');
     expect(html).toContain("isolated by agent, not pooled");
