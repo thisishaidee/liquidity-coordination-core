@@ -497,7 +497,7 @@ async function handleTelegramCommand(
     return;
   }
   if (command === "/verifyauth") {
-    const code = rawText.trim().match(/^\\/verifyauth\\s+(\\d{6})$/i)?.[1] ?? "";
+    const code = rawText.trim().split(/\s+/)[1] ?? "";
     const key = env.TELEGRAM_TOTP_ENCRYPTION_KEY;
     if (!code || !key) {
       await sendTelegramMessage(env, chatId, "Send /verifyauth followed by the six-digit code shown in Google Authenticator.");
@@ -525,7 +525,7 @@ async function handleTelegramCommand(
     return;
   }
   if (command === "/confirmapproval") {
-    const code = rawText.trim().match(/^\\/confirmapproval\\s+(\\d{6})$/i)?.[1] ?? "";
+    const code = rawText.trim().split(/\s+/)[1] ?? "";
     const encryptionKey = env.TELEGRAM_TOTP_ENCRYPTION_KEY;
     if (!code || !encryptionKey) {
       await sendTelegramMessage(env, chatId, "Send /confirmapproval followed by the current six-digit Google Authenticator code.");
