@@ -1095,6 +1095,9 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
           { command: "operations", description: "Recent liquidity operations" },
           { command: "newrequest", description: "Create a liquidity request" },
           { command: "review", description: "Review prepared liquidity requests" },
+          { command: "setupauth", description: "Set up Google Authenticator" },
+          { command: "verifyauth", description: "Verify authenticator setup" },
+          { command: "confirmapproval", description: "Confirm a self-approval" },
           { command: "cancel", description: "Cancel a request draft" },
           { command: "disconnect", description: "Disconnect this Telegram chat" }
         ]
@@ -1121,7 +1124,7 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
       configured: true,
       botUsername: identity.result.username,
       webhookUrl,
-      commands: ["start", "help", "status", "liquidity", "forecast", "agents", "operations", "newrequest", "review", "cancel", "disconnect"],
+      commands: ["start", "help", "status", "liquidity", "forecast", "agents", "operations", "newrequest", "review", "setupauth", "verifyauth", "confirmapproval", "cancel", "disconnect"],
       supportLinkConfigured: Boolean(telegramSupportMarkup(env))
     });
   } catch {
