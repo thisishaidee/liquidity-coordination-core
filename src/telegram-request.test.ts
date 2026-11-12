@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canCreateTelegramRequest, canReviewTelegramRequest } from "./telegram-request";
+import { canCreateTelegramRequest, canReviewTelegramRequest, normalizeTelegramCommand } from "./telegram-request";
 
 describe("Telegram permission roles", () => {
   it("allows requesters to create requests", () => {
@@ -25,5 +25,21 @@ describe("Telegram permission roles", () => {
   it("does not let requesters or viewers approve", () => {
     expect(canReviewTelegramRequest("requester", "100", "200", "300", "400")).toBe(false);
     expect(canReviewTelegramRequest("viewer", "100", "200", "300", "400")).toBe(false);
+  });
+});
+
+describe("Telegram command naming", () => {
+  it("uses the clearer command names", () => {
+    expect(normalizeTelegramCommand("/newrequest")).toBe("/newrequest");
+    expect(normalizeTelegramCommand("/review")).toBe("/review");
+  });
+
+  it("keeps the previous request commands as aliases", () => {
+    expect(normalizeTelegramCommand("/request")).toBe("/newrequest");
+    expect(normalizeTelegramCommand("/requests")).toBe("/review");
+  });
+
+  it("leaves unrelated commands unchanged", () => {
+    expect(normalizeTelegramCommand("/status")).toBe("/status");
   });
 });
