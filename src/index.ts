@@ -19,6 +19,7 @@ interface Env {
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_BOT_USERNAME?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
+  NERITH_SUPPORT_URL?: string;
 }
 
 type AgentRow = {
@@ -162,6 +163,15 @@ async function readJson(request: Request): Promise<Record<string, unknown> | nul
   } catch {
     return null;
   }
+}
+
+function telegramSupportMarkup(env: Env): Record<string, unknown> | undefined {
+  if (!env.NERITH_SUPPORT_URL) return undefined;
+  try {
+    const supportUrl = new URL(env.NERITH_SUPPORT_URL);
+    if (supportUrl.protocol !== "https:" || supportUrl.username || supportUrl.password) return undefined;
+    return { inline_keyboard: [[{ text: "NERITH website & support", url: supportUrl.toString() }]] };
+  } catch { return undefined; }
 }
 
 async function sendTelegramMessage(env: Env, chatId: string, text: string, replyMarkup?: Record<string, unknown>): Promise<boolean> {
@@ -485,7 +495,8 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      `NERITH · ${connection.business_name}\n\n/status  Business overview\n/liquidity  Available and reserved balances\n/forecast  Upcoming planned obligations\n/agents  Agent status\n/operations  Recent liquidity activity\n/newrequest  Create a liquidity request\n/review  Review prepared liquidity requests\n/cancel  Cancel a request draft\n/disconnect  Disconnect this chat\n\nRequests are checked against authorised, fresh liquidity and reservations. Approvals record a business decision only. This bot cannot sign or broadcast transactions.`
+      `NERITH · ${connection.business_name}\n\n/status  Business overview\n/liquidity  Available and reserved balances\n/forecast  Upcoming planned obligations\n/agents  Agent status\n/operations  Recent liquidity activity\n/newrequest  Create a liquidity request\n/review  Review prepared liquidity requests\n/cancel  Cancel a request draft\n/disconnect  Disconnect this chat\n\nRequests are checked against authorised, fresh liquidity and reservations. Approvals record a business decision only. This bot cannot sign or broadcast transactions.`,
+      telegramSupportMarkup(env)
     );
     return;
   }
@@ -938,7 +949,8 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
       configured: true,
       botUsername: identity.result.username,
       webhookUrl,
-      commands: ["start", "help", "status", "liquidity", "forecast", "agents", "operations", "newrequest", "review", "cancel", "disconnect"]
+      commands: ["start", "help", "status", "liquidity", "forecast", "agents", "operations", "newrequest", "review", "cancel", "disconnect"],
+      supportLinkConfigured: Boolean(telegramSupportMarkup(env))
     });
   } catch {
     return json({ error: "telegram_setup_unavailable" }, 502);
@@ -3456,7 +3468,8 @@ export default {
           version: "0.3.0",
           database: "connected",
           dashboard: true,
-          telegramConfigured: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_WEBHOOK_SECRET)
+          telegramConfigured: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_WEBHOOK_SECRET),
+          telegramSupportConfigured: Boolean(telegramSupportMarkup(env))
         });
       } catch {
         return json({
