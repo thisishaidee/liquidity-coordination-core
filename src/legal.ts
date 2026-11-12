@@ -1,3 +1,4 @@
+// Public legal pages are static, script-free documents served with a restrictive CSP.
 const shell = (title: string, intro: string, body: string) => `<!doctype html>
 <html lang="en">
 <head>
