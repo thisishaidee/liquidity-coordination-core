@@ -7,6 +7,7 @@ import {
   parseTokenAmount,
   formatTokenAmount
 } from "./core";
+import { canCreateTelegramRequest, canReviewTelegramRequest, isTelegramDraftCancellable, parseTelegramRequestAmount, isValidTelegramRequestPurpose } from "./telegram-request";
 
 interface Env {
   DB: D1Database;
@@ -341,8 +342,7 @@ async function continueTelegramLiquidityRequest(env: Env, chatId: string, userId
   }
   if (draft.step === "amount") {
     try {
-      const atoms = parseTokenAmount(answer.trim());
-      if (atoms > 9_000_000_000_000_000_000n) throw new Error("amount exceeds supported ledger range");
+      parseTelegramRequestAmount(answer.trim());
     } catch {
       await sendTelegramMessage(env, chatId, "Enter a valid positive USDC amount with up to 6 decimal places. Example: 25 or 12.50.");
       return true;
@@ -353,7 +353,7 @@ async function continueTelegramLiquidityRequest(env: Env, chatId: string, userId
   }
   if (draft.step === "purpose") {
     const purpose = answer.trim();
-    if (purpose.length < 3 || purpose.length > 300 || !draft.agent_id || !draft.amount) {
+    if (!isValidTelegramRequestPurpose(purpose) || !draft.agent_id || !draft.amount) {
       await sendTelegramMessage(env, chatId, "Please provide a purpose between 3 and 300 characters, or send /cancel.");
       return true;
     }
@@ -464,7 +464,7 @@ async function handleTelegramCommand(
 
   const businessId = connection.business_id;
   if (command === "/request") {
-    if (connection.permission !== "approver") {
+    if (!canCreateTelegramRequest(connection.permission)) {
       await sendTelegramMessage(env, chatId, "Request creation is restricted to linked accounts with approver access. Ask your business administrator to review your Telegram permissions.");
       return;
     }
@@ -474,7 +474,7 @@ async function handleTelegramCommand(
   if (command === "/cancel") {
     const cancelled = await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? AND step != 'submitting'").bind(businessId, chatId, userId).run();
     const active = await env.DB.prepare("SELECT step FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? LIMIT 1").bind(businessId, chatId, userId).first<{ step: string }>();
-    await sendTelegramMessage(env, chatId, (cancelled.meta?.changes ?? 0) > 0 ? "Your liquidity request draft has been cancelled." : active?.step === "submitting" ? "Your confirmed request is already being processed and can no longer be cancelled." : "There is no active request draft to cancel.");
+    await sendTelegramMessage(env, chatId, (cancelled.meta?.changes ?? 0) > 0 ? "Your liquidity request draft has been cancelled." : active && !isTelegramDraftCancellable(active.step) ? "Your confirmed request is already being processed and can no longer be cancelled." : "There is no active request draft to cancel.");
     return;
   }
   if (!command.startsWith("/") && await continueTelegramLiquidityRequest(env, chatId, userId, businessId, rawText)) return;
@@ -668,7 +668,7 @@ async function listTelegramRequests(env: Env, chatId: string, userId: string, bu
     let markup: Record<string, unknown> | undefined;
     const origin = await env.DB.prepare("SELECT telegram_chat_id, telegram_user_id FROM telegram_request_origins WHERE operation_id = ? LIMIT 1").bind(op.id).first<{ telegram_chat_id: string; telegram_user_id: string }>();
     const isRequester = origin?.telegram_chat_id === chatId && origin?.telegram_user_id === userId;
-    if (permission === "approver" && !isRequester) {
+    if (canReviewTelegramRequest(permission, origin?.telegram_chat_id, origin?.telegram_user_id, chatId, userId)) {
       const approveToken = newSecret("").slice(0, 48);
       const rejectToken = newSecret("").slice(0, 48);
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
@@ -738,7 +738,7 @@ async function handleTelegramApprovalCallback(env: Env, callback: {
     return;
   }
   const origin = await env.DB.prepare("SELECT telegram_chat_id, telegram_user_id FROM telegram_request_origins WHERE operation_id = ? LIMIT 1").bind(action.operation_id).first<{ telegram_chat_id: string; telegram_user_id: string }>();
-  if (origin?.telegram_chat_id === chatId && origin?.telegram_user_id === userId) {
+  if (!canReviewTelegramRequest(connection.permission, origin?.telegram_chat_id, origin?.telegram_user_id, chatId, userId)) {
     await env.DB.prepare("UPDATE telegram_approval_actions SET consumed_at = datetime('now') WHERE token_hash = ?").bind(tokenHash).run();
     await answerTelegramCallback(env, callbackId, "You cannot approve your own request.");
     return;
