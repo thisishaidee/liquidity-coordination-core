@@ -132,8 +132,8 @@ export type HermesPaymentTransaction = {
   };
   meta?: {
     err?: unknown | null;
-    preTokenBalances?: Array<{ accountIndex?: number; owner?: string; mint?: string }>;
-    postTokenBalances?: Array<{ accountIndex?: number; owner?: string; mint?: string }>;
+    preTokenBalances?: Array<{ accountIndex?: number; owner?: string; mint?: string; uiTokenAmount?: { amount?: string } }>;
+    postTokenBalances?: Array<{ accountIndex?: number; owner?: string; mint?: string; uiTokenAmount?: { amount?: string } }>;
   };
 };
 
@@ -187,5 +187,13 @@ export function verifyHermesPaymentTransaction(
   if (matches.length !== 1) {
     return fail("Settlement transaction does not contain exactly one authorized USDC TransferChecked for the challenged amount and recipient.");
   }
-  return { verified: true, reason: "Settlement transaction matches the challenged USDC amount, recipient, payer and facilitator fee payer." };
+  const sumOwner = (balances: NonNullable<typeof meta.preTokenBalances>, owner: string) =>
+    balances.filter((balance) => balance.owner === owner && balance.mint === requirement.asset)
+      .reduce((sum, balance) => sum + BigInt(balance.uiTokenAmount?.amount ?? "0"), 0n);
+  const payerDebit = sumOwner(meta.preTokenBalances, payerAddress) - sumOwner(meta.postTokenBalances, payerAddress);
+  const recipientCredit = sumOwner(meta.postTokenBalances, requirement.payTo) - sumOwner(meta.preTokenBalances, requirement.payTo);
+  if (payerDebit !== BigInt(amount) || recipientCredit !== BigInt(amount)) {
+    return fail("Total payer USDC debit and recipient USDC credit do not both equal the challenged amount exactly.");
+  }
+  return { verified: true, reason: "Settlement transaction matches the exact USDC debit, credit, recipient, payer and facilitator fee payer." };
 }
