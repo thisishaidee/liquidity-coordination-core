@@ -429,3 +429,59 @@ it("marks stale forecast balances and resulting shortfalls as indicative", async
   expect(walletQuery?.sql).toContain("w.purpose = 'operating'");
   expect(walletQuery?.sql).not.toContain("api_payment");
 });
+
+
+it("returns all active agents' obligations in the business forecast", async () => {
+  const observedAt = new Date().toISOString();
+  const dueA = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const dueB = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+  const queries: QueryRecord[] = [];
+  const db = {
+    prepare(sql: string) {
+      let values: unknown[] = [];
+      const statement = {
+        bind(...args: unknown[]) { values = args; return statement; },
+        async first<T>() {
+          queries.push({ sql, values });
+          if (sql.includes("FROM businesses")) return { id: values[0] } as T;
+          return null;
+        },
+        async all<T>() {
+          queries.push({ sql, values });
+          if (sql.includes("FROM wallets w") && sql.includes("wallet_balances")) return {
+            results: [
+              { wallet_id: "w_shared", address: "So11111111111111111111111111111111111111112", scope: "business", agent_id: null, token: "USDC", confirmed_atoms: "50000000", reserved_atoms: "10000000", observed_at: observedAt },
+              { wallet_id: "w_shared", address: "So11111111111111111111111111111111111111112", scope: "business", agent_id: null, token: "SOL", confirmed_atoms: "1000000000", reserved_atoms: "0", observed_at: observedAt }
+            ] as T[]
+          };
+          if (sql.includes("FROM liquidity_obligations o")) return {
+            results: [
+              { agent_id: "agent_a", agent_name: "Agent A", task_id: "task_a", amount_atoms: "30000000", due_at: dueA, purpose: "First obligation", can_use_business_treasury: 1 },
+              { agent_id: "agent_b", agent_name: "Agent B", task_id: "task_b", amount_atoms: "20000000", due_at: dueB, purpose: "Second obligation", can_use_business_treasury: 1 }
+            ] as T[]
+          };
+          return { results: [] as T[] };
+        },
+        async run() { return { success: true, meta: { changes: 0 } }; }
+      };
+      return statement;
+    }
+  };
+  const env = { DB: db as unknown as D1Database, ADMIN_BOOTSTRAP_TOKEN: token } as TestEnv;
+  const response = await worker.fetch(new Request("https://nerith.test/v1/admin/forecast?businessId=biz_multi", { headers: bearer }), env);
+  expect(response.status).toBe(200);
+  const body = await response.json() as Record<string, any>;
+  expect(body.obligations).toHaveLength(2);
+  expect(body.obligations.map((o: any) => [o.agentId, o.agentName, o.status])).toEqual([
+    ["agent_a", "Agent A", "covered"],
+    ["agent_b", "Agent B", "conversion_required"]
+  ]);
+  expect(body.summary).toEqual({
+    planned: 2, covered: 1, conversionRequired: 1, blocked: 0, totalShortfallUSDC: "10"
+  });
+  expect(body.wallets).toHaveLength(1);
+  expect(body.wallets[0]).toMatchObject({ scope: "business", usdcFresh: true, solFresh: true });
+  expect(body.confidence).toBe("not_available");
+  expect(body.truncated).toBe(false);
+  expect(queries.filter(q => q.sql.includes("business_id = ?")).every(q => q.values.includes("biz_multi"))).toBe(true);
+});
