@@ -479,6 +479,30 @@ async function handleTelegramCommand(
   }
 
   const businessId = connection.business_id;
+  if (command === "/businessid" || command === "/workspace") {
+    const workspaces = await env.DB.prepare(`
+      SELECT DISTINCT b.id AS business_id, b.name AS business_name
+      FROM telegram_connections c
+      JOIN businesses b ON b.id = c.business_id
+      WHERE c.chat_id = ? AND c.telegram_user_id = ? AND c.status = 'active'
+      ORDER BY b.name COLLATE NOCASE
+      LIMIT 20
+    `).bind(chatId, userId).all<{ business_id: string; business_name: string }>();
+    const linkedWorkspaces = workspaces.results ?? [];
+    if (linkedWorkspaces.length === 0) {
+      await sendTelegramMessage(env, chatId, "No active NERITH business workspace is linked to this Telegram account.");
+      return;
+    }
+    const lines = linkedWorkspaces.map((workspace) =>
+      `• ${workspace.business_name}\\n  Business ID: ${workspace.business_id}`
+    );
+    await sendTelegramMessage(
+      env,
+      chatId,
+      `Your linked NERITH workspace${linkedWorkspaces.length === 1 ? "" : "s"}\\n\\n${lines.join("\\n\\n")}\\n\\nKeep this ID private to your business team. It is an identifier, not an admin token or login credential.`
+    );
+    return;
+  }
   if (command === "/setupauth") {
     const key = env.TELEGRAM_TOTP_ENCRYPTION_KEY;
     if (!key || key.length < 32) {
@@ -615,7 +639,7 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      `NERITH · ${connection.business_name}\n\n/status  Business overview\n/liquidity  Available and reserved balances\n/forecast  Upcoming planned obligations\n/agents  Agent status\n/operations  Recent liquidity activity\n/newrequest  Create a liquidity request\n/review  Review prepared liquidity requests\n/setupauth  Set up Google Authenticator\n/verifyauth  Verify authenticator setup\n/confirmapproval  Confirm a self-approval\n/cancel  Cancel a request draft\n/disconnect  Disconnect this chat\n\nRequests are checked against authorised, fresh liquidity and reservations. Approvals record a business decision only. This bot cannot sign or broadcast transactions.`,
+      `NERITH · ${connection.business_name}\n\n/businessid  Show linked Business ID(s)\n/workspace  Show linked workspace details\n/status  Business overview\n/liquidity  Available and reserved balances\n/forecast  Upcoming planned obligations\n/agents  Agent status\n/operations  Recent liquidity activity\n/newrequest  Create a liquidity request\n/review  Review prepared liquidity requests\n/setupauth  Set up Google Authenticator\n/verifyauth  Verify authenticator setup\n/confirmapproval  Confirm a self-approval\n/cancel  Cancel a request draft\n/disconnect  Disconnect this chat\n\nRequests are checked against authorised, fresh liquidity and reservations. Approvals record a business decision only. This bot cannot sign or broadcast transactions.`,
       telegramSupportMarkup(env)
     );
     return;
@@ -1105,6 +1129,8 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
         commands: [
           { command: "start", description: "Open NERITH" },
           { command: "help", description: "Show available commands" },
+          { command: "businessid", description: "Show linked Business ID(s)" },
+          { command: "workspace", description: "Show linked workspace details" },
           { command: "status", description: "Business liquidity overview" },
           { command: "liquidity", description: "Available and reserved balances" },
           { command: "forecast", description: "Upcoming planned obligations" },
@@ -1141,7 +1167,7 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
       configured: true,
       botUsername: identity.result.username,
       webhookUrl,
-      commands: ["start", "help", "status", "liquidity", "forecast", "agents", "operations", "newrequest", "review", "setupauth", "verifyauth", "confirmapproval", "cancel", "disconnect"],
+      commands: ["start", "help", "businessid", "workspace", "status", "liquidity", "forecast", "agents", "operations", "newrequest", "review", "setupauth", "verifyauth", "confirmapproval", "cancel", "disconnect"],
       supportLinkConfigured: Boolean(telegramSupportMarkup(env))
     });
   } catch {
