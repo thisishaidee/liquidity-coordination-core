@@ -2058,6 +2058,10 @@ async function manageX402Budgets(request: Request, env: Env): Promise<Response> 
       INSERT OR IGNORE INTO x402_spend_limits (scope_key, business_id, agent_id, daily_limit_atoms)
       VALUES (?, ?, NULL, 50000)
     `).bind("business:" + businessId, businessId).run();
+    await env.DB.prepare(`
+      INSERT OR IGNORE INTO x402_spend_limits (scope_key, business_id, agent_id, daily_limit_atoms)
+      SELECT 'agent:' || id, business_id, id, 10000 FROM agents WHERE business_id = ?
+    `).bind(businessId).run();
     const rows = await env.DB.prepare(`
       SELECT l.scope_key, l.agent_id, a.name AS agent_name, l.daily_limit_atoms,
         COALESCE((
@@ -4165,6 +4169,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/v1/admin/workspace") return getBusinessWorkspace(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/operations") return getAdminBusinessOperations(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/forecast") return getAdminBusinessForecast(request, env);
+    if ((request.method === "GET" || request.method === "POST") && url.pathname === "/v1/admin/x402/budgets") return manageX402Budgets(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/bootstrap") return bootstrapBusiness(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/agents") return provisionAgent(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/agents") return listBusinessAgents(request, env);
