@@ -3,9 +3,11 @@ name: Deploy NERITH Pages gateway
 on:
   push:
     branches:
+      - main
       - feat/nerith-dashboard-preview
     paths:
       - ".github/workflows/nerith-pages-redirect.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
