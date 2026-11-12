@@ -3152,6 +3152,184 @@ async function getAgentLiquidity(request: Request, env: Env): Promise<Response> 
   return json({ network: "solana", balances });
 }
 
+const ADMIN_OPERATION_STATUSES = new Set([
+  "reserved",
+  "awaiting_conversion",
+  "preparing_conversion",
+  "conversion_submitted",
+  "verification_pending",
+  "conversion_settled",
+  "conversion_settled_shortfall",
+  "conversion_unverified",
+  "conversion_failed",
+  "ready_for_fulfillment",
+  "blocked",
+  "completed",
+  "released",
+  "expired"
+]);
+
+type AdminOperationRow = {
+  id: string;
+  agent_id: string;
+  agent_name: string;
+  task_id: string;
+  network: string;
+  token: string;
+  amount_atoms: string;
+  purpose: string;
+  status: string;
+  action: string;
+  available_atoms: string;
+  shortfall_atoms: string;
+  source_wallet_id: string | null;
+  transaction_hash: string | null;
+  received_output_atoms: string | null;
+  settlement_note: string | null;
+  created_at: string;
+  approval_decision: string | null;
+  approval_decided_at: string | null;
+  approval_telegram_user_id: string | null;
+  has_active_reservation: number;
+};
+
+async function getAdminBusinessOperations(request: Request, env: Env): Promise<Response> {
+  try {
+    if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+    const url = new URL(request.url);
+    const businessId = url.searchParams.get("businessId");
+    if (!businessId) return json({ error: "business_id_required" }, 400);
+    const business = await env.DB.prepare("SELECT id FROM businesses WHERE id = ?")
+      .bind(businessId).first<{ id: string }>();
+    if (!business) return json({ error: "business_not_found" }, 404);
+
+    const rawLimit = url.searchParams.get("limit");
+    let limit = 50;
+    if (rawLimit !== null) {
+      if (!/^\d+$/.test(rawLimit)) return json({ error: "invalid_limit" }, 400);
+      limit = Number(rawLimit);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100) return json({ error: "invalid_limit" }, 400);
+    }
+
+    const status = url.searchParams.get("status");
+    if (status !== null && !ADMIN_OPERATION_STATUSES.has(status)) {
+      return json({ error: "invalid_status" }, 400);
+    }
+
+    let cursor: { createdAt: string; id: string } | null = null;
+    const rawCursor = url.searchParams.get("cursor");
+    if (rawCursor !== null) {
+      try {
+        const parsed: unknown = JSON.parse(atob(rawCursor));
+        if (!parsed || typeof parsed !== "object" ||
+            typeof (parsed as Record<string, unknown>).createdAt !== "string" ||
+            typeof (parsed as Record<string, unknown>).id !== "string" ||
+            !(parsed as Record<string, unknown>).createdAt ||
+            !(parsed as Record<string, unknown>).id) {
+          return json({ error: "invalid_cursor" }, 400);
+        }
+        cursor = {
+          createdAt: (parsed as { createdAt: string }).createdAt,
+          id: (parsed as { id: string }).id
+        };
+        if (!Number.isFinite(Date.parse(cursor.createdAt)) || cursor.id.length > 200) {
+          return json({ error: "invalid_cursor" }, 400);
+        }
+      } catch {
+        return json({ error: "invalid_cursor" }, 400);
+      }
+    }
+
+    const countRows = await env.DB.prepare(
+      "SELECT status, COUNT(*) AS count FROM operations WHERE business_id = ? GROUP BY status"
+    ).bind(businessId).all<{ status: string; count: number }>();
+    const statusCounts: Record<string, number> = {};
+    for (const row of countRows.results ?? []) statusCounts[row.status] = row.count;
+
+    let sql = `
+      SELECT o.id, o.agent_id, a.name AS agent_name, o.task_id, o.network, o.token,
+             o.amount_atoms, o.purpose, o.status, o.action, o.available_atoms,
+             o.shortfall_atoms, o.source_wallet_id, o.transaction_hash,
+             o.received_output_atoms, o.settlement_note, o.created_at,
+             ap.decision AS approval_decision, ap.decided_at AS approval_decided_at,
+             ap.telegram_user_id AS approval_telegram_user_id,
+             CASE WHEN EXISTS (
+               SELECT 1 FROM reservations r
+               WHERE r.operation_id = o.id AND r.status = 'active'
+                 AND julianday(r.expires_at) > julianday('now')
+             ) THEN 1 ELSE 0 END AS has_active_reservation
+      FROM operations o
+      JOIN agents a ON a.id = o.agent_id AND a.business_id = o.business_id
+      LEFT JOIN telegram_operation_approvals ap ON ap.operation_id = o.id
+      WHERE o.business_id = ?
+    `;
+    const bindings: unknown[] = [businessId];
+    if (status !== null) {
+      sql += " AND o.status = ?";
+      bindings.push(status);
+    }
+    if (cursor) {
+      sql += " AND (o.created_at < ? OR (o.created_at = ? AND o.id < ?))";
+      bindings.push(cursor.createdAt, cursor.createdAt, cursor.id);
+    }
+    sql += " ORDER BY o.created_at DESC, o.id DESC LIMIT ?";
+    bindings.push(limit + 1);
+
+    const rows = await env.DB.prepare(sql).bind(...bindings).all<AdminOperationRow>();
+    const page = rows.results ?? [];
+    const hasMore = page.length > limit;
+    const visible = hasMore ? page.slice(0, limit) : page;
+    const operations = visible.map((row) => {
+      const decimals = row.token === "SOL" ? 9 : 6;
+      const approvalState = row.approval_decision === "approved" || row.approval_decision === "rejected"
+        ? row.approval_decision
+        : row.status === "reserved" && row.action === "direct_fulfillment" && row.has_active_reservation === 1
+          ? "pending"
+          : "not_applicable";
+      return {
+        operationId: row.id,
+        agentId: row.agent_id,
+        agentName: row.agent_name,
+        taskId: row.task_id,
+        network: row.network,
+        token: row.token,
+        amount: formatTokenAmount(BigInt(row.amount_atoms), decimals),
+        purpose: row.purpose,
+        status: row.status,
+        action: row.action,
+        available: formatTokenAmount(BigInt(row.available_atoms), decimals),
+        shortfall: formatTokenAmount(BigInt(row.shortfall_atoms), decimals),
+        sourceWalletId: row.source_wallet_id,
+        approval: {
+          state: approvalState,
+          decidedAt: row.approval_decided_at,
+          decidedByTelegramUserId: row.approval_telegram_user_id
+        },
+        execution: {
+          transactionHash: row.transaction_hash
+        },
+        settlement: {
+          receivedUSDC: row.received_output_atoms
+            ? formatTokenAmount(BigInt(row.received_output_atoms), 6)
+            : null,
+          note: row.settlement_note,
+          status: row.status
+        },
+        createdAt: row.created_at
+      };
+    });
+
+    const last = visible[visible.length - 1];
+    const nextCursor = hasMore && last
+      ? btoa(JSON.stringify({ createdAt: last.created_at, id: last.id }))
+      : null;
+
+    return json({ operations, statusCounts, nextCursor, limit });
+  } catch {
+    return json({ error: "internal_error" }, 500);
+  }
+}
+
 async function listAgentOperations(request: Request, env: Env): Promise<Response> {
   const agent = await authenticate(request, env.DB);
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
