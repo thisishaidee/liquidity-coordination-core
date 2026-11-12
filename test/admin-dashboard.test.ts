@@ -535,7 +535,7 @@ describe("browser page script syntax", () => {
     for (const path of ["/", "/dashboard"]) {
       const response = await worker.fetch(new Request("https://nerith.test" + path), env);
       const html = await response.text();
-      const match = html.match(/<script>([\\s\\S]*?)<\\/script>/);
+      const match = html.match(/<script>([\s\S]*?)<\/script>/);
       expect(match).not.toBeNull();
       expect(() => new Function(match![1])).not.toThrow();
     }
