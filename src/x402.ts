@@ -1,5 +1,5 @@
 export const HERMES_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
-const BASE58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const BASE58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;\nconst BASE58_SIGNATURE = /^[1-9A-HJ-NP-Za-km-z]{64,88}$/;
 
 export type HermesPaymentRequirement = {
   scheme: "exact";
@@ -103,7 +103,7 @@ export function parseHermesPaymentReceipt(header: string): HermesPaymentReceipt 
     if (
       value.success !== true ||
       typeof value.transaction !== "string" ||
-      !BASE58.test(value.transaction) ||
+      !BASE58_SIGNATURE.test(value.transaction) ||
       (value.network !== "solana" && value.network !== "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp") ||
       (value.payer !== undefined && (typeof value.payer !== "string" || !BASE58.test(value.payer)))
     ) return null;
