@@ -1316,7 +1316,16 @@ async function syncSolanaBalances(request: Request, env: Env): Promise<Response>
   const business = await env.DB.prepare("SELECT id FROM businesses WHERE id = ?")
     .bind(body.businessId).first<{ id: string }>();
   if (!business) return json({ error: "business_not_found" }, 404);
-  const rpcUrl = env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
+  if (!env.SOLANA_RPC_URL) {
+    return json({
+      error: "solana_rpc_not_configured",
+      message: "A production Solana RPC endpoint is not configured. Add SOLANA_RPC_URL as a Worker secret before syncing wallet balances."
+    }, 503);
+  }
+  const rpcUrl = env.SOLANA_RPC_URL;
+  if (!/^https:\/\//i.test(rpcUrl)) {
+    return json({ error: "solana_rpc_url_invalid", message: "SOLANA_RPC_URL must be an HTTPS mainnet RPC endpoint." }, 503);
+  }
   const usdcMint = env.SOLANA_USDC_MINT || "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
   const wallets = await env.DB.prepare(
