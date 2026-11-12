@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
 
 type QueryRecord = { sql: string; values: unknown[] };
-type TestEnv = { DB: D1Database; ADMIN_BOOTSTRAP_TOKEN?: string };
+type TestEnv = { DB: D1Database; ADMIN_BOOTSTRAP_TOKEN?: string; TELEGRAM_BOT_TOKEN?: string; TELEGRAM_WEBHOOK_SECRET?: string };
 
 function makeEnv(options: {
   businessExists?: boolean;
@@ -375,6 +375,58 @@ it("serves the redesigned landing page without hardcoded example balances", asyn
   expect(html).not.toContain("2 USDC available");
 });
 
+
+describe("Telegram webhook health", () => {
+  it("returns sanitized webhook status to an authenticated operator", async () => {
+    const { env } = makeEnv();
+    env.TELEGRAM_BOT_TOKEN = "telegram-test-token";
+    env.TELEGRAM_WEBHOOK_SECRET = "telegram-test-secret";
+    const timestamp = Math.floor(Date.parse("2026-11-12T14:00:00.000Z") / 1000);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      ok: true,
+      result: {
+        url: "https://nerith.test/v1/telegram/webhook",
+        pending_update_count: 2,
+        last_error_date: timestamp,
+        last_error_message: "private upstream diagnostic",
+        max_connections: 40,
+        allowed_updates: ["message", "callback_query"]
+      }
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    try {
+      const response = await call("/v1/admin/telegram/status", env, bearer);
+      expect(response.status).toBe(200);
+      const body = await response.json() as Record<string, any>;
+      expect(body).toEqual({
+        configured: true,
+        endpointMatches: true,
+        webhookSecretConfigured: true,
+        pendingUpdateCount: 2,
+        hasDeliveryError: true,
+        lastErrorAt: "2026-11-12T14:00:00.000Z",
+        maxConnections: 40,
+        allowedUpdates: ["message", "callback_query"]
+      });
+      expect(body).not.toHaveProperty("webhookUrl");
+      expect(body).not.toHaveProperty("lastErrorMessage");
+      expect(JSON.stringify(body)).not.toContain("telegram-test-token");
+      expect(JSON.stringify(body)).not.toContain("private upstream diagnostic");
+      expect(fetchSpy).toHaveBeenCalledWith("https://api.telegram.org/bottelegram-test-token/getWebhookInfo");
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("does not expose webhook status without an operator session or bot token", async () => {
+    const noAuth = makeEnv();
+    const denied = await call("/v1/admin/telegram/status", noAuth.env);
+    expect(denied.status).toBe(401);
+
+    const noBot = makeEnv();
+    const missing = await call("/v1/admin/telegram/status", noBot.env, bearer);
+    expect(missing.status).toBe(409);
+  });
+});
 
 describe("public legal pages and shared footer navigation", () => {
   it("serves the privacy overview with no external scripts or data collection forms", async () => {
