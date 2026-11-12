@@ -3,6 +3,7 @@ import { businessDashboardHtml } from "./business-dashboard";
 import { pixelFieldSvg } from "./pixel-field";
 import { landingHtml } from "./landing";
 import { controlHtml } from "./control";
+import { privacyHtml, termsHtml } from "./legal";
 import {
   evaluateLiquidity,
   makeOperationId,
@@ -3455,6 +3456,18 @@ export default {
           "content-type": "image/svg+xml; charset=utf-8",
           "cache-control": "public, max-age=3600",
           "x-content-type-options": "nosniff"
+        }
+      });
+    }
+    if (request.method === "GET" && (url.pathname === "/privacy" || url.pathname === "/terms")) {
+      const page = url.pathname === "/privacy" ? privacyHtml : termsHtml;
+      return new Response(page, {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "public, max-age=300",
+          "x-content-type-options": "nosniff",
+          "referrer-policy": "no-referrer",
+          "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
         }
       });
     }
