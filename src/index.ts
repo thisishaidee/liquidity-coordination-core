@@ -876,6 +876,52 @@ async function updateTelegramPermission(request: Request, env: Env): Promise<Res
   });
 }
 
+async function getTelegramWebhookStatus(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  if (!env.TELEGRAM_BOT_TOKEN) return json({ error: "telegram_not_configured" }, 409);
+
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getWebhookInfo`);
+    const payload = await response.json() as {
+      ok?: boolean;
+      description?: string;
+      result?: {
+        url?: string;
+        pending_update_count?: number;
+        last_error_date?: number;
+        last_error_message?: string;
+        max_connections?: number;
+        allowed_updates?: string[];
+      };
+    };
+    if (!response.ok || !payload.ok || !payload.result) {
+      return json({ error: "telegram_status_unavailable" }, 502);
+    }
+
+    const info = payload.result;
+    const expectedUrl = new URL("/v1/telegram/webhook", request.url).toString();
+    const lastErrorDate = Number.isFinite(info.last_error_date)
+      ? new Date((info.last_error_date as number) * 1000).toISOString()
+      : null;
+    return json({
+      configured: Boolean(info.url),
+      endpointMatches: info.url === expectedUrl,
+      webhookSecretConfigured: Boolean(env.TELEGRAM_WEBHOOK_SECRET),
+      pendingUpdateCount: Number.isSafeInteger(info.pending_update_count) && (info.pending_update_count as number) >= 0
+        ? info.pending_update_count
+        : 0,
+      hasDeliveryError: Boolean(info.last_error_message),
+      lastErrorAt: lastErrorDate,
+      maxConnections: Number.isSafeInteger(info.max_connections) ? info.max_connections : null,
+      allowedUpdates: Array.isArray(info.allowed_updates)
+        ? info.allowed_updates.filter((value): value is string => typeof value === "string")
+        : []
+    });
+  } catch {
+    return json({ error: "telegram_status_unavailable" }, 502);
+  }
+}
+
 async function configureTelegramWebhook(request: Request, env: Env): Promise<Response> {
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
   if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_WEBHOOK_SECRET) {
@@ -3509,6 +3555,7 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/admin/telegram/test") return sendTelegramTestAlert(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/telegram/connections") return listTelegramConnections(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/telegram/permissions") return updateTelegramPermission(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/admin/telegram/status") return getTelegramWebhookStatus(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/telegram/setup") return configureTelegramWebhook(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/telegram/link-codes") return createTelegramLinkCode(request, env);
     if (request.method === "POST" && url.pathname === "/v1/telegram/webhook") return telegramWebhook(request, env);
