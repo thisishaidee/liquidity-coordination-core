@@ -299,7 +299,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   }
   function renderTelegram() {
     $("telegramCount").textContent=state.loadErrors["Telegram connections"]?"Unavailable":state.telegram.length+" connection(s)";
-    $("telegramTable").innerHTML=state.loadErrors["Telegram connections"]?'<tr><td colspan="5" class="empty">Telegram connection data unavailable. Refresh to try again.</td></tr>':state.telegram.length?state.telegram.map(c=>'<tr><td class="mono">'+escapeHtml(c.telegramUserId)+'</td><td class="mono">'+escapeHtml(c.chatId)+'</td><td><span class="chip">'+escapeHtml(c.permission)+'</span></td><td><span class="chip '+(c.status==="active"?"lemon":"off")+'">'+escapeHtml(c.status)+'</span></td><td>'+escapeHtml(fmtDate(c.linkedAt))+'</td></tr>').join(""):'<tr><td colspan="5" class="empty">No Telegram connections linked to this business.</td></tr>';
+    $("telegramTable").innerHTML=state.loadErrors["Telegram connections"]?'<tr><td colspan="5" class="empty">Telegram connection data unavailable. Refresh to try again.</td></tr>':state.telegram.length?state.telegram.map(c=>'<tr><td class="mono">'+escapeHtml(c.telegramUserId)+'</td><td class="mono">'+escapeHtml(c.chatId)+'</td><td><span class="chip">'+escapeHtml(c.permission==="approver"?"Operator":c.permission==="requester"?"Requester · legacy":"Viewer")+'</span></td><td><span class="chip '+(c.status==="active"?"lemon":"off")+'">'+escapeHtml(c.status)+'</span></td><td>'+escapeHtml(fmtDate(c.linkedAt))+'</td></tr>').join(""):'<tr><td colspan="5" class="empty">No Telegram connections linked to this business.</td></tr>';
   }
   function renderSettings() {
     const b=state.workspace?.business||{};
