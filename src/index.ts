@@ -1370,21 +1370,35 @@ async function syncSolanaBalances(request: Request, env: Env): Promise<Response>
         sol: formatTokenAmount(solLamports, 9)
       });
     } catch (error) {
+      const message = error instanceof Error ? error.message : "Balance sync failed";
+      console.error("solana_balance_sync_wallet_failed", {
+        walletId: wallet.id,
+        error: message.slice(0, 240)
+      });
       errors.push({
         walletId: wallet.id,
-        error: error instanceof Error ? error.message : "Balance sync failed"
+        error: message.slice(0, 240)
       });
     }
   }
 
+  const allFailed = errors.length > 0 && synced.length === 0;
   return json({
     businessId: body.businessId,
     source: "solana_rpc",
     commitment: "confirmed",
     synced,
     errors,
+    error: allFailed ? "solana_balance_sync_failed" : undefined,
+    message: allFailed
+      ? "No wallet balances could be synced. First RPC error: " + errors[0].error
+      : errors.length
+        ? synced.length + " wallet(s) synced; " + errors.length + " wallet(s) failed. First RPC error: " + errors[0].error
+        : synced.length
+          ? synced.length + " wallet(s) synced successfully."
+          : "No active Solana wallets are registered for this business.",
     observedAt: new Date().toISOString()
-  }, errors.length && !synced.length ? 502 : 200);
+  }, allFailed ? 502 : 200);
 }
 
 const SOL_MINT = "So11111111111111111111111111111111111111112";
