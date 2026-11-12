@@ -344,9 +344,9 @@ The Worker serves a public product landing page at `/`, a business-owner setup a
 
 ## Telegram business companion
 
-Telegram is a private, business-scoped operations companion. It supports one-time private-chat linking, proactive business alerts and read-only commands for liquidity, forecasts, agents and operations. It never signs transactions, moves funds or authorizes spending. The API and on-chain settlement remain the source of truth.
+Telegram is a private, business-scoped operations interface. A single linked Telegram identity receives business alerts, monitors liquidity, forecasts, agents and operations, creates liquidity requests, and reviews prepared requests. A newly linked Telegram identity receives the combined operator permission rather than requiring a separate requester and approver connection. The bot never signs transactions, moves funds or bypasses the business-controlled signer. NERITH's API and on-chain settlement remain the source of truth.
 
-Request-capable Telegram roles also have two workflow commands: `/newrequest` starts a new liquidity request, while `/review` lists prepared requests for authorised independent review. The previous `/request` and `/requests` commands remain supported as aliases. Requesters cannot approve their own requests; only an authorised approver can review another user's request.
+A user can create a request and review it from the same Telegram identity. Decisions on requests created by that same identity require Google Authenticator (TOTP) verification. Other authorized approvers continue to use the existing one-time approval buttons. Authenticator secrets are encrypted at rest with the Worker-only `TELEGRAM_TOTP_ENCRYPTION_KEY`; codes expire on the normal 30-second TOTP schedule, allow only a small clock-drift window, and each time-step can be used only once. The approval challenge expires after five minutes and is bound to the original operation snapshot. Authenticator verification records a business decision only; it does not sign or broadcast a transaction.
 
 ### Create and configure the bot
 
@@ -356,6 +356,7 @@ Request-capable Telegram roles also have two workflow commands: `/newrequest` st
    - `TELEGRAM_BOT_TOKEN` — the token from BotFather.
    - `TELEGRAM_WEBHOOK_SECRET` — a private random string containing 32–64 hexadecimal characters.
 4. Ensure `ADMIN_BOOTSTRAP_TOKEN` is configured as a Worker secret. The business admin API uses it to protect bot setup and linking invitations.
+5. Set `TELEGRAM_TOTP_ENCRYPTION_KEY` as a Worker secret. Use a separate cryptographically random value of at least 32 characters. Do not reuse the bot token, webhook secret or admin bootstrap token. Keep this key stable; rotating it requires every linked Telegram operator to enroll Google Authenticator again.
 5. Call the authenticated setup endpoint once. It validates the bot, registers the webhook and publishes Telegram's command menu:
 
 ```bash
@@ -376,7 +377,7 @@ curl -X POST https://YOUR_WORKER/v1/admin/telegram/link-codes \
   -d '{"businessId":"biz_..."}'
 ```
 
-Open the returned `deepLink` from the private Telegram account that should receive business alerts. Invitations expire after 15 minutes and can only be used once. Group chats are rejected. A linked chat can disconnect itself with `/disconnect`.
+Open the returned `deepLink` from the one private Telegram account that should operate the business. Invitations expire after 15 minutes and can only be used once. Group chats are rejected. A new connection receives the combined operator permission.
 
 ### Bot commands
 
@@ -385,6 +386,9 @@ Open the returned `deepLink` from the private Telegram account that should recei
 - `/forecast` — upcoming planned obligations.
 - `/agents` — provisioned agents and their current status.
 - `/operations` — latest liquidity operations and their states.
+- `/setupauth` — generate a Google Authenticator setup key.
+- `/verifyauth 123456` — verify and enable authenticator protection.
+- `/confirmapproval 123456` — confirm a decision on a request created by this same Telegram identity.
 - `/help` — command guide.
 - `/disconnect` — revoke this chat's connection.
 
