@@ -146,14 +146,14 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   const state = { businessId: "", workspace: null, agents: [], wallets: [], telegram: [], forecast: null, operations: [], nextCursor: null, operationStatus: "" };
   const parseDecimalAtoms = (value, decimals=6) => {
     const text=String(value??"0");
-    if(!/^\\d+(?:\\.\\d+)?$/.test(text))return 0n;
+    if(!/^\d+(?:\.\d+)?$/.test(text))return 0n;
     const [whole,fraction=""]=text.split(".");
     const scale=10n**BigInt(decimals);
     return BigInt(whole)*scale+BigInt((fraction+"0".repeat(decimals)).slice(0,decimals)||"0");
   };
   const formatAtoms = (atoms,decimals=6,minFraction=2) => {
     const negative=atoms<0n;const absolute=negative?-atoms:atoms;const scale=10n**BigInt(decimals);
-    const whole=(absolute/scale).toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g,",");
+    const whole=(absolute/scale).toString().replace(/\B(?=(\d{3})+(?!\d))/g,",");
     let fraction=(absolute%scale).toString().padStart(decimals,"0");
     while(fraction.length>minFraction&&fraction.endsWith("0"))fraction=fraction.slice(0,-1);
     if(fraction.length<minFraction)fraction=fraction.padEnd(minFraction,"0");
@@ -211,7 +211,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     $("metricShortfall").textContent=f?money(f.totalShortfallUSDC):"—";
     $("metricShortfallFoot").textContent=f?(f.blocked+" blocked · "+f.conversionRequired+" may need conversion"):"Forecast unavailable";
     $("overviewAgents").innerHTML=state.agents.length?state.agents.slice(0,6).map(a=>'<div class="balance-row"><span><strong>'+escapeHtml(a.name)+'</strong><br><span class="muted">'+escapeHtml(a.id)+'</span></span><span class="chip '+(a.status==="active"?"lemon":"off")+'">'+escapeHtml(a.status)+'</span></div>').join(""):'<div class="empty"><strong>No agents registered</strong>Agent records will appear here when available.</div>';
-    $("overviewLiquidity").innerHTML='<div class="balance-row"><span>Business treasury available</span><strong>'+money(available)+' USDC</strong></div><div class="balance-row"><span>Business treasury wallets</span><strong>'+operating.filter(w=>w.scope==="business"&&w.status==="active").length+'</strong></div><div class="balance-row"><span>Agent-scoped USDC · isolated</span><strong>'+moneyAtoms(isolatedAgentUSDC)+' USDC</strong></div><div class="balance-row"><span>Fresh treasury snapshots</span><strong>'+fresh.count+' / '+fresh.total+'</strong></div>';
+    $("overviewLiquidity").innerHTML='<div class="balance-row"><span>Business treasury available</span><strong>'+moneyAtoms(available)+' USDC</strong></div><div class="balance-row"><span>Business treasury wallets</span><strong>'+operating.filter(w=>w.scope==="business"&&w.status==="active").length+'</strong></div><div class="balance-row"><span>Agent-scoped USDC · isolated</span><strong>'+moneyAtoms(isolatedAgentUSDC)+' USDC</strong></div><div class="balance-row"><span>Fresh treasury snapshots</span><strong>'+fresh.count+' / '+fresh.total+'</strong></div>';
     const x402=state.wallets.filter(w=>w.purpose==="api_payment");
     $("overviewX402").innerHTML=x402.length?x402.map(w=>'<div class="balance-row"><span>'+escapeHtml(w.address.slice(0,7)+"…"+w.address.slice(-5))+'</span><strong>'+moneyAtoms((w.balances||[]).filter(b=>b.token==="USDC"&&b.fresh).reduce((s,b)=>s+parseDecimalAtoms(b.available,6),0n))+' USDC</strong></div>').join(""):'<div class="empty">No registered x402 reserve wallet.</div>';
   }
@@ -231,7 +231,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     const available=sumBalances(state.wallets,"operating","USDC","available",true,"business");
     const isolated=sumBalances(state.wallets,"operating","USDC","available",true,"agent");
     const fresh=walletFreshCount(state.wallets,"operating","business");
-    $("liquidityMetrics").innerHTML=metric("Treasury confirmed USDC",money(confirmed),"Business-scope operating wallets")+metric("Treasury reserved USDC",money(reserved),"Fresh snapshots only · internal holds excluded from availability")+metric("Treasury available USDC",money(available),"Fresh confirmed less reserved",true)+metric("Agent-scoped USDC",moneyAtoms(isolated),"Fresh snapshots only · isolated by agent, not pooled");
+    $("liquidityMetrics").innerHTML=metric("Treasury confirmed USDC",moneyAtoms(confirmed),"Business-scope operating wallets")+metric("Treasury reserved USDC",moneyAtoms(reserved),"Fresh snapshots only · internal holds excluded from availability")+metric("Treasury available USDC",money(available),"Fresh confirmed less reserved",true)+metric("Agent-scoped USDC",moneyAtoms(isolated),"Fresh snapshots only · isolated by agent, not pooled");
     const businessWallets=op.filter(w=>w.scope==="business");
     const agentWallets=op.filter(w=>w.scope==="agent");
     $("operatingWallets").innerHTML='<div class="pixel" style="grid-column:1/-1">Business treasury wallets · shared only where agent permission allows</div>'+(businessWallets.length?businessWallets.map(walletCard).join(""):'<div class="empty">No business treasury operating wallets registered.</div>')+'<hr class="dotted" style="grid-column:1/-1"><div class="pixel" style="grid-column:1/-1">Agent-scoped wallets · isolated and never pooled</div>'+(agentWallets.length?agentWallets.map(walletCard).join(""):'<div class="empty">No agent-scoped operating wallets registered.</div>');
