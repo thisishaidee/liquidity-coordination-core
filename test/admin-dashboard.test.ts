@@ -339,6 +339,8 @@ describe("business operations aggregation and dashboard route", () => {
     expect(html).toContain("@media(max-width:360px)");
     expect(html).toContain("bottom-nav");
     expect(html).toContain("Support / Privacy / Terms: not yet published");
+    expect(html).toContain("amountText(b.confirmed,b.token)");
+    expect(html).toContain("<option>verification_pending</option>");
   });
 });
 
@@ -349,4 +351,17 @@ it("serves the shared pixel field as a same-origin SVG asset", async () => {
   expect(response.status).toBe(200);
   expect(response.headers.get("content-type")).toContain("image/svg+xml");
   expect(await response.text()).toContain("<svg");
+});
+
+
+it("serves the redesigned landing page without hardcoded example balances", async () => {
+  const { env } = makeEnv();
+  const response = await worker.fetch(new Request("https://nerith.test/"), env);
+  expect(response.status).toBe(200);
+  const html = await response.text();
+  expect(html).toContain("Keep autonomous agents");
+  expect(html).toContain("Task amount and target asset");
+  expect(html).toContain("Fresh eligible balance assessment");
+  expect(html).not.toContain("10 USDC required");
+  expect(html).not.toContain("2 USDC available");
 });
