@@ -2281,15 +2281,20 @@ async function requestSwapQuote(request: Request, env: Env): Promise<Response> {
     return json({ error: "invalid_slippage", message: "slippageBps must be an integer from 1 to 300." }, 400);
   }
 
-  const upstream = await proxyHermes(request, "/v1/swap/quote", {
+  const hermesPayload = {
     input: { token: SOL_MINT, amount: context.sourceAtoms.toString(), chainKey: "sol" },
     output: { token: USDC_MINT, chainKey: "sol" },
     userAddress: context.userAddress,
     slippageBps
-  }, {
+  };
+  const x402Context: X402ProxyContext = {
+    env, agent, paymentWalletAddress: context.paymentWalletAddress,
+    requestHash: await sha256("/v1/swap/quote\n" + JSON.stringify(hermesPayload))
+  };
+  const upstream = await proxyHermes(request, "/v1/swap/quote", hermesPayload, {
     "X-Liquidity-Operation-ID": context.operationId,
     "X-Liquidity-Required-USDC": formatTokenAmount(context.shortfallAtoms, 6)
-  });
+  }, x402Context);
 
   if (upstream.status !== 200) return upstream;
 
@@ -2495,16 +2500,21 @@ async function prepareSwapTransaction(request: Request, env: Env): Promise<Respo
     }
   }
 
-  const upstream = await proxyHermes(request, "/v1/swap/build-tx", {
+  const hermesPayload = {
     provider,
     userAddress: context.userAddress,
     chainKey: "sol",
     quoteResponse: providerQuote
-  }, {
+  };
+  const x402Context: X402ProxyContext = {
+    env, agent, paymentWalletAddress: context.paymentWalletAddress,
+    requestHash: await sha256("/v1/swap/build-tx\n" + JSON.stringify(hermesPayload))
+  };
+  const upstream = await proxyHermes(request, "/v1/swap/build-tx", hermesPayload, {
     "X-Liquidity-Operation-ID": context.operationId,
     "X-Liquidity-Required-USDC": formatTokenAmount(context.shortfallAtoms, 6),
     "X-Liquidity-Source-Reserved-SOL": context.sourceAmount
-  });
+  }, x402Context);
 
   if (upstream.status !== 200) return upstream;
 
