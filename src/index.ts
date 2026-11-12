@@ -494,12 +494,12 @@ async function handleTelegramCommand(
       return;
     }
     const lines = linkedWorkspaces.map((workspace) =>
-      `• ${workspace.business_name}\\n  Business ID: ${workspace.business_id}`
+      `• ${workspace.business_name}\n  Business ID: ${workspace.business_id}`
     );
     await sendTelegramMessage(
       env,
       chatId,
-      `Your linked NERITH workspace${linkedWorkspaces.length === 1 ? "" : "s"}\\n\\n${lines.join("\\n\\n")}\\n\\nKeep this ID private to your business team. It is an identifier, not an admin token or login credential.`
+      `Your linked NERITH workspace${linkedWorkspaces.length === 1 ? "" : "s"}\n\n${lines.join("\n\n")}\n\nKeep this ID private to your business team. It is an identifier, not an admin token or login credential.`
     );
     return;
   }
