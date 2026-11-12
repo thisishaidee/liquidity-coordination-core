@@ -304,20 +304,29 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     try {
       const id=encodeURIComponent(state.businessId);
       const operationParams=new URLSearchParams({businessId:state.businessId,limit:"50"}); if(state.operationStatus)operationParams.set("status",state.operationStatus);
-      const results=await Promise.all([
-        api("/v1/admin/workspace?businessId="+id),
-        api("/v1/admin/agents?businessId="+id),
-        api("/v1/admin/wallets?businessId="+id),
-        api("/v1/admin/telegram/connections?businessId="+id),
-        api("/v1/admin/forecast?businessId="+id),
-        api("/v1/admin/operations?"+operationParams.toString())
-      ]);
-      [state.workspace,state.agents,state.wallets,state.telegram,state.forecast]=[results[0],results[1].agents||[],results[2].wallets||[],results[3].connections||[],results[4]];
-      state.operations=results[5].operations||[];state.nextCursor=results[5].nextCursor;state.operationCounts=results[5].statusCounts||{};
+      // Workspace access is the gate. Once it succeeds, each data section loads independently.
+      const workspace=await api("/v1/admin/workspace?businessId="+id);
+      state.workspace=workspace;
       $("access").hidden=true;$("app").hidden=false;
-      $("topBusiness").textContent=state.workspace.business.name+" · "+state.businessId;
+      $("topBusiness").textContent=(workspace.business?.name||"Business")+" · "+state.businessId;
       $("sideBusiness").textContent=state.businessId;
+      const requests=[
+        ["Agents",api("/v1/admin/agents?businessId="+id),value=>{state.agents=value.agents||[];}],
+        ["Wallets",api("/v1/admin/wallets?businessId="+id),value=>{state.wallets=value.wallets||[];}],
+        ["Telegram connections",api("/v1/admin/telegram/connections?businessId="+id),value=>{state.telegram=value.connections||[];}],
+        ["Forecast",api("/v1/admin/forecast?businessId="+id),value=>{state.forecast=value;}],
+        ["Operations",api("/v1/admin/operations?"+operationParams.toString()),value=>{state.operations=value.operations||[];state.nextCursor=value.nextCursor;state.operationCounts=value.statusCounts||{};}]
+      ];
+      const results=await Promise.allSettled(requests.map(item=>item[1]));
+      const failed=[];
+      results.forEach((result,index)=>{
+        const [label,,apply]=requests[index];
+        if(result.status==="fulfilled")apply(result.value);
+        else failed.push(label);
+      });
       renderOverview();renderAgents();renderLiquidity();renderForecast();renderOperations();renderTelegram();renderSettings();
+      if(failed.length)showError("Some dashboard data could not be refreshed: "+failed.join(", ")+". Other sections remain available. Values from the last successful load are retained; do not treat an empty section as confirmation that no records exist.");
+      else clearError();
     } catch(error) {
       const message=String(error.message||error);
       if(message==="unauthorized") { $("app").hidden=true;$("access").hidden=false;showError("Operator session not found or expired. Open Business Setup to establish the existing operator session, then return here.","accessError"); }
