@@ -535,7 +535,7 @@ describe("browser page script syntax", () => {
   it("parses the inline scripts for the landing page and business dashboard", () => {
     for (const path of ["../public/landing.html", "../public/dashboard.html"]) {
       const html = readFileSync(new URL(path, import.meta.url), "utf8");
-      const match = html.match(/<script>([\s\\S]*?)<\/script>/);
+      const match = html.match(/<script>([\s\S]*?)<\/script>/);
       expect(match).not.toBeNull();
       expect(() => new Script(match![1])).not.toThrow();
     }
