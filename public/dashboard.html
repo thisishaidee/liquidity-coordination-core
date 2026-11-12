@@ -322,10 +322,15 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       results.forEach((result,index)=>{
         const [label,,apply]=requests[index];
         if(result.status==="fulfilled")apply(result.value);
-        else failed.push(label);
+        else failed.push({label,error:result.reason});
       });
+      if(failed.some(item=>String(item.error?.message||item.error)==="unauthorized")){
+        $("app").hidden=true;$("access").hidden=false;
+        showError("Operator session expired while loading dashboard data. Open Business Setup to establish the existing operator session, then return here.","accessError");
+        return;
+      }
       renderOverview();renderAgents();renderLiquidity();renderForecast();renderOperations();renderTelegram();renderSettings();
-      if(failed.length)showError("Some dashboard data could not be refreshed: "+failed.join(", ")+". Other sections remain available. Values from the last successful load are retained; do not treat an empty section as confirmation that no records exist.");
+      if(failed.length)showError("Some dashboard data could not be refreshed: "+failed.map(item=>item.label).join(", ")+". Other sections remain available. Values from the last successful load are retained; an empty section is not proof that no records exist.");
       else clearError();
     } catch(error) {
       const message=String(error.message||error);
