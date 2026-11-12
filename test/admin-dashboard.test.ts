@@ -257,3 +257,82 @@ describe("existing agent endpoints remain compatible after forecast extraction",
     });
   });
 });
+
+
+describe("business operations aggregation and dashboard route", () => {
+  it("separates pending approval from execution and settlement across agents", async () => {
+    const now = "2026-11-12 10:00:00";
+    const rows = [
+      {
+        id: "op_pending", agent_id: "agent_a", agent_name: "Agent A", task_id: "task_a",
+        network: "solana", token: "USDC", amount_atoms: "10000000", purpose: "Task funding",
+        status: "reserved", action: "direct_fulfillment", available_atoms: "10000000",
+        shortfall_atoms: "0", source_wallet_id: "wallet_business", transaction_hash: null,
+        received_output_atoms: null, settlement_note: null, created_at: now,
+        approval_decision: null, approval_decided_at: null, approval_telegram_user_id: null,
+        has_active_reservation: 1
+      },
+      {
+        id: "op_completed", agent_id: "agent_b", agent_name: "Agent B", task_id: "task_b",
+        network: "solana", token: "USDC", amount_atoms: "5000000", purpose: "Agent reported done",
+        status: "completed", action: "direct_fulfillment", available_atoms: "5000000",
+        shortfall_atoms: "0", source_wallet_id: "wallet_agent", transaction_hash: "sig_completed",
+        received_output_atoms: null, settlement_note: null, created_at: "2026-11-12 09:00:00",
+        approval_decision: null, approval_decided_at: null, approval_telegram_user_id: null,
+        has_active_reservation: 0
+      }
+    ];
+    const queries: QueryRecord[] = [];
+    const db = {
+      prepare(sql: string) {
+        let values: unknown[] = [];
+        const statement = {
+          bind(...args: unknown[]) { values = args; return statement; },
+          async first<T>() {
+            queries.push({ sql, values });
+            if (sql.includes("FROM businesses")) return { id: values[0] } as T;
+            return null;
+          },
+          async all<T>() {
+            queries.push({ sql, values });
+            if (sql.includes("COUNT(*) AS count FROM operations")) {
+              return { results: [{ status: "reserved", count: 1 }, { status: "completed", count: 1 }] as T[] };
+            }
+            if (sql.includes("FROM operations o")) return { results: rows as T[] };
+            return { results: [] as T[] };
+          },
+          async run() { return { success: true, meta: { changes: 0 } }; }
+        };
+        return statement;
+      }
+    };
+    const env = { DB: db as unknown as D1Database, ADMIN_BOOTSTRAP_TOKEN: token } as TestEnv;
+    const response = await worker.fetch(new Request("https://nerith.test/v1/admin/operations?businessId=biz_shared&limit=1", { headers: bearer }), env);
+    expect(response.status).toBe(200);
+    const body = await response.json() as Record<string, any>;
+    expect(body.operations).toHaveLength(1);
+    expect(body.operations[0]).toMatchObject({
+      operationId: "op_pending",
+      agentId: "agent_a",
+      agentName: "Agent A",
+      approval: { state: "pending", decidedAt: null, decidedByTelegramUserId: null },
+      execution: { transactionHash: null },
+      settlement: { receivedUSDC: null, note: null, status: "reserved" }
+    });
+    expect(body.statusCounts).toEqual({ reserved: 1, completed: 1 });
+    expect(body.nextCursor).toBeTruthy();
+    expect(queries.some(q => q.sql.includes("EXISTS (") && q.sql.includes("FROM reservations r"))).toBe(true);
+  });
+
+  it("serves the dashboard with the existing restrictive page headers", async () => {
+    const { env } = makeEnv();
+    const response = await worker.fetch(new Request("https://nerith.test/dashboard"), env);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    expect(response.headers.get("content-security-policy")).toContain("default-src 'self'");
+    const html = await response.text();
+    expect(html).toContain("Operator-managed preview");
+    expect(html).toContain("Forecasts");
+    expect(html).toContain("x402 payment reserve");
+  });
+});
