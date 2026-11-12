@@ -465,7 +465,7 @@ async function handleTelegramCommand(
   const businessId = connection.business_id;
   if (command === "/request") {
     if (!canCreateTelegramRequest(connection.permission)) {
-      await sendTelegramMessage(env, chatId, "Request creation is restricted to linked accounts with approver access. Ask your business administrator to review your Telegram permissions.");
+      await sendTelegramMessage(env, chatId, "Request creation requires Requester or Approver access. Ask your business administrator to update your Telegram permissions.");
       return;
     }
     await startTelegramLiquidityRequest(env, chatId, userId, businessId);
@@ -843,8 +843,8 @@ async function updateTelegramPermission(request: Request, env: Env): Promise<Res
   const body = await readJson(request);
   if (!body || typeof body.businessId !== "string" ||
       typeof body.chatId !== "string" || typeof body.telegramUserId !== "string" ||
-      (body.permission !== "viewer" && body.permission !== "approver")) {
-    return json({ error: "invalid_request", message: "Provide businessId, chatId, telegramUserId and permission=viewer|approver." }, 400);
+      (!["viewer", "requester", "approver"].includes(body.permission))) {
+    return json({ error: "invalid_request", message: "Provide businessId, chatId, telegramUserId and permission=viewer|requester|approver." }, 400);
   }
   const result = await env.DB.prepare(`
     UPDATE telegram_connections SET permission = ?
