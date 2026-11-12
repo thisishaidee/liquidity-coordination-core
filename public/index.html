@@ -4,7 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light">
 <title>NERITH — Liquidity coordination</title>
 <style>
-:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:#171b18;background:#f7f8f5;font-synthesis:none;--ink:#171b18;--muted:#7b8179;--line:#e8ebe4;--lime:#d8f36a;--panel:#fff;--green:#345c40}
+:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:#171b18;background:#f7f8f5;font-synthesis:none;--ink:#171b18;--muted:#7b8179;--line:#e8ebe4;--lime:#DFFF00;--panel:#fff;--green:#345c40}
 *{box-sizing:border-box}body{margin:0;min-height:100vh}button,input{font:inherit}button{cursor:pointer}
 .app{min-height:100vh;display:grid;grid-template-columns:238px minmax(0,1fr)}
 .sidebar{background:#111713;color:#f4f5f0;padding:27px 18px;display:flex;flex-direction:column;gap:34px;min-height:100vh}
@@ -12,19 +12,60 @@
 .nav-label{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:#778178;padding:0 12px 10px}.nav{display:grid;gap:5px}.nav a{display:flex;align-items:center;gap:12px;padding:11px 12px;color:#aeb7ae;text-decoration:none;font-size:12px;border-radius:8px}.nav a.active,.nav a:hover{background:#222b23;color:#fff}.nav a.active:before{content:"";width:4px;height:17px;background:var(--lime);border-radius:3px;margin-left:-12px;margin-right:8px}.nav-icon{width:15px;text-align:center;color:#9aa59a}.sidebar-bottom{margin-top:auto;border-top:1px solid #29312a;padding:18px 8px 0;color:#849084;font-size:10px;line-height:1.7}
 .main{min-width:0;padding:28px clamp(18px,4vw,58px) 56px;max-width:1600px;width:100%;margin:0 auto}.topbar{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:36px}.eyebrow{font-size:10px;text-transform:uppercase;letter-spacing:.15em;color:#7c847a}.top-right{display:flex;align-items:center;gap:12px}.status{font-size:11px;color:#727a70;background:#eef0e9;border:1px solid #e3e7dc;border-radius:30px;padding:8px 11px}.status.live{color:#345c40;background:#eef5e7}.connect-open{border:1px solid #dfe4d9;background:#fff;border-radius:8px;padding:9px 13px;font-size:11px;color:#252c25}
 h1{font-size:clamp(27px,3vw,38px);line-height:1.08;letter-spacing:-.055em;margin:9px 0 10px;font-weight:650}.intro{color:#737b70;font-size:13px;max-width:620px;line-height:1.65}.hero{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;margin-bottom:28px}.hero-note{max-width:220px;text-align:right;color:#788074;font-size:10px;line-height:1.6}.hero-note strong{display:block;color:#303a2e;font-size:12px;font-weight:600}
-.connect-panel{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end;background:#fff;border:1px solid var(--line);border-radius:12px;padding:15px;margin:0 0 22px}.connect-panel label{display:block;font-size:10px;color:#727a70;margin-bottom:7px}.connect-panel input{width:100%;border:1px solid #dfe4da;border-radius:7px;padding:11px 12px;font-size:12px;outline:none}.connect-panel input:focus,.search:focus{border-color:#9ab34b;box-shadow:0 0 0 3px #d8f36a44}.primary{border:0;background:#172019;color:white;border-radius:7px;padding:11px 16px;font-size:11px;font-weight:650}.hint,.error{font-size:10px;color:#81897e;margin-top:7px}.error{color:#a33d35;display:none}
+.connect-panel{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end;background:#fff;border:1px solid var(--line);border-radius:12px;padding:15px;margin:0 0 22px}.connect-panel label{display:block;font-size:10px;color:#727a70;margin-bottom:7px}.connect-panel input{width:100%;border:1px solid #dfe4da;border-radius:7px;padding:11px 12px;font-size:12px;outline:none}.connect-panel input:focus,.search:focus{border-color:#9ab34b;box-shadow:0 0 0 3px #DFFF0044}.primary{border:0;background:#172019;color:white;border-radius:7px;padding:11px 16px;font-size:11px;font-weight:650}.hint,.error{font-size:10px;color:#81897e;margin-top:7px}.error{color:#a33d35;display:none}
 .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:18px}.stat{background:#fff;border:1px solid var(--line);border-radius:11px;padding:17px 18px;min-width:0}.stat-top{display:flex;justify-content:space-between;gap:8px;color:#7b8378;font-size:10px}.stat-dot{width:6px;height:6px;background:#c5d96a;border-radius:50%;margin-top:3px}.stat-value{font-size:clamp(20px,2.1vw,27px);letter-spacing:-.055em;font-weight:650;margin-top:16px;overflow-wrap:anywhere}.stat-foot{font-size:9px;color:#92988e;margin-top:7px}
 .section{background:#fff;border:1px solid var(--line);border-radius:11px;margin-bottom:15px;overflow:hidden}.section-head{display:flex;justify-content:space-between;align-items:center;gap:15px;padding:17px 19px;border-bottom:1px solid #eff1eb}.section-title{font-size:13px;font-weight:650;letter-spacing:-.02em}.section-sub{font-size:10px;color:#81887e;margin-top:5px}.section-actions{display:flex;align-items:center;gap:9px}.ghost{border:1px solid #e3e7df;background:#fff;color:#4b5548;border-radius:7px;padding:8px 11px;font-size:10px}.search{width:min(220px,34vw);border:1px solid #e3e7df;border-radius:7px;padding:8px 10px;font-size:10px;outline:none;background:#fff}.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:650px}th{text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#8b9288;font-weight:600;padding:12px 17px;border-bottom:1px solid #f0f2ed}td{font-size:11px;padding:13px 17px;border-bottom:1px solid #f1f3ee;white-space:nowrap;color:#424a40}tr:last-child td{border-bottom:0}.mono{font-family:ui-monospace,monospace;font-size:10px}.pill{display:inline-flex;border-radius:20px;padding:5px 8px;font-size:9px;background:#f0f1ed;color:#667061}.pill.good{background:#edf5e7;color:#41633b}.pill.warn{background:#fbf3df;color:#916b27}.pill.bad{background:#faeae6;color:#a64a3e}.empty{padding:25px 12px;text-align:center;color:#92988e;font-size:11px}.hidden{display:none!important}
 .lower-grid{display:grid;grid-template-columns:1.2fr .8fr;gap:15px}.insight{padding:18px 19px}.insight-label{font-size:9px;color:#8a9187;text-transform:uppercase;letter-spacing:.12em}.insight-value{font-size:22px;letter-spacing:-.04em;margin-top:10px}.insight-copy{font-size:10px;line-height:1.6;color:#828a7f;margin-top:7px}.bar-track{height:7px;border-radius:9px;background:#edf0e9;overflow:hidden;margin-top:15px}.bar-fill{height:100%;width:0;background:#c9e85a;border-radius:9px}.notice{background:#f6f8f1;border:1px solid #e9eddf;border-radius:9px;padding:13px 15px;font-size:10px;line-height:1.6;color:#687162}.key-explainer{font-size:10px;line-height:1.6;color:#788174;margin-top:8px;max-width:760px}.key-explainer strong{color:#424b3f;font-weight:650}.app-footer{margin-top:42px;padding:24px 0 10px;border-top:1px solid var(--line);display:grid;grid-template-columns:1.2fr 1fr auto;gap:20px;align-items:start}.footer-brand{font-size:13px;font-weight:800;letter-spacing:.12em;color:#283128}.footer-copy{font-size:10px;color:#8b9288;line-height:1.7;margin-top:7px;max-width:250px}.footer-links{display:flex;flex-wrap:wrap;gap:9px 18px}.footer-links a{font-size:10px;color:#687165;text-decoration:none}.footer-links a:hover{color:#283128;text-decoration:underline}.footer-meta{font-size:9px;color:#9aa095;text-align:right;line-height:1.7}
 @media(max-width:640px){.app-footer{grid-template-columns:1fr;gap:14px}.footer-meta{text-align:left}}
 @media(max-width:900px){.app{grid-template-columns:190px 1fr}.sidebar{padding:22px 12px}.lower-grid{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.main{padding:24px 22px 45px}}
 @media(max-width:640px){.app{display:block}.sidebar{min-height:0;padding:13px 15px;display:block}.brand{padding:0}.mark{width:30px;height:30px}.nav-label,.sidebar-bottom{display:none}.nav{display:flex;overflow-x:auto;gap:4px;margin-top:13px}.nav a{white-space:nowrap;padding:8px 10px;font-size:10px}.nav a.active:before{display:none}.main{padding:21px 14px 38px}.topbar{margin-bottom:25px;align-items:flex-start}.top-right{flex-wrap:wrap;justify-content:flex-end}.hero{display:block}.hero-note{text-align:left;margin-top:15px}.stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.stat{padding:13px}.stat-value{font-size:20px;margin-top:12px}.connect-panel{grid-template-columns:1fr}.connect-panel button{width:100%}.section-head{align-items:flex-start;padding:14px}.section-actions{flex-wrap:wrap;justify-content:flex-end}.search{width:min(145px,42vw)}.section-title{font-size:12px}.section-sub{max-width:240px;line-height:1.5}.table-wrap{margin:0}.ghost{padding:8px}.lower-grid{gap:10px}}
+
+/* NERITH brand system: black, electric lemon and restrained neutrals */
+:root{color-scheme:dark;--ink:#F2F2EC;--muted:#A3A39B;--line:#2A2A2A;--lime:#DFFF00;--panel:#151515;--green:#DFFF00}
+body{background:#0B0B0B;color:#F2F2EC}
+.sidebar{background:#050505;color:#F2F2EC;border-right:1px solid #2A2A2A}
+.brand-tag,.nav-label,.sidebar-bottom,.eyebrow,.hero-note,.intro,.hint,.stat-top,.stat-foot,.section-sub,.muted,.insight-copy,.key-explainer,.footer-copy,.footer-meta{color:#A3A39B}
+.nav a{color:#A3A39B}
+.nav a.active,.nav a:hover{background:#1C1C1C;color:#DFFF00}
+.nav a.active:before{background:#DFFF00}
+.nav-icon{color:#A3A39B}
+.status{background:#1C1C1C;color:#A3A39B;border-color:#303030}
+.status.live{color:#DFFF00;background:#151515;border-color:#4A4A44}
+.connect-panel,.stat,.section{background:#151515;border-color:#2A2A2A}
+.connect-panel label{color:#A3A39B}
+.connect-panel input,.search{background:#111;color:#F2F2EC;border-color:#41413B}
+.connect-panel input:focus,.search:focus{border-color:#DFFF00;box-shadow:0 0 0 3px #DFFF0022}
+.primary{background:#DFFF00;color:#111}
+.ghost,.connect-open{background:#151515;color:#F2F2EC;border-color:#41413B}
+.section-head{border-bottom-color:#2A2A2A}
+.section-title,.stat-value,.insight-value{color:#F2F2EC}
+th{color:#A3A39B;border-bottom-color:#2A2A2A}
+td{color:#D9D9D2;border-bottom-color:#242424}
+.pill{background:#242424;color:#D0D0C8}
+.pill.good{background:#252D16;color:#DFFF00}
+.pill.warn{background:#332B17;color:#E7C56A}
+.pill.bad{background:#351F1D;color:#E5A097}
+.empty{color:#A3A39B}
+.notice{background:#1C1C1C;border-color:#353535;color:#C4C4BC}
+.notice strong,.key-explainer strong{color:#F2F2EC}
+.bar-track{background:#303030}
+.bar-fill{background:#DFFF00}
+.app-footer{border-top-color:#2A2A2A}
+.footer-brand{color:#F2F2EC}
+.footer-links a{color:#A3A39B}
+.footer-links a:hover{color:#DFFF00}
+@media(max-width:640px){
+ .sidebar{background:#050505;border-bottom:1px solid #2A2A2A}
+ .nav a{background:transparent}
+ .nav a.active{background:#1C1C1C;color:#DFFF00}
+ .main{background:#0B0B0B}
+}
 </style>
 </head>
 <body>
 <div class="app">
 <aside class="sidebar">
-<div class="brand"><div class="mark" aria-label="NERITH convergence mark"><svg viewBox="0 0 100 100" aria-hidden="true"><g fill="none" stroke="#f4f5f0" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"><path d="M50 8 C65 8 67 27 59 41 C55 48 51 50 50 57"/><path d="M9 78 C2 65 17 55 31 50 C40 46 46 49 50 57"/><path d="M91 78 C98 65 83 55 69 50 C60 46 54 49 50 57"/></g><path d="M50 40 L55 51 L50 57 L45 51 Z" fill="#d8f36a"/></svg></div><div><div class="brand-name">NERITH</div><div class="brand-tag">LIQUIDITY COORDINATION</div></div></div>
+<div class="brand"><div class="mark" aria-label="NERITH convergence mark"><svg viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" fill="#DFFF00"/><g fill="none" stroke="#111111" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"><path d="M50 8 C65 8 67 27 59 41 C55 48 51 50 50 57"/><path d="M9 78 C2 65 17 55 31 50 C40 46 46 49 50 57"/><path d="M91 78 C98 65 83 55 69 50 C60 46 54 49 50 57"/></g><path d="M50 40 L57 53 L50 61 L43 53 Z" fill="#111111"/></svg></div><div><div class="brand-name">NERITH</div><div class="brand-tag">LIQUIDITY COORDINATION</div></div></div>
 <div><div class="nav-label">Workspace</div><nav class="nav"><a class="active" href="#overview"><span class="nav-icon">◫</span>Overview</a><a href="#liquidity"><span class="nav-icon">◉</span>Liquidity</a><a href="#forecasts"><span class="nav-icon">⌁</span>Forecasts</a><a href="#operations"><span class="nav-icon">↗</span>Operations</a></nav></div>
 <div class="sidebar-bottom">AGENT VIEW<br>Solana · USDC<br><span style="color:#d8f36a">●</span> Scoped read-only access</div>
 </aside>
