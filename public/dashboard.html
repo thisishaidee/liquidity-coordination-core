@@ -287,7 +287,8 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     } catch(error) {
       const message=String(error.message||error);
       if(message==="unauthorized") { $("app").hidden=true;$("access").hidden=false;showError("Operator session not found or expired. Open Business Setup to establish the existing operator session, then return here.","accessError"); }
-      else showError("Could not load this workspace: "+message);
+      else if($("app").hidden) showError("Could not load this workspace: "+message,"accessError");
+      else showError("Could not refresh this workspace: "+message);
     } finally {$("refreshBtn").disabled=false;}
   }
   $("accessForm").addEventListener("submit",async event=>{
