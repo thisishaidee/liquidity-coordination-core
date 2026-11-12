@@ -16,7 +16,6 @@ button{font:inherit}
 .wrap{width:min(var(--max),calc(100% - 64px));margin-inline:auto}
 .pixel-label{font-family:"Arial Narrow",ui-monospace,monospace;font-size:11px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--muted)}
 .brand{display:inline-flex;align-items:center;gap:13px;min-width:0;font-size:18px;font-weight:800;letter-spacing:.14em;color:var(--paper)}
-.brand-mark-placeholder{width:25px;height:25px;border:1px dashed #6B6B64;display:grid;place-items:center;color:var(--muted);font-size:9px;letter-spacing:0}
 .site-header{position:sticky;top:0;z-index:20;background:rgba(5,5,5,.92);border-bottom:1px solid var(--line);backdrop-filter:none}
 .nav{min-height:78px;display:flex;align-items:center;justify-content:space-between;gap:24px}
 .nav-links{display:flex;align-items:center;gap:clamp(18px,3vw,38px);color:#CFCFC8;font-size:12px}
@@ -87,7 +86,7 @@ button{font:inherit}
 <body>
 <header class="site-header">
   <div class="wrap nav">
-    <a class="brand" href="/" aria-label="NERITH home"><span class="brand-mark-placeholder" aria-hidden="true">N</span><span>NERITH</span></a>
+    <a class="brand" href="/" aria-label="NERITH home"><span>NERITH</span></a>
     <nav class="nav-links" aria-label="Main navigation">
       <a href="#system">How it works</a><a href="#principles">Principles</a><a href="#workflow">Workflow</a><a href="/control">Business setup</a>
     </nav>
@@ -150,7 +149,7 @@ button{font:inherit}
   <section class="wrap cta-band"><h2>Make liquidity part of the <em>workflow.</em></h2><a class="button" href="/control">Open business setup <span aria-hidden="true">↗</span></a></section>
 </main>
 <footer class="wrap footer">
-  <div><a class="brand" href="/" aria-label="NERITH home"><span class="brand-mark-placeholder" aria-hidden="true">N</span><span>NERITH</span></a><p class="footer-description">Liquidity coordination for autonomous agents. Business-controlled custody.</p></div>
+  <div><a class="brand" href="/" aria-label="NERITH home"><span>NERITH</span></a><p class="footer-description">Liquidity coordination for autonomous agents. Business-controlled custody.</p></div>
   <div class="footer-links"><a href="#system">Product</a><a href="#principles">Security</a><a href="/control">Business setup</a></div>
   <div class="footer-meta">Support: [support contact]<br>© 2026 NERITH</div>
 </footer>
