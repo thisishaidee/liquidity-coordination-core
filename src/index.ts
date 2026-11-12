@@ -2079,6 +2079,15 @@ async function manageX402Budgets(request: Request, env: Env): Promise<Response> 
     `).bind(new Date().toISOString().slice(0, 10), businessId).all<{
       scope_key: string; agent_id: string | null; agent_name: string | null; daily_limit_atoms: number; used_atoms: number;
     }>();
+    const pendingPayments = await env.DB.prepare(`
+      SELECT id, agent_id, payment_wallet_address, amount_atoms, receipt_tx, created_at
+      FROM x402_payment_reservations
+      WHERE business_id = ? AND status = 'pending'
+      ORDER BY created_at DESC LIMIT 50
+    `).bind(businessId).all<{
+      id: string; agent_id: string; payment_wallet_address: string; amount_atoms: number;
+      receipt_tx: string | null; created_at: string;
+    }>();
     return json({
       businessId,
       defaults: { businessDailyUSDC: "0.05", agentDailyUSDC: "0.01" },
@@ -2088,6 +2097,15 @@ async function manageX402Budgets(request: Request, env: Env): Promise<Response> 
         agentName: row.agent_name,
         dailyLimitUSDC: formatTokenAmount(BigInt(row.daily_limit_atoms), 6),
         usedTodayUSDC: formatTokenAmount(BigInt(row.used_atoms), 6)
+      })),
+      pendingPayments: (pendingPayments.results ?? []).map((row) => ({
+        reservationId: row.id,
+        agentId: row.agent_id,
+        paymentWalletAddress: row.payment_wallet_address,
+        amountUSDC: formatTokenAmount(BigInt(row.amount_atoms), 6),
+        receiptTransaction: row.receipt_tx,
+        createdAt: row.created_at,
+        canReconcile: Boolean(row.receipt_tx)
       }))
     });
   }
