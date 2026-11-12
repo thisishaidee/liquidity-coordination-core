@@ -55,7 +55,7 @@ a{color:inherit}.shell{max-width:1020px;margin:0 auto;padding:28px 24px 44px}.to
 <section id="telegramAccessSection" class="hidden">
 <div class="divider"></div>
 <h2>Telegram permissions</h2>
-<p class="sub">Every linked Telegram account starts as a viewer. You can explicitly grant approver permission to people authorised to review business operations. This permission does not sign transactions or move funds.</p>
+<p class="sub">Every linked Telegram account starts as a viewer. Grant approver permission only to people authorised to create liquidity requests and review prepared business operations. A requester cannot approve their own Telegram-originated request. This permission does not sign transactions or move funds.</p>
 <div class="btnrow"><button class="btn secondary" id="refreshTelegramAccess" type="button">Refresh Telegram access</button></div>
 <div id="telegramAccessList" class="keybox"></div>
 <div id="telegramAccessStatus" class="status"></div>
@@ -94,7 +94,7 @@ a{color:inherit}.shell{max-width:1020px;margin:0 auto;padding:28px 24px 44px}.to
 <div class="step"><div class="num">3</div><div><strong>Create your workspace</strong><p>Use the form with the same admin token configured in Cloudflare. The first agent key is only shown once.</p></div></div>
 <div class="step"><div class="num">4</div><div><strong>Link your private Telegram</strong><p>Configure the webhook, create an invitation and open it from your own private Telegram account. Group chats are not accepted.</p></div></div>
 </div>
-<div class="notice"><strong>Security boundary</strong><br>Telegram is read-only. It can report liquidity, forecasts, agents and operations, but cannot sign transactions, move funds or approve spending. Your admin token is held in this page's memory only.</div>
+<div class="notice"><strong>Security boundary</strong><br>Linked accounts with approver permission can create liquidity requests. A different authorised approver can approve or reject prepared requests, but cannot approve their own Telegram-originated requests. Decisions are recorded against the exact operation. Telegram never stores wallet keys and cannot sign, broadcast or transfer funds.</div>
 </aside>
 </div>
 <footer class="footer"><span>NERITH · Liquidity coordination for autonomous agents</span><nav class="footerlinks"><a href="/">Website</a><a href="/app">Agent console</a><a href="https://github.com/thisishaidee/liquidity-coordination-core" target="_blank" rel="noreferrer">GitHub</a></nav></footer>
