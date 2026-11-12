@@ -4,7 +4,7 @@ main = "src/index.ts"
 compatibility_date = "2026-11-11"
 
 [vars]
-NERITH_SUPPORT_URL = "https://nerith.pages.dev"
+NERITH_SUPPORT_URL = "https://nerith-9eo.pages.dev"
 
 [[d1_databases]]
 binding = "DB"
