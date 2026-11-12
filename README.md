@@ -357,7 +357,7 @@ A user can create a request and review it from the same Telegram identity. Decis
    - `TELEGRAM_WEBHOOK_SECRET` — a private random string containing 32–64 hexadecimal characters.
 4. Ensure `ADMIN_BOOTSTRAP_TOKEN` is configured as a Worker secret. The business admin API uses it to protect bot setup and linking invitations.
 5. Set `TELEGRAM_TOTP_ENCRYPTION_KEY` as a Worker secret. Use a separate cryptographically random value of at least 32 characters. Do not reuse the bot token, webhook secret or admin bootstrap token. Keep this key stable; rotating it requires every linked Telegram operator to enroll Google Authenticator again.
-5. Call the authenticated setup endpoint once. It validates the bot, registers the webhook and publishes Telegram's command menu:
+6. Call the authenticated setup endpoint once. It validates the bot, registers the webhook and publishes Telegram's command menu:
 
 ```bash
 curl -X POST https://YOUR_WORKER/v1/admin/telegram/setup \
