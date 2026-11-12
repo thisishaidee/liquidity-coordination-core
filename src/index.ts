@@ -543,7 +543,7 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      `NERITH · ${connection.business_name}\n\n/status  Business overview\n/liquidity  Available and reserved balances\n/forecast  Upcoming planned obligations\n/agents  Agent status\n/operations  Recent liquidity activity\n/newrequest  Create a liquidity request\n/review  Review prepared liquidity requests\n/cancel  Cancel a request draft\n/disconnect  Disconnect this chat\n\nRequests are checked against authorised, fresh liquidity and reservations. Approvals record a business decision only. This bot cannot sign or broadcast transactions.`,
+      `NERITH · ${connection.business_name}\n\n/status  Business overview\n/liquidity  Available and reserved balances\n/forecast  Upcoming planned obligations\n/agents  Agent status\n/operations  Recent liquidity activity\n/newrequest  Create a liquidity request\n/review  Review prepared liquidity requests\n/setupauth  Set up Google Authenticator\n/verifyauth  Verify authenticator setup\n/cancel  Cancel a request draft\n/disconnect  Disconnect this chat\n\nRequests are checked against authorised, fresh liquidity and reservations. Approvals record a business decision only. This bot cannot sign or broadcast transactions.`,
       telegramSupportMarkup(env)
     );
     return;
@@ -730,7 +730,10 @@ async function listTelegramRequests(env: Env, chatId: string, userId: string, bu
     let markup: Record<string, unknown> | undefined;
     const origin = await env.DB.prepare("SELECT telegram_chat_id, telegram_user_id FROM telegram_request_origins WHERE operation_id = ? LIMIT 1").bind(op.id).first<{ telegram_chat_id: string; telegram_user_id: string }>();
     const isRequester = origin?.telegram_chat_id === chatId && origin?.telegram_user_id === userId;
-    if (canReviewTelegramRequest(permission, origin?.telegram_chat_id, origin?.telegram_user_id, chatId, userId)) {
+    const auth = isRequester ? await env.DB.prepare("SELECT totp_secret_enc, totp_enabled_at FROM telegram_connections WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? AND status = 'active' AND permission = 'approver' LIMIT 1")
+      .bind(businessId, chatId, userId).first<{ totp_secret_enc: string | null; totp_enabled_at: string | null }>() : null;
+    const canSelfApprove = Boolean(isRequester && auth?.totp_secret_enc && auth?.totp_enabled_at);
+    if (canReviewTelegramRequest(permission, origin?.telegram_chat_id, origin?.telegram_user_id, chatId, userId) || canSelfApprove) {
       const approveToken = newSecret("").slice(0, 48);
       const rejectToken = newSecret("").slice(0, 48);
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
@@ -744,8 +747,8 @@ async function listTelegramRequests(env: Env, chatId: string, userId: string, bu
         { text: "Approve", callback_data: "na:" + approveToken },
         { text: "Reject", callback_data: "nr:" + rejectToken }
       ]] };
-    } else if (isRequester) {
-      lines.push("", "You submitted this request. A different authorised approver must make the decision.");
+    } else if (isRequester && !canSelfApprove) {
+      lines.push("", "You submitted this request. Enable Google Authenticator with /setupauth to decide on your own request from this Telegram account.");
     } else {
       lines.push("", "Viewer access only. Ask the business administrator to grant approver permission.");
     }
@@ -1111,7 +1114,7 @@ async function telegramWebhook(request: Request, env: Env): Promise<Response> {
 
   try {
     await env.DB.prepare(
-      "INSERT INTO telegram_connections (id, business_id, chat_id, telegram_user_id) VALUES (?, ?, ?, ?) ON CONFLICT(business_id, chat_id, telegram_user_id) DO UPDATE SET status = 'active'"
+      "INSERT INTO telegram_connections (id, business_id, chat_id, telegram_user_id, permission) VALUES (?, ?, ?, ?, 'approver') ON CONFLICT(business_id, chat_id, telegram_user_id) DO UPDATE SET status = 'active', permission = 'approver'"
     ).bind("tg_" + crypto.randomUUID().replaceAll("-", ""), linkCode.business_id, chatId, userId).run();
   } catch {
     await env.DB.prepare("UPDATE telegram_link_codes SET consumed_at = NULL WHERE id = ?")
