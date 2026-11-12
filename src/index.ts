@@ -4181,6 +4181,11 @@ export default {
     await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE expires_at <= datetime('now')").run();
     await env.DB.prepare("DELETE FROM telegram_processed_updates WHERE processed_at < datetime('now', '-30 days')").run();
     await env.DB.prepare("DELETE FROM api_rate_limits WHERE updated_at < datetime('now', '-2 days')").run();
+    await env.DB.prepare(`
+      DELETE FROM x402_payment_challenges
+      WHERE status = 'expired' AND created_at < datetime('now', '-30 days')
+        AND NOT EXISTS (SELECT 1 FROM x402_payment_reservations r WHERE r.challenge_id = x402_payment_challenges.id)
+    `).run();
     await deliverTelegramOutbox(env);
   },
   async fetch(request: Request, env: Env): Promise<Response> {
