@@ -88,7 +88,7 @@ export function verifySolSourceDebit(
       pre[balance.accountIndex!] === 0 &&
       post[balance.accountIndex!] > 0
     ) {
-      newlyCreatedOwnedTokenAccounts.set(balance.accountIndex!, keys[balance.accountIndex!] as string);
+      newlyCreatedOwnedTokenAccounts.set(balance.accountIndex!, typeof keys[balance.accountIndex!] === "string" ? keys[balance.accountIndex!] as string : (keys[balance.accountIndex!] as { pubkey?: string }).pubkey ?? "");
     }
   }
 
