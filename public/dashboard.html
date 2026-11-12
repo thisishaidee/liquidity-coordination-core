@@ -154,7 +154,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { businessId: "", workspace: null, agents: [], wallets: [], telegram: [], forecast: null, operations: [], nextCursor: null, operationStatus: "" };
+  const state = { businessId: "", workspace: null, agents: [], wallets: [], telegram: [], forecast: null, operations: [], nextCursor: null, operationStatus: "", loadErrors: {} };
   const parseDecimalAtoms = (value, decimals=6) => {
     const text=String(value??"0");
     if(!/^\d+(?:\.\d+)?$/.test(text))return 0n;
@@ -214,31 +214,31 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     const reserved=sumBalances(state.wallets,"operating","USDC","reserved",true,"business");
     const available=sumBalances(state.wallets,"operating","USDC","available",true,"business");
     const isolatedAgentUSDC=sumBalances(state.wallets,"operating","USDC","available",true,"agent");
-    $("metricConfirmed").textContent=moneyAtoms(confirmed);
-    $("metricReserved").textContent=moneyAtoms(reserved);
-    $("metricAvailable").textContent=moneyAtoms(available);
-    $("metricConfirmedFoot").textContent=fresh.count+"/"+fresh.total+" fresh token snapshots";
+    $("metricConfirmed").textContent=state.loadErrors.Wallets?"—":moneyAtoms(confirmed);
+    $("metricReserved").textContent=state.loadErrors.Wallets?"—":moneyAtoms(reserved);
+    $("metricAvailable").textContent=state.loadErrors.Wallets?"—":moneyAtoms(available);
+    $("metricConfirmedFoot").textContent=state.loadErrors.Wallets?"Wallet data unavailable":fresh.count+"/"+fresh.total+" fresh token snapshots";
     const f=state.forecast?.summary;
     $("metricShortfall").textContent=f?money(f.totalShortfallUSDC):"—";
     $("metricShortfallFoot").textContent=f?(f.blocked+" blocked · "+f.conversionRequired+" may need conversion"):"Forecast unavailable";
-    $("overviewAgents").innerHTML=state.agents.length?state.agents.slice(0,6).map(a=>'<div class="balance-row"><span><strong>'+escapeHtml(a.name)+'</strong><br><span class="muted">'+escapeHtml(a.id)+'</span></span><span class="chip '+(a.status==="active"?"lemon":"off")+'">'+escapeHtml(a.status)+'</span></div>').join(""):'<div class="empty"><strong>No agents registered</strong>Agent records will appear here when available.</div>';
-    $("overviewLiquidity").innerHTML='<div class="balance-row"><span>Fresh business treasury available</span><strong>'+moneyAtoms(available)+' USDC</strong></div><div class="balance-row"><span>Business treasury wallets</span><strong>'+operating.filter(w=>w.scope==="business"&&w.status==="active").length+'</strong></div><div class="balance-row"><span>Agent-scoped USDC · isolated</span><strong>'+moneyAtoms(isolatedAgentUSDC)+' USDC</strong></div><div class="balance-row"><span>Fresh treasury snapshots</span><strong>'+fresh.count+' / '+fresh.total+'</strong></div>';
+    $("overviewAgents").innerHTML=state.loadErrors.Agents?'<div class="empty">Agent data unavailable. Refresh to try again.</div>':state.agents.length?state.agents.slice(0,6).map(a=>'<div class="balance-row"><span><strong>'+escapeHtml(a.name)+'</strong><br><span class="muted">'+escapeHtml(a.id)+'</span></span><span class="chip '+(a.status==="active"?"lemon":"off")+'">'+escapeHtml(a.status)+'</span></div>').join(""):'<div class="empty"><strong>No agents registered</strong>Agent records will appear here when available.</div>';
+    $("overviewLiquidity").innerHTML=state.loadErrors.Wallets?'<div class="empty">Wallet data unavailable. Refresh to try again.</div>':'<div class="balance-row"><span>Fresh business treasury available</span><strong>'+moneyAtoms(available)+' USDC</strong></div><div class="balance-row"><span>Business treasury wallets</span><strong>'+operating.filter(w=>w.scope==="business"&&w.status==="active").length+'</strong></div><div class="balance-row"><span>Agent-scoped USDC · isolated</span><strong>'+moneyAtoms(isolatedAgentUSDC)+' USDC</strong></div><div class="balance-row"><span>Fresh treasury snapshots</span><strong>'+fresh.count+' / '+fresh.total+'</strong></div>';
     const x402=state.wallets.filter(w=>w.purpose==="api_payment");
-    $("overviewX402").innerHTML=x402.length?x402.map(w=>{const usdc=(w.balances||[]).find(b=>b.token==="USDC");const value=usdc?(usdc.fresh?money(usdc.available)+" USDC":"Stale snapshot"):"No USDC snapshot";return '<div class="balance-row"><span>'+escapeHtml(w.address.slice(0,7)+"…"+w.address.slice(-5))+'</span><strong>'+escapeHtml(value)+'</strong></div>';}).join(""):'<div class="empty">No registered x402 reserve wallet.</div>';
+    $("overviewX402").innerHTML=state.loadErrors.Wallets?'<div class="empty">Payment reserve data unavailable. Refresh to try again.</div>':x402.length?x402.map(w=>{const usdc=(w.balances||[]).find(b=>b.token==="USDC");const value=usdc?(usdc.fresh?money(usdc.available)+" USDC":"Stale snapshot"):"No USDC snapshot";return '<div class="balance-row"><span>'+escapeHtml(w.address.slice(0,7)+"…"+w.address.slice(-5))+'</span><strong>'+escapeHtml(value)+'</strong></div>';}).join(""):'<div class="empty">No registered x402 reserve wallet.</div>';
     const forecast=state.forecast?.summary;
-    $("overviewForecastMetrics").innerHTML=forecast
+    $("overviewForecastMetrics").innerHTML=state.loadErrors.Forecast?'<div class="empty" style="grid-column:1/-1">Forecast data unavailable. Refresh to try again.</div>':forecast
       ? '<div class="mini-metric"><span>Planned obligations</span><strong>'+escapeHtml(String(forecast.planned))+'</strong></div><div class="mini-metric"><span>Covered</span><strong>'+escapeHtml(String(forecast.covered))+'</strong></div><div class="mini-metric accent"><span>May need conversion</span><strong>'+escapeHtml(String(forecast.conversionRequired))+'</strong></div><div class="mini-metric"><span>Blocked</span><strong>'+escapeHtml(String(forecast.blocked))+'</strong></div>'
       : '<div class="empty" style="grid-column:1/-1">Forecast data is unavailable for this workspace.</div>';
     $("overviewForecastFoot").textContent=forecast
       ? "Indicative shortfall: "+money(forecast.totalShortfallUSDC)+" USDC · "+(state.forecast.businessBalanceDataFresh?"business balance snapshots fresh":"some business balance snapshots stale or unavailable")
       : "No forecast summary is currently available.";
-    $("overviewRecentOperations").innerHTML=state.operations.length
+    $("overviewRecentOperations").innerHTML=state.loadErrors.Operations?'<div class="empty">Operation data unavailable. Refresh to try again.</div>':state.operations.length
       ? state.operations.slice(0,5).map(o=>'<div class="recent-operation"><div><strong>'+escapeHtml(o.agentName||"Agent")+'</strong><small>'+escapeHtml(o.taskId||"Operation")+' · '+escapeHtml(fmtDate(o.createdAt))+'</small></div><div class="recent-operation-meta"><span class="chip">'+escapeHtml(String(o.status||"unknown").replaceAll("_"," "))+'</span><span class="amount">'+escapeHtml(o.amount)+" "+escapeHtml(o.token)+'</span></div></div>').join("")
       : '<div class="empty">No operation records are available for this workspace yet.</div>';
   }
   function renderAgents() {
-    $("agentCount").textContent=state.agents.length+" registered agent(s)";
-    $("agentsTable").innerHTML=state.agents.length?state.agents.map(a=>'<tr><td><strong>'+escapeHtml(a.name)+'</strong><div class="muted mono">'+escapeHtml(a.id)+'</div></td><td><span class="chip '+(a.status==="active"?"lemon":"off")+'">'+escapeHtml(a.status)+'</span></td><td>'+ (a.canUseBusinessTreasury?'<span class="chip lemon">Authorized</span>':'<span class="chip off">Not authorized</span>')+'</td><td>'+escapeHtml(fmtDate(a.createdAt))+'</td><td class="muted">Not available</td><td class="muted">Not available</td></tr>').join(""):'<tr><td colspan="6" class="empty">No agents have been registered in this workspace.</td></tr>';
+    $("agentCount").textContent=state.loadErrors.Agents?"Agent data unavailable":state.agents.length+" registered agent(s)";
+    $("agentsTable").innerHTML=state.loadErrors.Agents?'<tr><td colspan="6" class="empty">Agent data unavailable. Refresh to try again.</td></tr>':state.agents.length?state.agents.map(a=>'<tr><td><strong>'+escapeHtml(a.name)+'</strong><div class="muted mono">'+escapeHtml(a.id)+'</div></td><td><span class="chip '+(a.status==="active"?"lemon":"off")+'">'+escapeHtml(a.status)+'</span></td><td>'+ (a.canUseBusinessTreasury?'<span class="chip lemon">Authorized</span>':'<span class="chip off">Not authorized</span>')+'</td><td>'+escapeHtml(fmtDate(a.createdAt))+'</td><td class="muted">Not available</td><td class="muted">Not available</td></tr>').join(""):'<tr><td colspan="6" class="empty">No agents have been registered in this workspace.</td></tr>';
   }
   function walletCard(w) {
     const balances=(w.balances||[]).map(b=>'<div class="balance-row"><span>'+escapeHtml(b.token)+' · '+(b.fresh?'<span class="success">Fresh</span>':'<span class="muted">Stale</span>')+'<br><span class="muted">'+escapeHtml(fmtDate(b.observedAt)+' · '+b.source)+'</span></span><span style="text-align:right"><strong>'+amountText(b.confirmed,b.token)+'</strong><br><span class="muted">Reserved '+amountText(b.reserved,b.token)+' · Available '+amountText(b.available,b.token)+'</span></span></div>').join("");
@@ -252,15 +252,15 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     const available=sumBalances(state.wallets,"operating","USDC","available",true,"business");
     const isolated=sumBalances(state.wallets,"operating","USDC","available",true,"agent");
     const fresh=walletFreshCount(state.wallets,"operating","business");
-    $("liquidityMetrics").innerHTML=metric("Fresh treasury confirmed USDC",moneyAtoms(confirmed),"Fresh business-scope snapshots only")+metric("Fresh treasury reserved USDC",moneyAtoms(reserved),"Internal holds excluded from availability")+metric("Fresh treasury available USDC",moneyAtoms(available),"Fresh confirmed less reserved",true)+metric("Agent-scoped USDC",moneyAtoms(isolated),"Fresh snapshots only · isolated by agent, not pooled");
+    $("liquidityMetrics").innerHTML=state.loadErrors.Wallets?metric("Liquidity data","Unavailable","Refresh to try again"):metric("Fresh treasury confirmed USDC",moneyAtoms(confirmed),"Fresh business-scope snapshots only")+metric("Fresh treasury reserved USDC",moneyAtoms(reserved),"Internal holds excluded from availability")+metric("Fresh treasury available USDC",moneyAtoms(available),"Fresh confirmed less reserved",true)+metric("Agent-scoped USDC",moneyAtoms(isolated),"Fresh snapshots only · isolated by agent, not pooled");
     const businessWallets=op.filter(w=>w.scope==="business");
     const agentWallets=op.filter(w=>w.scope==="agent");
-    $("operatingWallets").innerHTML='<div class="pixel" style="grid-column:1/-1">Business treasury wallets · shared only where agent permission allows</div>'+(businessWallets.length?businessWallets.map(walletCard).join(""):'<div class="empty">No business treasury operating wallets registered.</div>')+'<hr class="dotted" style="grid-column:1/-1"><div class="pixel" style="grid-column:1/-1">Agent-scoped wallets · isolated and never pooled</div>'+(agentWallets.length?agentWallets.map(walletCard).join(""):'<div class="empty">No agent-scoped operating wallets registered.</div>');
-    $("paymentWallets").innerHTML=pay.length?pay.map(walletCard).join(""):'<div class="empty">No separate x402 payment reserve is registered.</div>';
+    $("operatingWallets").innerHTML=state.loadErrors.Wallets?'<div class="empty">Wallet data unavailable. Refresh to try again.</div>':'<div class="pixel" style="grid-column:1/-1">Business treasury wallets · shared only where agent permission allows</div>'+(businessWallets.length?businessWallets.map(walletCard).join(""):'<div class="empty">No business treasury operating wallets registered.</div>')+'<hr class="dotted" style="grid-column:1/-1"><div class="pixel" style="grid-column:1/-1">Agent-scoped wallets · isolated and never pooled</div>'+(agentWallets.length?agentWallets.map(walletCard).join(""):'<div class="empty">No agent-scoped operating wallets registered.</div>');
+    $("paymentWallets").innerHTML=state.loadErrors.Wallets?'<div class="empty">Payment reserve data unavailable. Refresh to try again.</div>':pay.length?pay.map(walletCard).join(""):'<div class="empty">No separate x402 payment reserve is registered.</div>';
   }
   function renderForecast() {
     const f=state.forecast;
-    if(!f){$("forecastMetrics").innerHTML=metric("Forecast confidence","Not available","No confidence score is exposed")+metric("Planned obligations","—","Forecast unavailable")+metric("Covered","—","Forecast unavailable")+metric("Shortfall","—","Forecast unavailable");$("forecastTable").innerHTML='<tr><td colspan="7" class="empty">Forecast data is unavailable.</td></tr>';return;}
+    if(!f){$("forecastMetrics").innerHTML=metric("Forecast confidence","Not available","No confidence score is exposed")+metric("Planned obligations","—","Forecast unavailable")+metric("Covered","—","Forecast unavailable")+metric("Shortfall","—","Forecast unavailable");$("forecastTable").innerHTML='<tr><td colspan="7" class="empty">'+(state.loadErrors.Forecast?"Forecast data could not be loaded. Refresh to try again.":"Forecast data is unavailable.")+'</td></tr>';return;}
     const s=f.summary;
     $("forecastMetrics").innerHTML=metric("Forecast confidence","Not available","No confidence score is calculated")+metric("Planned obligations",String(s.planned),"Next "+f.windowDays+" days")+metric("Covered",String(s.covered),"Allocated against eligible balances",true)+metric("Total shortfall",money(s.totalShortfallUSDC),"Indicative; stale balances can overstate it");
     $("forecastFreshness").textContent=(f.businessBalanceDataFresh?"Balance snapshots fresh":"Some balance data is stale or unavailable")+" · "+f.walletsObserved+" operating wallet(s) · "+(f.truncated?"200-row limit reached":"Within forecast limit");
@@ -270,8 +270,8 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   function renderOperations(reset=true) {
     const counts=state.operationCounts||{};
     const countEntries=Object.entries(counts);
-    $("operationMetrics").innerHTML=countEntries.length?countEntries.slice(0,4).map(([k,v])=>metric(k.replaceAll("_"," "),String(v),"Business-wide status count")).join(""):metric("Operation records","0","No records returned");
-    $("operationsTable").innerHTML=state.operations.length?state.operations.map(o=>{
+    $("operationMetrics").innerHTML=state.loadErrors.Operations?metric("Operation records","Unavailable","Refresh to try again"):countEntries.length?countEntries.slice(0,4).map(([k,v])=>metric(k.replaceAll("_"," "),String(v),"Business-wide status count")).join(""):metric("Operation records","0","No records returned");
+    $("operationsTable").innerHTML=state.loadErrors.Operations?'<tr><td colspan="7" class="empty">Operation data unavailable. Refresh to try again.</td></tr>':state.operations.length?state.operations.map(o=>{
       const approval=o.approval?.state||"not_applicable";
       const execution=o.execution?.transactionHash;
       const settlement=o.settlement||{};
@@ -282,8 +282,8 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     $("loadMoreOperations").textContent=state.nextCursor?"Load more":"No more records";
   }
   function renderTelegram() {
-    $("telegramCount").textContent=state.telegram.length+" connection(s)";
-    $("telegramTable").innerHTML=state.telegram.length?state.telegram.map(c=>'<tr><td class="mono">'+escapeHtml(c.telegramUserId)+'</td><td class="mono">'+escapeHtml(c.chatId)+'</td><td><span class="chip">'+escapeHtml(c.permission)+'</span></td><td><span class="chip '+(c.status==="active"?"lemon":"off")+'">'+escapeHtml(c.status)+'</span></td><td>'+escapeHtml(fmtDate(c.linkedAt))+'</td></tr>').join(""):'<tr><td colspan="5" class="empty">No Telegram connections linked to this business.</td></tr>';
+    $("telegramCount").textContent=state.loadErrors["Telegram connections"]?"Unavailable":state.telegram.length+" connection(s)";
+    $("telegramTable").innerHTML=state.loadErrors["Telegram connections"]?'<tr><td colspan="5" class="empty">Telegram connection data unavailable. Refresh to try again.</td></tr>':state.telegram.length?state.telegram.map(c=>'<tr><td class="mono">'+escapeHtml(c.telegramUserId)+'</td><td class="mono">'+escapeHtml(c.chatId)+'</td><td><span class="chip">'+escapeHtml(c.permission)+'</span></td><td><span class="chip '+(c.status==="active"?"lemon":"off")+'">'+escapeHtml(c.status)+'</span></td><td>'+escapeHtml(fmtDate(c.linkedAt))+'</td></tr>').join(""):'<tr><td colspan="5" class="empty">No Telegram connections linked to this business.</td></tr>';
   }
   function renderSettings() {
     const b=state.workspace?.business||{};
@@ -320,10 +320,11 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       ];
       const results=await Promise.allSettled(requests.map(item=>item[1]));
       const failed=[];
+      state.loadErrors={};
       results.forEach((result,index)=>{
         const [label,,apply]=requests[index];
         if(result.status==="fulfilled")apply(result.value);
-        else failed.push({label,error:result.reason});
+        else {state.loadErrors[label]=true;failed.push({label,error:result.reason});}
       });
       if(failed.some(item=>String(item.error?.message||item.error)==="unauthorized")){
         $("app").hidden=true;$("access").hidden=false;
