@@ -148,6 +148,12 @@ describe("on-chain Hermes payment receipt verification", () => {
     expect(verifyHermesPaymentTransaction(tx, req, payerAddress).verified).toBe(false);
   });
 
+  it("rejects extra USDC debits beyond the challenged payment", () => {
+    const tx = settledTransaction() as any;
+    tx.meta.postTokenBalances[0].uiTokenAmount.amount = "90000";
+    expect(verifyHermesPaymentTransaction(tx, req, payerAddress).verified).toBe(false);
+  });
+
   it("rejects a transfer whose destination token account is not owned by payTo", () => {
     const tx = settledTransaction() as any;
     tx.meta.postTokenBalances[0].owner = payerAddress;
