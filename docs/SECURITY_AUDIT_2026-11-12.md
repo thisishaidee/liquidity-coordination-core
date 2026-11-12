@@ -137,7 +137,7 @@ The follow-up branch adds the following controls:
 
 These are abuse and resource controls, not a complete x402 monetary budget. The current integration validates a successful settlement receipt but the receipt schema does not itself state the paid amount. The amount must be bound to the x402 challenge/payment authorization and independently reconciled with the settlement transaction before enforcing daily USDC budgets. Do not equate request-count limits with USDC spending limits.
 
-The SOL settlement verifier remains incomplete for exact source debit. It must parse the finalized Solana transaction's relevant native SOL transfers, fee payer, token-account creation/rent and any rent refunds, then compare net debit against the quoted source input plus evidenced costs. A guessed tolerance is unsafe.
+The SOL settlement verifier now reconciles the finalized operating-wallet native SOL debit against the exact reserved input, any network fee paid by that wallet, and evidenced rent for newly-created, still-open USDC/WSOL token accounts owned by that wallet. It fails closed on unexplained or incomplete debits. This is net-debit reconciliation, not a full instruction-by-instruction swap policy audit; live end-to-end swap testing remains required.
 
 PR #29 passed typecheck, tests and Wrangler dry-run; its production D1 migration and Worker deployment completed successfully in the main-branch workflow.
 
@@ -147,3 +147,12 @@ PR #29 passed typecheck, tests and Wrangler dry-run; its production D1 migration
 The settlement verifier now compares the registered operating wallet's finalized native SOL balance delta against the exact source reservation amount, any network fee paid by that wallet, and only evidenced rent for newly-created, still-open USDC/WSOL token accounts owned by that wallet. The verifier fails closed on incomplete balance metadata, signer mismatch, unexplained excess debit, or a debit that does not reconcile. Unit tests cover fee payer attribution, token-account rent evidence, excess debit, under-debit, wrong ownership, signer failure and incomplete metadata.
 
 This check is a net-debit reconciliation. It does not replace a full transaction-instruction policy audit or an end-to-end live swap test.
+
+
+## x402 spend controls follow-up
+
+The NERITH Worker now stores the exact Hermes V1 Solana-USDC payment challenge per agent, operation and request. It reserves the challenge amount atomically against both a per-agent and per-business daily budget before forwarding X-PAYMENT. The defaults are 0.01 USDC per agent/day and 0.05 USDC per business/day; authenticated admins can read and change these limits at GET/POST /v1/admin/x402/budgets. Zero disables paid calls at that scope.
+
+A payment is counted as settled only after the X-PAYMENT-RESPONSE transaction is available at finalized commitment and its parsed transaction contains the exact challenged USDC TransferChecked from the configured payment wallet to the challenged recipient, with the advertised facilitator as fee payer. Payment payload hashes and challenge IDs are unique to prevent replay. Ambiguous timeouts, missing receipts and RPC uncertainty retain a pending budget reservation; they are not automatically released.
+
+These controls cover paid Hermes calls routed through NERITH, not independent transfers from the same wallet outside the service. Live low-value Hermes payment testing and a controlled failure/retry exercise remain required before treating the entire payment path as operationally proven.
