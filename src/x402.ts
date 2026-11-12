@@ -1,5 +1,6 @@
 export const HERMES_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
-const BASE58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;\nconst BASE58_SIGNATURE = /^[1-9A-HJ-NP-Za-km-z]{64,88}$/;
+const BASE58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const BASE58_SIGNATURE = /^[1-9A-HJ-NP-Za-km-z]{64,88}$/;
 
 export type HermesPaymentRequirement = {
   scheme: "exact";
