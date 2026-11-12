@@ -2956,9 +2956,13 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
       const afterUsdc = sumOwnerUsdc(transaction.meta.postTokenBalances);
       outputAtoms = afterUsdc > beforeUsdc ? afterUsdc - beforeUsdc : 0n;
 
-      if (!sourceWalletSigned || outputAtoms === 0n) {
+      if (!sourceWalletSigned || !sourceDebitVerification.verified || outputAtoms === 0n) {
         effectiveStatus = "unverified";
-        settlementNote = "The finalized transaction did not show the registered operating wallet as a signer receiving USDC.";
+        settlementNote = !sourceWalletSigned
+          ? "The finalized transaction did not show the registered operating wallet as a signer."
+          : !sourceDebitVerification.verified
+            ? sourceDebitVerification.reason
+            : "The finalized transaction did not show USDC received by the registered operating wallet.";
       } else if (outputAtoms < BigInt(operation.shortfall_atoms)) {
         effectiveStatus = "shortfall";
         settlementNote = "The swap finalized, but received USDC is below the operation's required shortfall.";
