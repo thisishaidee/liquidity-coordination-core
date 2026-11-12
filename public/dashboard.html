@@ -144,6 +144,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
 (() => {
   const $ = (id) => document.getElementById(id);
   const state = { businessId: "", workspace: null, agents: [], wallets: [], telegram: [], forecast: null, operations: [], nextCursor: null, operationStatus: "" };
+  const amountText = (value, token) => { const n=Number(value); return Number.isFinite(n)?n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:token==="SOL"?9:6}):String(value??"—"); };
   const money = (value) => {
     const n = Number(value);
     return Number.isFinite(n) ? n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}) : "0.00";
@@ -190,7 +191,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     $("metricConfirmed").textContent=money(confirmed);
     $("metricReserved").textContent=money(reserved);
     $("metricAvailable").textContent=money(available);
-    $("metricConfirmedFoot").textContent=fresh.count+"/"+fresh.total+" fresh token snapshots · USDC";
+    $("metricConfirmedFoot").textContent=fresh.count+"/"+fresh.total+" fresh token snapshots";
     const f=state.forecast?.summary;
     $("metricShortfall").textContent=f?money(f.totalShortfallUSDC):"—";
     $("metricShortfallFoot").textContent=f?(f.blocked+" blocked · "+f.conversionRequired+" may need conversion"):"Forecast unavailable";
@@ -204,7 +205,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     $("agentsTable").innerHTML=state.agents.length?state.agents.map(a=>'<tr><td><strong>'+escapeHtml(a.name)+'</strong><div class="muted mono">'+escapeHtml(a.id)+'</div></td><td><span class="chip '+(a.status==="active"?"lemon":"off")+'">'+escapeHtml(a.status)+'</span></td><td>'+ (a.canUseBusinessTreasury?'<span class="chip lemon">Authorized</span>':'<span class="chip off">Not authorized</span>')+'</td><td>'+escapeHtml(fmtDate(a.createdAt))+'</td><td class="muted">Not available</td><td class="muted">Not available</td></tr>').join(""):'<tr><td colspan="6" class="empty">No agents have been registered in this workspace.</td></tr>';
   }
   function walletCard(w) {
-    const balances=(w.balances||[]).map(b=>'<div class="balance-row"><span>'+escapeHtml(b.token)+' · '+(b.fresh?'<span class="success">Fresh</span>':'<span class="muted">Stale</span>')+'<br><span class="muted">'+escapeHtml(fmtDate(b.observedAt))+'</span></span><span style="text-align:right"><strong>'+money(b.confirmed)+'</strong><br><span class="muted">Reserved '+money(b.reserved)+' · Available '+money(b.available)+'</span></span></div>').join("");
+    const balances=(w.balances||[]).map(b=>'<div class="balance-row"><span>'+escapeHtml(b.token)+' · '+(b.fresh?'<span class="success">Fresh</span>':'<span class="muted">Stale</span>')+'<br><span class="muted">'+escapeHtml(fmtDate(b.observedAt))+'</span></span><span style="text-align:right"><strong>'+amountText(b.confirmed,b.token)+'</strong><br><span class="muted">Reserved '+amountText(b.reserved,b.token)+' · Available '+amountText(b.available,b.token)+'</span></span></div>').join("");
     return '<article class="wallet-card"><div class="panel-head"><strong>'+escapeHtml(w.scope)+' wallet</strong><span class="chip '+(w.status==="active"?"lemon":"off")+'">'+escapeHtml(w.status)+'</span></div><div class="pixel">'+escapeHtml(w.purpose)+' · '+escapeHtml(w.network)+'</div><div class="wallet-address mono">'+escapeHtml(w.address)+'</div>'+(balances||'<div class="empty">No balance snapshot recorded.</div>')+'</article>';
   }
   function renderLiquidity() {
