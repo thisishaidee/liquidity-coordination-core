@@ -7,7 +7,7 @@ import {
   parseTokenAmount,
   formatTokenAmount
 } from "./core";
-import { canCreateTelegramRequest, canReviewTelegramRequest, isTelegramDraftCancellable, parseTelegramRequestAmount, isValidTelegramRequestPurpose } from "./telegram-request";
+import { canCreateTelegramRequest, canReviewTelegramRequest, isTelegramDraftCancellable, normalizeTelegramCommand, parseTelegramRequestAmount, isValidTelegramRequestPurpose } from "./telegram-request";
 
 interface Env {
   DB: D1Database;
@@ -314,7 +314,7 @@ async function continueTelegramLiquidityRequest(env: Env, chatId: string, userId
   if (!draft) return false;
   if (draft.expired === 1) {
     await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(businessId, chatId, userId).run();
-    await sendTelegramMessage(env, chatId, "Your request draft expired. Send /request to start again.");
+    await sendTelegramMessage(env, chatId, "Your request draft expired. Send /newrequest to start again.");
     return true;
   }
   if (draft.step === "agent") {
@@ -332,7 +332,7 @@ async function continueTelegramLiquidityRequest(env: Env, chatId: string, userId
     }
     const agent = await env.DB.prepare("SELECT id, name FROM agents WHERE id = ? AND business_id = ? AND status = 'active' LIMIT 1").bind(choices[index - 1], businessId).first<{ id: string; name: string }>();
     if (!agent) {
-      await sendTelegramMessage(env, chatId, "That agent is no longer active. Send /request to choose again.");
+      await sendTelegramMessage(env, chatId, "That agent is no longer active. Send /newrequest to choose again.");
       await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(businessId, chatId, userId).run();
       return true;
     }
@@ -360,7 +360,7 @@ async function continueTelegramLiquidityRequest(env: Env, chatId: string, userId
     const agentName = (await env.DB.prepare("SELECT name FROM agents WHERE id = ? AND business_id = ? AND status = 'active'").bind(draft.agent_id, businessId).first<{ name: string }>())?.name;
     if (!agentName) {
       await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(businessId, chatId, userId).run();
-      await sendTelegramMessage(env, chatId, "That agent is no longer active. Send /request to choose an active agent.");
+      await sendTelegramMessage(env, chatId, "That agent is no longer active. Send /newrequest to choose an active agent.");
       return true;
     }
     await env.DB.prepare("UPDATE telegram_request_drafts SET purpose = ?, step = 'confirm', updated_at = datetime('now') WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(purpose, businessId, chatId, userId).run();
@@ -384,13 +384,13 @@ async function continueTelegramLiquidityRequest(env: Env, chatId: string, userId
     const purpose = draft.purpose ?? "";
     if (!draft.agent_id || !draft.amount || purpose.length < 3) {
       await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(businessId, chatId, userId).run();
-      await sendTelegramMessage(env, chatId, "This request draft is incomplete. Send /request to start again.");
+      await sendTelegramMessage(env, chatId, "This request draft is incomplete. Send /newrequest to start again.");
       return true;
     }
     const agent = await env.DB.prepare("SELECT id, business_id, status, can_use_business_treasury FROM agents WHERE id = ? AND business_id = ? AND status = 'active' LIMIT 1").bind(draft.agent_id, businessId).first<AgentRow>();
     if (!agent) {
       await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ?").bind(businessId, chatId, userId).run();
-      await sendTelegramMessage(env, chatId, "That agent is no longer active. Send /request to choose an active agent.");
+      await sendTelegramMessage(env, chatId, "That agent is no longer active. Send /newrequest to choose an active agent.");
       return true;
     }
     const taskId = "telegram-" + crypto.randomUUID().replaceAll("-", "");
@@ -433,7 +433,8 @@ async function handleTelegramCommand(
   userId: string,
   rawText: string
 ): Promise<void> {
-  const command = (rawText.trim().split(/\s+/, 1)[0] ?? "").split("@", 1)[0].toLowerCase();
+  const rawCommand = (rawText.trim().split(/\s+/, 1)[0] ?? "").split("@", 1)[0].toLowerCase();
+  const command = normalizeTelegramCommand(rawCommand);
 
   if (command === "/start" && !rawText.trim().match(/^\/start\s+[a-f0-9]{64}$/i)) {
     await sendTelegramMessage(
@@ -463,9 +464,9 @@ async function handleTelegramCommand(
   }
 
   const businessId = connection.business_id;
-  if (command === "/request") {
+  if (command === "/newrequest") {
     if (!canCreateTelegramRequest(connection.permission)) {
-      await sendTelegramMessage(env, chatId, "Request creation is restricted to linked accounts with approver access. Ask your business administrator to review your Telegram permissions.");
+      await sendTelegramMessage(env, chatId, "Request creation requires Requester or Approver access. Ask your business administrator to update your Telegram permissions.");
       return;
     }
     await startTelegramLiquidityRequest(env, chatId, userId, businessId);
@@ -482,7 +483,7 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      `NERITH · ${connection.business_name}\n\n/status  Business overview\n/liquidity  Available and reserved balances\n/forecast  Upcoming planned obligations\n/agents  Agent status\n/operations  Recent liquidity activity\n/request  Create a liquidity request\n/requests  Review prepared liquidity requests\n/cancel  Cancel a request draft\n/disconnect  Disconnect this chat\n\nRequests are checked against authorised, fresh liquidity and reservations. Approvals record a business decision only. This bot cannot sign or broadcast transactions.`
+      `NERITH · ${connection.business_name}\n\n/status  Business overview\n/liquidity  Available and reserved balances\n/forecast  Upcoming planned obligations\n/agents  Agent status\n/operations  Recent liquidity activity\n/newrequest  Create a liquidity request\n/review  Review prepared liquidity requests\n/cancel  Cancel a request draft\n/disconnect  Disconnect this chat\n\nRequests are checked against authorised, fresh liquidity and reservations. Approvals record a business decision only. This bot cannot sign or broadcast transactions.`
     );
     return;
   }
@@ -566,7 +567,7 @@ async function handleTelegramCommand(
   }
 
 
-  if (command === "/requests") {
+  if (command === "/review") {
     await listTelegramRequests(env, chatId, userId, businessId, connection.business_name, connection.permission);
     return;
   }
@@ -751,7 +752,7 @@ async function handleTelegramApprovalCallback(env: Env, callback: {
   if (!eligible || !details || details.snapshotHash !== action.snapshot_hash) {
     await env.DB.prepare("UPDATE telegram_approval_actions SET consumed_at = datetime('now') WHERE token_hash = ? AND consumed_at IS NULL")
       .bind(tokenHash).run();
-    await answerTelegramCallback(env, callbackId, "Request details or reservation changed. Run /requests again.");
+    await answerTelegramCallback(env, callbackId, "Request details or reservation changed. Run /review again.");
     return;
   }
   const inserted = await env.DB.prepare(
@@ -843,8 +844,8 @@ async function updateTelegramPermission(request: Request, env: Env): Promise<Res
   const body = await readJson(request);
   if (!body || typeof body.businessId !== "string" ||
       typeof body.chatId !== "string" || typeof body.telegramUserId !== "string" ||
-      (body.permission !== "viewer" && body.permission !== "approver")) {
-    return json({ error: "invalid_request", message: "Provide businessId, chatId, telegramUserId and permission=viewer|approver." }, 400);
+      (typeof body.permission !== "string" || !["viewer", "requester", "approver"].includes(body.permission))) {
+    return json({ error: "invalid_request", message: "Provide businessId, chatId, telegramUserId and permission=viewer|requester|approver." }, 400);
   }
   const result = await env.DB.prepare(`
     UPDATE telegram_connections SET permission = ?
@@ -907,8 +908,8 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
           { command: "forecast", description: "Upcoming planned obligations" },
           { command: "agents", description: "Agent status" },
           { command: "operations", description: "Recent liquidity operations" },
-          { command: "request", description: "Create a liquidity request" },
-          { command: "requests", description: "Review prepared liquidity requests" },
+          { command: "newrequest", description: "Create a liquidity request" },
+          { command: "review", description: "Review prepared liquidity requests" },
           { command: "cancel", description: "Cancel a request draft" },
           { command: "disconnect", description: "Disconnect this Telegram chat" }
         ]
@@ -935,7 +936,7 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
       configured: true,
       botUsername: identity.result.username,
       webhookUrl,
-      commands: ["start", "help", "status", "liquidity", "forecast", "agents", "operations", "request", "requests", "cancel", "disconnect"]
+      commands: ["start", "help", "status", "liquidity", "forecast", "agents", "operations", "newrequest", "review", "cancel", "disconnect"]
     });
   } catch {
     return json({ error: "telegram_setup_unavailable" }, 502);
@@ -1011,7 +1012,7 @@ async function telegramWebhook(request: Request, env: Env): Promise<Response> {
     return json({ ok: true });
   }
 
-  await sendTelegramMessage(env, chatId, "This Telegram chat is now connected to your business.\n\nTry /status, /liquidity, /forecast, /agents, /operations or /request.\nUse /help to see all commands. Requests and approvals are recorded by NERITH, but this bot cannot sign or broadcast transactions.");
+  await sendTelegramMessage(env, chatId, "This Telegram chat is now connected to your business.\n\nTry /status, /liquidity, /forecast, /agents, /operations or /newrequest.\nUse /help to see all commands. Requests and approvals are recorded by NERITH, but this bot cannot sign or broadcast transactions.");
   return json({ ok: true, linked: true });
 }
 
