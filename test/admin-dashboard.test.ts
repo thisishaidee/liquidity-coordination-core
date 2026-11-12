@@ -338,7 +338,7 @@ describe("business operations aggregation and dashboard route", () => {
     expect(html).toContain("@media(max-width:560px)");
     expect(html).toContain("@media(max-width:360px)");
     expect(html).toContain("bottom-nav");
-    expect(html).toContain("Support / Privacy / Terms: not yet published");
+    expect(html).toContain("Help & support ↗");
     expect(html).toContain('true,"business"');
     expect(html).toContain('true,"agent"');
     expect(html).toContain("isolated by agent, not pooled");
