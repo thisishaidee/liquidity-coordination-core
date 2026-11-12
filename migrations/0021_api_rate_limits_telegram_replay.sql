@@ -10,6 +10,8 @@ CREATE INDEX IF NOT EXISTS idx_api_rate_limits_updated
 
 CREATE TABLE IF NOT EXISTS telegram_processed_updates (
   update_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL DEFAULT 'processing' CHECK (status IN ('processing', 'completed')),
+  locked_until TEXT NOT NULL DEFAULT (datetime('now', '+2 minutes')),
   processed_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
