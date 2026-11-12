@@ -1,0 +1,29 @@
+name: Deploy NERITH Pages redirect
+
+on:
+  push:
+    branches:
+      - feat/nerith-dashboard-preview
+    paths:
+      - ".github/workflows/nerith-pages-redirect.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nerith-pages-redirect
+  cancel-in-progress: true
+
+jobs:
+  deploy-redirect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare redirect
+        run: |
+          mkdir -p "$RUNNER_TEMP/nerith-redirect"
+          printf '%s\n' '/* https://liquidity-coordination-api.haideecoded-e0f.workers.dev/:splat 301' > "$RUNNER_TEMP/nerith-redirect/_redirects"
+      - name: Deploy Cloudflare Pages redirect
+        run: npx --yes wrangler@4.45.0 pages deploy "$RUNNER_TEMP/nerith-redirect" --project-name=nerith --branch=main
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ce0ffaff7491ff502fa23f17606a138a
