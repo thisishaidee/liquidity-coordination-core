@@ -12,6 +12,7 @@ import {
 } from "./core";
 import { canCreateTelegramRequest, canReviewTelegramRequest, isTelegramDraftCancellable, normalizeTelegramCommand, parseTelegramRequestAmount, isValidTelegramRequestPurpose } from "./telegram-request";
 import { decryptTotpSecret, encryptTotpSecret, generateTotpSecret, verifyTotpStep } from "./telegram-totp";
+import { verifySolSourceDebit, type SolanaSettlementTransaction } from "./settlement";
 
 interface Env {
   DB: D1Database;
@@ -2941,6 +2942,11 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
         (typeof entry === "string" ? entry : entry.pubkey) === wallet.address
       );
       const sourceWalletSigned = typeof sourceAccount === "object" && sourceAccount !== null && sourceAccount.signer === true;
+      const sourceDebitVerification = verifySolSourceDebit(
+        transaction as SolanaSettlementTransaction,
+        wallet.address,
+        BigInt(reservation.amount_atoms)
+      );
 
       const sumOwnerUsdc = (entries: ParsedTokenBalance[] | undefined) =>
         (entries ?? []).filter((entry) => entry.owner === wallet.address && entry.mint === USDC_MINT)
