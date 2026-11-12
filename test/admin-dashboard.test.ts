@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import worker from "../src/index";
 
 type QueryRecord = { sql: string; values: unknown[] };
+type TestEnv = { DB: D1Database; ADMIN_BOOTSTRAP_TOKEN?: string };
 
 function makeEnv(options: {
   businessExists?: boolean;
@@ -41,16 +42,16 @@ function makeEnv(options: {
       return statement;
     }
   };
-  return { env: { DB: db } as unknown as Env, queries };
+  return { env: { DB: db } as unknown as TestEnv, queries };
 }
 
 const token = "dashboard-test-bootstrap-token";
 const bearer = { authorization: `Bearer ${token}` };
 const sessionCookie = "nerith_admin_session=" + "a".repeat(64);
 
-async function call(path: string, env: Env, headers: HeadersInit = {}) {
+async function call(path: string, env: TestEnv, headers: HeadersInit = {}) {
   const request = new Request("https://nerith.test" + path, { headers });
-  return worker.fetch(request, { ...env, ADMIN_BOOTSTRAP_TOKEN: token } as Env, {} as ExecutionContext);
+  return worker.fetch(request, { ...env, ADMIN_BOOTSTRAP_TOKEN: token } as TestEnv, {} as ExecutionContext);
 }
 
 describe("admin dashboard read endpoints", () => {
