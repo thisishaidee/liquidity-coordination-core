@@ -51,7 +51,7 @@ const sessionCookie = "nerith_admin_session=" + "a".repeat(64);
 
 async function call(path: string, env: TestEnv, headers: HeadersInit = {}) {
   const request = new Request("https://nerith.test" + path, { headers });
-  return worker.fetch(request, { ...env, ADMIN_BOOTSTRAP_TOKEN: token } as TestEnv, {} as ExecutionContext);
+  return worker.fetch(request, { ...env, ADMIN_BOOTSTRAP_TOKEN: token } as TestEnv);
 }
 
 describe("admin dashboard read endpoints", () => {
