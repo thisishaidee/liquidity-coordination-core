@@ -355,8 +355,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     $("sideBusiness").textContent="No business data loaded";
     renderOverview();renderAgents();renderLiquidity();renderForecast();renderOperations();renderTelegram();renderSettings();
     const notice=document.createElement("div");notice.className="note";notice.style.marginBottom="18px";notice.textContent="STATIC DESIGN PREVIEW · No business data, balances, agents or operations are connected."; $("globalError").after(notice);
-    $("refreshBtn").disabled=true;
-    document.querySelectorAll("[data-page]").forEach(el=>el.addEventListener("click",()=>{}));
+    document.querySelectorAll("#refreshBtn,#overviewRefresh,#agentsRefresh,#liquidityRefresh,#forecastRefresh,#operationsRefresh,#telegramRefresh,#loadMoreOperations,#operationFilter").forEach(el=>{el.disabled=true;});
   }
 })();
 </script>
