@@ -156,7 +156,7 @@ describe("on-chain Hermes payment receipt verification", () => {
 
   it("rejects a transfer whose destination token account is not owned by payTo", () => {
     const tx = settledTransaction() as any;
-    tx.meta.postTokenBalances[0].owner = payerAddress;
+    tx.meta.postTokenBalances[1].owner = payerAddress;
     expect(verifyHermesPaymentTransaction(tx, req, payerAddress).verified).toBe(false);
   });
 
