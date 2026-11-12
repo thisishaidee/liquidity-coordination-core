@@ -12,6 +12,7 @@ import {
 } from "./core";
 import { canCreateTelegramRequest, canReviewTelegramRequest, isTelegramDraftCancellable, normalizeTelegramCommand, parseTelegramRequestAmount, isValidTelegramRequestPurpose } from "./telegram-request";
 import { decryptTotpSecret, encryptTotpSecret, generateTotpSecret, verifyTotpStep } from "./telegram-totp";
+import { verifySolSourceDebit, type SolanaSettlementTransaction } from "./settlement";
 
 interface Env {
   DB: D1Database;
@@ -2941,6 +2942,11 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
         (typeof entry === "string" ? entry : entry.pubkey) === wallet.address
       );
       const sourceWalletSigned = typeof sourceAccount === "object" && sourceAccount !== null && sourceAccount.signer === true;
+      const sourceDebitVerification = verifySolSourceDebit(
+        transaction as SolanaSettlementTransaction,
+        wallet.address,
+        BigInt(reservation.amount_atoms)
+      );
 
       const sumOwnerUsdc = (entries: ParsedTokenBalance[] | undefined) =>
         (entries ?? []).filter((entry) => entry.owner === wallet.address && entry.mint === USDC_MINT)
@@ -2950,9 +2956,13 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
       const afterUsdc = sumOwnerUsdc(transaction.meta.postTokenBalances);
       outputAtoms = afterUsdc > beforeUsdc ? afterUsdc - beforeUsdc : 0n;
 
-      if (!sourceWalletSigned || outputAtoms === 0n) {
+      if (!sourceWalletSigned || !sourceDebitVerification.verified || outputAtoms === 0n) {
         effectiveStatus = "unverified";
-        settlementNote = "The finalized transaction did not show the registered operating wallet as a signer receiving USDC.";
+        settlementNote = !sourceWalletSigned
+          ? "The finalized transaction did not show the registered operating wallet as a signer."
+          : !sourceDebitVerification.verified
+            ? sourceDebitVerification.reason
+            : "The finalized transaction did not show USDC received by the registered operating wallet.";
       } else if (outputAtoms < BigInt(operation.shortfall_atoms)) {
         effectiveStatus = "shortfall";
         settlementNote = "The swap finalized, but received USDC is below the operation's required shortfall.";
