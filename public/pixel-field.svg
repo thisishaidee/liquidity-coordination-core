@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="640" viewBox="0 0 640 640">
+<defs>
+  <pattern id="p" width="16" height="16" patternUnits="userSpaceOnUse"><rect x="0" y="0" width="14" height="14" fill="#F2F2EC" opacity=".045"/></pattern>
+</defs>
+<rect width="640" height="640" fill="url(#p)"/>
+<g fill="#F2F2EC">
+  <path opacity=".09" d="M32 32h14v14H32z M48 32h14v14H48z M64 32h14v14H64z M80 32h14v14H80z M96 32h14v14H96z M32 48h14v14H32z M48 48h14v14H48z M64 48h14v14H64z M80 48h14v14H80z M48 64h14v14H48z M64 64h14v14H64z M80 64h14v14H80z M96 64h14v14H96z M112 64h14v14H112z"/>
+  <path opacity=".15" d="M352 112h14v14h-14z M368 112h14v14h-14z M384 112h14v14h-14z M400 112h14v14h-14z M416 128h14v14h-14z M432 128h14v14h-14z M448 128h14v14h-14z M368 128h14v14h-14z M384 144h14v14h-14z M400 144h14v14h-14z M416 144h14v14h-14z M432 160h14v14h-14z M448 160h14v14h-14z"/>
+  <path opacity=".09" d="M112 320h14v14h-14z M128 320h14v14h-14z M144 320h14v14h-14z M160 320h14v14h-14z M176 336h14v14h-14z M192 336h14v14h-14z M208 336h14v14h-14z M128 352h14v14h-14z M144 352h14v14h-14z M160 352h14v14h-14z M176 352h14v14h-14z M192 368h14v14h-14z M208 368h14v14h-14z"/>
+  <path opacity=".045" d="M480 432h14v14h-14z M496 432h14v14h-14z M512 432h14v14h-14z M528 448h14v14h-14z M544 448h14v14h-14z M560 448h14v14h-14z M496 464h14v14h-14z M512 464h14v14h-14z M528 464h14v14h-14z M544 480h14v14h-14z M560 480h14v14h-14z"/>
+</g>
+<g fill="#DFFF00" opacity=".75">
+  <path d="M64 48h14v14H64z M80 64h14v14H80z M400 128h14v14h-14z M432 144h14v14h-14z M160 352h14v14h-14z M192 352h14v14h-14z M528 448h14v14h-14z M544 464h14v14h-14z"/>
+</g></svg>
