@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   parseHermesPaymentPayload,
   parseHermesPaymentReceipt,
-  parseHermesPaymentRequirement
+  parseHermesPaymentRequirement,
+  verifyHermesPaymentTransaction
 } from "../src/x402";
 
 function b64(value: unknown): string {
