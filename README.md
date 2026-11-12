@@ -37,7 +37,7 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 | POST | `/v1/admin/balances` | Record a controlled manual balance snapshot |
 | POST | `/v1/admin/balances/sync` | Refresh registered wallet balances from Solana RPC |
 | POST | `/v1/admin/reservations/expire` | Manually sweep expired reservations |
-| POST | `/v1/admin/telegram/setup` | Verify the bot, register its webhook and publish bot commands |
+| POST | `/v1/admin/telegram/setup` | Verify the bot, register its webhook and publish bot commands |\n| GET/POST | `/v1/admin/x402/budgets` | Read or set business-wide and per-agent daily x402 USDC spending limits |
 | POST | `/v1/admin/telegram/link-codes` | Create a one-time private Telegram linking invitation |
 | POST | `/v1/telegram/webhook` | Receive verified Telegram bot updates |
 | POST | `/v1/liquidity/requests` | Submit a task funding request |
@@ -69,6 +69,31 @@ Admin routes require `ADMIN_BOOTSTRAP_TOKEN` as a Bearer token. Agent routes req
 - Duplicate task guard using unique (agent_id, task_id).
 - D1 schema and migrations for businesses, agents, wallets, balances, operations and reservations.
 - GitHub Actions CI for typecheck and tests.
+
+
+## x402 API payment budgets
+
+NERITH applies daily USDC spending limits to paid Hermes quote and build calls. Defaults are **0.01 USDC per agent per UTC day** and **0.05 USDC per business per UTC day**. Each payment consumes both the agent allowance and the shared business allowance. Pending, ambiguous payments continue to count against the budget until reconciled.
+
+Read the current limits and today's usage:
+
+```http
+GET /v1/admin/x402/budgets?businessId=biz_...
+```
+
+Set a business-wide limit or an individual agent limit (zero disables paid calls at that scope):
+
+```json
+{
+  "businessId": "biz_...",
+  "agentId": "agt_...",
+  "dailyLimitUSDC": "0.02"
+}
+```
+
+Send that body to `POST /v1/admin/x402/budgets` using an authenticated admin session. Omit `agentId` to change the business-wide cap.
+
+The Worker stores the actual Hermes V1 Solana challenge for the exact operation/request, reserves its quoted amount before forwarding the payment, rejects payment replay, and verifies the finalized receipt transaction against the challenge's USDC mint, amount, recipient, payer signature and advertised facilitator fee payer before marking spend as settled. A timeout, missing receipt or RPC uncertainty keeps the reservation pending instead of silently freeing budget. These limits govern paid calls routed through NERITH; they are not a wallet-level spending lock for direct transfers made outside NERITH.
 
 ## Important safety boundaries
 
