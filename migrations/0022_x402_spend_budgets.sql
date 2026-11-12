@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS x402_payment_reservations (
   payment_hash TEXT NOT NULL UNIQUE,
   business_id TEXT NOT NULL REFERENCES businesses(id),
   agent_id TEXT NOT NULL REFERENCES agents(id),
+  payment_wallet_address TEXT NOT NULL,
   spend_day TEXT NOT NULL,
   amount_atoms INTEGER NOT NULL CHECK (amount_atoms > 0),
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'settled', 'released')),
