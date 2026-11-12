@@ -857,16 +857,30 @@ async function handleTelegramApprovalCallback(env: Env, callback: {
     return;
   }
   const permission = await env.DB.prepare(
-    "SELECT id, permission FROM telegram_connections WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? AND status = 'active' AND permission = 'approver' LIMIT 1"
-  ).bind(action.business_id, chatId, userId).first<{ id: string; permission: string }>();
+    "SELECT id, permission, totp_secret_enc, totp_enabled_at FROM telegram_connections WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? AND status = 'active' AND permission = 'approver' LIMIT 1"
+  ).bind(action.business_id, chatId, userId).first<{ id: string; permission: string; totp_secret_enc: string | null; totp_enabled_at: string | null }>();
   if (!permission) {
     await answerTelegramCallback(env, callbackId, "Approver permission is no longer active.");
     return;
   }
   const origin = await env.DB.prepare("SELECT telegram_chat_id, telegram_user_id FROM telegram_request_origins WHERE operation_id = ? LIMIT 1").bind(action.operation_id).first<{ telegram_chat_id: string; telegram_user_id: string }>();
+  const isOwnRequest = origin?.telegram_chat_id === chatId && origin?.telegram_user_id === userId;
+  if (isOwnRequest) {
+    if (!permission.totp_secret_enc || !permission.totp_enabled_at || !env.TELEGRAM_TOTP_ENCRYPTION_KEY) {
+      await env.DB.prepare("UPDATE telegram_approval_actions SET consumed_at = datetime('now') WHERE token_hash = ?").bind(tokenHash).run();
+      await answerTelegramCallback(env, callbackId, "Set up Google Authenticator with /setupauth before deciding on your own request.");
+      return;
+    }
+    await env.DB.prepare("UPDATE telegram_approval_actions SET consumed_at = datetime('now') WHERE token_hash = ? AND consumed_at IS NULL").bind(tokenHash).run();
+    await env.DB.prepare("INSERT INTO telegram_pending_approvals (id, business_id, operation_id, telegram_chat_id, telegram_user_id, decision, snapshot_hash, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', '+5 minutes'))")
+      .bind("tpa_" + crypto.randomUUID().replaceAll("-", ""), action.business_id, action.operation_id, chatId, userId, decision, action.snapshot_hash).run();
+    await answerTelegramCallback(env, callbackId, "Authenticator verification required.");
+    await sendTelegramMessage(env, chatId, "Confirm your own request decision\n\nOpen Google Authenticator and send /confirmapproval followed by its current six-digit code. This challenge expires in five minutes; the code can only be used once.");
+    return;
+  }
   if (!canReviewTelegramRequest(permission.permission, origin?.telegram_chat_id, origin?.telegram_user_id, chatId, userId)) {
     await env.DB.prepare("UPDATE telegram_approval_actions SET consumed_at = datetime('now') WHERE token_hash = ?").bind(tokenHash).run();
-    await answerTelegramCallback(env, callbackId, "You cannot approve your own request.");
+    await answerTelegramCallback(env, callbackId, "You are not authorised to review this request.");
     return;
   }
   const details = await telegramOperationSnapshot(env, action.operation_id, action.business_id);
