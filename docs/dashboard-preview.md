@@ -74,4 +74,5 @@ No dashboard API key, agent API key or secret is requested by the page.
 - Existing agent-key `/v1/liquidity/forecast` and `/v1/operations` behaviour must remain unchanged.
 - `/dashboard` uses the same restrictive page Content Security Policy as the existing browser pages.
 - Dashboard HTML is source-controlled in `public/dashboard.html` and embedded into `src/business-dashboard.ts` by `scripts/embed-business-dashboard.mjs`.
+- The shared pixel background is source-controlled in `public/pixel-field.svg`, embedded into `src/pixel-field.ts`, and served by the Worker at `/pixel-field.svg`; the Worker does not rely on a static-assets binding.
 - `npm run build:dashboard` regenerates all browser page modules.
