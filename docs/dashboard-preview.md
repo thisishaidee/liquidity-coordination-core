@@ -61,7 +61,7 @@ No dashboard API key, agent API key or secret is requested by the page.
 - Operating liquidity is aggregated only from `purpose=operating` wallets and fresh snapshots. Reserved funds are deducted from availability.
 - x402 `purpose=api_payment` balances are shown separately and never included in operating totals or forecasts.
 - Balance amounts retain their observed timestamp and freshness state.
-- Agent last activity, per-agent operation counts, team-member roles, Telegram recent activity, forecast confidence, notification preferences and security settings are not exposed by the current API. The UI labels them unavailable instead of fabricating values.
+- Agent wallet ownership IDs, agent last activity, per-agent operation counts, team-member roles, Telegram recent activity, forecast confidence, notification preferences and security settings are not exposed by the current API. The UI labels them unavailable instead of fabricating values.
 - The dashboard does not sign, broadcast or transfer transactions.
 - It does not add controls for operations that have no existing supported endpoint.
 - Support, Privacy and Terms destinations are not published and are not invented as links.
