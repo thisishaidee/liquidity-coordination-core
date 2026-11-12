@@ -105,7 +105,7 @@ This is still an early backend, not a production funds executor.
 - Swap.io quote and unsigned transaction preparation are proxied through x402. The caller's x402 client signs the separate USDC API payment; this Worker never receives wallet private keys. The caller must still sign the returned swap transaction locally.
 - The manual admin balance endpoint accepts operator-entered snapshots for controlled testing only. The admin sync endpoint reads SOL and USDC balances from Solana RPC at confirmed commitment. Never accept balances from agent requests.
 - A scheduled Worker runs reservation expiry cleanup every minute. The admin expiry endpoint is also available for manual reconciliation. Verify the cron trigger is active after deployment.
-- Agent API-key rotation is implemented. User login, business-level dashboard authorization and rate limiting remain future work.
+- Agent API-key rotation is implemented. Sensitive agent routes have persistent rate limits; user login, business-member authorization and broader route-specific abuse controls remain future work.
 - No wallet private keys or signing secrets belong in this Worker.
 
 The admin bootstrap token must be configured as a Cloudflare secret:
@@ -367,7 +367,7 @@ const buildResponse = await client.fetch("https://YOUR_API/v1/conversions/prepar
 });
 ```
 
-The x402 client wallet must match the registered `api_payment` wallet and needs a fresh balance of at least 0.01 USDC for quote and build calls. The API returns each route's minimum output and a `minOutputCoversShortfall` flag; it enforces the minimum output check again on the server before transaction building. That reserve is distinct from the operating wallet's SOL being converted. The build endpoint reserves the requested SOL amount before preparing the unsigned transaction. After the signature is tracked, active reservations are extended to a one-hour ceiling; if the transaction remains unconfirmed, the scheduled expiry worker releases the holds. After the business-controlled signer broadcasts it, call `POST /v1/conversions/track` with the operation ID and Solana signature, then poll `GET /v1/conversions/status/:operationId`. Status polling uses Solana RPC directly and does not incur another Hermes API charge. The status handler uses `getSignatureStatuses` and `getTransaction` from the configured Solana RPC, then independently verifies that the registered operating wallet signed the finalized transaction and received USDC. It marks the wallet snapshots stale after terminal settlement so they must be refreshed before further liquidity decisions. No paid API request has been made by this repository's implementation.
+The x402 client wallet must match the registered `api_payment` wallet and needs a fresh balance of at least 0.01 USDC for quote and build calls. The API returns each route's minimum output and a `minOutputCoversShortfall` flag; it enforces the minimum output check again on the server before transaction building. That reserve is distinct from the operating wallet's SOL being converted. The build endpoint reserves the requested SOL amount before preparing the unsigned transaction. After the signature is tracked, active reservations are extended to a one-hour ceiling; if the transaction remains unconfirmed, the scheduled expiry worker releases the holds. After the business-controlled signer broadcasts it, call `POST /v1/conversions/track` with the operation ID and Solana signature, then poll `GET /v1/conversions/status/:operationId`. Status polling uses Solana RPC directly and does not incur another Hermes API charge. The status handler uses `getSignatureStatuses` and `getTransaction` from the configured Solana RPC, then independently verifies that the registered operating wallet signed the finalized transaction, received USDC, and had an exact SOL debit matching the reserved input plus evidenced fees and rent. It marks the wallet snapshots stale after terminal settlement so they must be refreshed before further liquidity decisions. No paid API request has been made by this repository's implementation.
 
 ## Browser dashboard
 
@@ -427,8 +427,8 @@ Telegram reports business-wide operating balances only to a chat linked through 
 
 ## Next milestones
 
-1. Business-level authentication, scoped admin roles and agent key rotation.
+1. Business-level authentication and scoped admin roles.
 2. Approval policies and isolated wallet signer integration.
 3. Multi-wallet split reservations and direct task-completion reconciliation.
 4. Quote schema validation and automated minimum-output selection.
-5. More robust monitoring, rate limits and integration tests.
+5. More robust monitoring, broader rate-limit coverage and live integration tests.
