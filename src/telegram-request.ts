@@ -3,7 +3,7 @@ import { parseTokenAmount } from "./core";
 const MAX_LEDGER_ATOMS = 9_000_000_000_000_000_000n;
 
 export function canCreateTelegramRequest(permission: string | null | undefined): boolean {
-  return permission === "approver";
+  return permission === "requester" || permission === "approver";
 }
 
 export function canReviewTelegramRequest(
