@@ -123,3 +123,20 @@ The system is **not ready to be represented as a fully secured multi-tenant prod
 ## Release recommendation
 
 Continue controlled internal testing. Do not claim audited, trustless, fully autonomous or production-ready funds execution. Close the two High findings around business authorization and source-debit settlement verification, implement rate limits and x402 spend budgets, then run the outstanding end-to-end tests before onboarding external businesses.
+
+
+## Follow-up hardening PR #29 (in verification; not yet deployed)
+
+The follow-up branch adds the following controls:
+
+- Per-agent fixed-window limits: swap quote 4 per 10 minutes; swap build 3 per 10 minutes; liquidity request creation 20 per minute; swap tracking 20 per minute; swap status polling 30 per minute.
+- Bounded JSON request parsing at 256 KB.
+- Telegram update-id deduplication with a two-minute processing lease, retry after an interrupted handler, and 30-day retention.
+- Hermes upstream timeout of 12 seconds, redirects rejected, quote response cap of 1 MB, build response cap of 512 KB, and explicit handling of interrupted/oversized upstream responses.
+- Scheduled cleanup for old limiter and replay records.
+
+These are abuse and resource controls, not a complete x402 monetary budget. The current integration validates a successful settlement receipt but the receipt schema does not itself state the paid amount. The amount must be bound to the x402 challenge/payment authorization and independently reconciled with the settlement transaction before enforcing daily USDC budgets. Do not equate request-count limits with USDC spending limits.
+
+The SOL settlement verifier remains incomplete for exact source debit. It must parse the finalized Solana transaction's relevant native SOL transfers, fee payer, token-account creation/rent and any rent refunds, then compare net debit against the quoted source input plus evidenced costs. A guessed tolerance is unsafe.
+
+The PR is not production-ready until the latest head commit passes typecheck, tests and Wrangler dry-run, and the D1 migration is applied through the deployment workflow.
