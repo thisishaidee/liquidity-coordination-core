@@ -1,4 +1,6 @@
 import { dashboardHtml } from "./dashboard";
+import { businessDashboardHtml } from "./business-dashboard";
+import { pixelFieldSvg } from "./pixel-field";
 import { landingHtml } from "./landing";
 import { controlHtml } from "./control";
 import {
@@ -17,6 +19,7 @@ interface Env {
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_BOT_USERNAME?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
+  NERITH_SUPPORT_URL?: string;
 }
 
 type AgentRow = {
@@ -160,6 +163,15 @@ async function readJson(request: Request): Promise<Record<string, unknown> | nul
   } catch {
     return null;
   }
+}
+
+function telegramSupportMarkup(env: Env): Record<string, unknown> | undefined {
+  if (!env.NERITH_SUPPORT_URL) return undefined;
+  try {
+    const supportUrl = new URL(env.NERITH_SUPPORT_URL);
+    if (supportUrl.protocol !== "https:" || supportUrl.username || supportUrl.password) return undefined;
+    return { inline_keyboard: [[{ text: "NERITH website & support", url: supportUrl.toString() }]] };
+  } catch { return undefined; }
 }
 
 async function sendTelegramMessage(env: Env, chatId: string, text: string, replyMarkup?: Record<string, unknown>): Promise<boolean> {
@@ -483,7 +495,8 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      `NERITH · ${connection.business_name}\n\n/status  Business overview\n/liquidity  Available and reserved balances\n/forecast  Upcoming planned obligations\n/agents  Agent status\n/operations  Recent liquidity activity\n/newrequest  Create a liquidity request\n/review  Review prepared liquidity requests\n/cancel  Cancel a request draft\n/disconnect  Disconnect this chat\n\nRequests are checked against authorised, fresh liquidity and reservations. Approvals record a business decision only. This bot cannot sign or broadcast transactions.`
+      `NERITH · ${connection.business_name}\n\n/status  Business overview\n/liquidity  Available and reserved balances\n/forecast  Upcoming planned obligations\n/agents  Agent status\n/operations  Recent liquidity activity\n/newrequest  Create a liquidity request\n/review  Review prepared liquidity requests\n/cancel  Cancel a request draft\n/disconnect  Disconnect this chat\n\nRequests are checked against authorised, fresh liquidity and reservations. Approvals record a business decision only. This bot cannot sign or broadcast transactions.`,
+      telegramSupportMarkup(env)
     );
     return;
   }
@@ -936,7 +949,8 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
       configured: true,
       botUsername: identity.result.username,
       webhookUrl,
-      commands: ["start", "help", "status", "liquidity", "forecast", "agents", "operations", "newrequest", "review", "cancel", "disconnect"]
+      commands: ["start", "help", "status", "liquidity", "forecast", "agents", "operations", "newrequest", "review", "cancel", "disconnect"],
+      supportLinkConfigured: Boolean(telegramSupportMarkup(env))
     });
   } catch {
     return json({ error: "telegram_setup_unavailable" }, 502);
@@ -2721,7 +2735,29 @@ type ForecastWallet = {
   solFresh: boolean;
 };
 
-async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record<string, unknown>> {
+type BusinessForecastItem = {
+  agentId: string;
+  agentName: string;
+  taskId: string;
+  dueAt: string;
+  purpose: string;
+  amountUSDC: string;
+  availableUSDC: string;
+  shortfallUSDC: string;
+  status: "covered" | "conversion_required" | "blocked";
+  sourceWalletId: string | null;
+  sourceAsset: string | null;
+  sourceSOLAvailable?: string;
+  quoteRequired?: boolean;
+};
+
+async function calculateBusinessLiquidityForecast(businessId: string, env: Env): Promise<{
+  wallets: ForecastWallet[];
+  obligations: BusinessForecastItem[];
+  summary: { planned: number; covered: number; conversionRequired: number; blocked: number; totalShortfallUSDC: string };
+  businessBalanceDataFresh: boolean;
+  truncated: boolean;
+}> {
   const balanceRows = await env.DB.prepare(`
     SELECT w.id AS wallet_id, w.address, w.scope, w.agent_id, b.token,
            b.confirmed_atoms, b.reserved_atoms, b.observed_at
@@ -2729,7 +2765,7 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
     JOIN wallet_balances b ON b.wallet_id = w.id
     WHERE w.business_id = ? AND w.status = 'active' AND w.purpose = 'operating'
       AND w.network = 'solana'
-  `).bind(agent.business_id).all<{
+  `).bind(businessId).all<{
     wallet_id: string;
     address: string;
     scope: string;
@@ -2770,18 +2806,19 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
   }
 
   const obligations = await env.DB.prepare(`
-    SELECT o.agent_id, o.task_id, o.amount_atoms, o.due_at, o.purpose,
+    SELECT o.agent_id, a.name AS agent_name, o.task_id, o.amount_atoms, o.due_at, o.purpose,
            a.can_use_business_treasury
     FROM liquidity_obligations o
-    JOIN agents a ON a.id = o.agent_id
+    JOIN agents a ON a.id = o.agent_id AND a.business_id = o.business_id
     WHERE o.business_id = ? AND o.status = 'planned'
       AND a.status = 'active'
       AND julianday(o.due_at) > julianday('now')
       AND julianday(o.due_at) <= julianday('now', '+30 days')
     ORDER BY o.due_at ASC
     LIMIT 200
-  `).bind(agent.business_id).all<{
+  `).bind(businessId).all<{
     agent_id: string;
+    agent_name: string;
     task_id: string;
     amount_atoms: string;
     due_at: string;
@@ -2793,12 +2830,12 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
   const conversionUsedWallets = new Set<string>();
   const pendingConversions = await env.DB.prepare(
     "SELECT source_wallet_id FROM operations WHERE business_id = ? AND action = 'conversion_required' AND status IN ('awaiting_conversion', 'preparing_conversion', 'conversion_submitted')"
-  ).bind(agent.business_id).all<{ source_wallet_id: string | null }>();
+  ).bind(businessId).all<{ source_wallet_id: string | null }>();
   for (const pending of pendingConversions.results ?? []) {
     if (pending.source_wallet_id) conversionUsedWallets.add(pending.source_wallet_id);
   }
 
-  const allForecast = (obligations.results ?? []).map((obligation) => {
+  const allForecast: BusinessForecastItem[] = (obligations.results ?? []).map((obligation) => {
     const amount = BigInt(obligation.amount_atoms);
     const eligibleWallets = [...wallets.values()].filter((wallet) =>
       (wallet.scope === "agent" && wallet.agentId === obligation.agent_id) ||
@@ -2818,6 +2855,7 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
       remaining.set(coveredWallet.walletId, available - amount);
       return {
         agentId: obligation.agent_id,
+        agentName: obligation.agent_name,
         taskId: obligation.task_id,
         dueAt: obligation.due_at,
         purpose: obligation.purpose,
@@ -2845,6 +2883,7 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
       remaining.set(conversionWallet.walletId, available - allocated);
       return {
         agentId: obligation.agent_id,
+        agentName: obligation.agent_name,
         taskId: obligation.task_id,
         dueAt: obligation.due_at,
         purpose: obligation.purpose,
@@ -2869,6 +2908,7 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
     if (bestWallet && allocated > 0n) remaining.set(bestWallet.walletId, available - allocated);
     return {
       agentId: obligation.agent_id,
+      agentName: obligation.agent_name,
       taskId: obligation.task_id,
       dueAt: obligation.due_at,
       purpose: obligation.purpose,
@@ -2881,28 +2921,47 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
     };
   });
 
-  const summarize = (items: typeof allForecast) => items.reduce((acc, item) => {
+  const summary = allForecast.reduce((acc, item) => {
     if (item.status === "covered") acc.covered++;
     else if (item.status === "conversion_required") acc.conversionRequired++;
     else acc.blocked++;
-    const shortfall = item.shortfallUSDC;
-    if (shortfall !== "0") acc.totalShortfallAtoms += parseTokenAmount(shortfall);
+    if (item.shortfallUSDC !== "0") acc.totalShortfallAtoms += parseTokenAmount(item.shortfallUSDC);
     return acc;
   }, { covered: 0, conversionRequired: 0, blocked: 0, totalShortfallAtoms: 0n });
 
-  const ownForecast = allForecast.filter((item) => item.agentId === agent.id);
-  const ownSummary = summarize(ownForecast);
-  const businessSummary = summarize(allForecast);
-  const relevantWallets = [...wallets.values()].filter((wallet) =>
+  return {
+    wallets: [...wallets.values()],
+    obligations: allForecast,
+    summary: {
+      planned: summary.covered + summary.conversionRequired + summary.blocked,
+      covered: summary.covered,
+      conversionRequired: summary.conversionRequired,
+      blocked: summary.blocked,
+      totalShortfallUSDC: formatTokenAmount(summary.totalShortfallAtoms, 6)
+    },
+    businessBalanceDataFresh: wallets.size > 0 &&
+      [...wallets.values()].every((wallet) => wallet.usdcFresh && wallet.solFresh),
+    truncated: (obligations.results ?? []).length === 200
+  };
+}
+
+async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record<string, unknown>> {
+  const business = await calculateBusinessLiquidityForecast(agent.business_id, env);
+  const ownForecast = business.obligations.filter((item) => item.agentId === agent.id);
+  const ownSummary = ownForecast.reduce((acc, item) => {
+    if (item.status === "covered") acc.covered++;
+    else if (item.status === "conversion_required") acc.conversionRequired++;
+    else acc.blocked++;
+    if (item.shortfallUSDC !== "0") acc.totalShortfallAtoms += parseTokenAmount(item.shortfallUSDC);
+    return acc;
+  }, { covered: 0, conversionRequired: 0, blocked: 0, totalShortfallAtoms: 0n });
+  const relevantWallets = business.wallets.filter((wallet) =>
     (wallet.scope === "agent" && wallet.agentId === agent.id) ||
     (wallet.scope === "business" && agent.can_use_business_treasury === 1)
   );
   const balanceDataFresh = relevantWallets.length > 0 &&
     relevantWallets.every((wallet) => wallet.usdcFresh && wallet.solFresh);
-  const businessBalanceDataFresh = wallets.size > 0 &&
-    [...wallets.values()].every((wallet) => wallet.usdcFresh && wallet.solFresh);
-
-  const toSummary = (summary: ReturnType<typeof summarize>) => ({
+  const toSummary = (summary: typeof ownSummary) => ({
     planned: summary.covered + summary.conversionRequired + summary.blocked,
     covered: summary.covered,
     conversionRequired: summary.conversionRequired,
@@ -2913,16 +2972,50 @@ async function buildLiquidityForecast(agent: AgentRow, env: Env): Promise<Record
   return {
     windowDays: 30,
     balanceDataFresh,
-    businessBalanceDataFresh,
+    businessBalanceDataFresh: business.businessBalanceDataFresh,
     walletsObserved: relevantWallets.length,
-    obligations: ownForecast.map(({ agentId: _agentId, ...item }) => item),
+    obligations: ownForecast.map(({ agentId: _agentId, agentName: _agentName, ...item }) => item),
     summary: toSummary(ownSummary),
     businessSummary: {
-      ...toSummary(businessSummary),
-      otherAgentObligations: allForecast.filter((item) => item.agentId !== agent.id).length
+      ...business.summary,
+      otherAgentObligations: business.obligations.filter((item) => item.agentId !== agent.id).length
     },
     note: "Business-wide forecast allocates shared business wallets across all agents in due-date order. Private wallets remain agent-isolated. Conversion availability is indicative until a live Swap.io quote is obtained; no future funds are reserved."
   };
+}
+
+async function getAdminBusinessForecast(request: Request, env: Env): Promise<Response> {
+  try {
+    if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+    const businessId = new URL(request.url).searchParams.get("businessId");
+    if (!businessId) return json({ error: "business_id_required" }, 400);
+    const business = await env.DB.prepare("SELECT id FROM businesses WHERE id = ?")
+      .bind(businessId).first<{ id: string }>();
+    if (!business) return json({ error: "business_not_found" }, 404);
+
+    const forecast = await calculateBusinessLiquidityForecast(businessId, env);
+    return json({
+      windowDays: 30,
+      generatedAt: new Date().toISOString(),
+      businessBalanceDataFresh: forecast.businessBalanceDataFresh,
+      walletsObserved: forecast.wallets.length,
+      wallets: forecast.wallets.map((wallet) => ({
+        walletId: wallet.walletId,
+        address: wallet.address,
+        scope: wallet.scope,
+        agentId: wallet.agentId,
+        usdcFresh: wallet.usdcFresh,
+        solFresh: wallet.solFresh
+      })),
+      obligations: forecast.obligations,
+      summary: forecast.summary,
+      truncated: forecast.truncated,
+      confidence: "not_available",
+      note: "Forecasts are indicative, not reservations. Stale balance snapshots are treated as zero available and can overstate shortfalls. Conversion-required items identify a possible SOL source only; no live quote, fees, slippage, price impact or route availability has been checked."
+    });
+  } catch {
+    return json({ error: "internal_error" }, 500);
+  }
 }
 
 async function safeBusinessForecast(agent: AgentRow, env: Env): Promise<unknown | null> {
@@ -3073,6 +3166,184 @@ async function getAgentLiquidity(request: Request, env: Env): Promise<Response> 
   return json({ network: "solana", balances });
 }
 
+const ADMIN_OPERATION_STATUSES = new Set([
+  "reserved",
+  "awaiting_conversion",
+  "preparing_conversion",
+  "conversion_submitted",
+  "verification_pending",
+  "conversion_settled",
+  "conversion_settled_shortfall",
+  "conversion_unverified",
+  "conversion_failed",
+  "ready_for_fulfillment",
+  "blocked",
+  "completed",
+  "released",
+  "expired"
+]);
+
+type AdminOperationRow = {
+  id: string;
+  agent_id: string;
+  agent_name: string;
+  task_id: string;
+  network: string;
+  token: string;
+  amount_atoms: string;
+  purpose: string;
+  status: string;
+  action: string;
+  available_atoms: string;
+  shortfall_atoms: string;
+  source_wallet_id: string | null;
+  transaction_hash: string | null;
+  received_output_atoms: string | null;
+  settlement_note: string | null;
+  created_at: string;
+  approval_decision: string | null;
+  approval_decided_at: string | null;
+  approval_telegram_user_id: string | null;
+  has_active_reservation: number;
+};
+
+async function getAdminBusinessOperations(request: Request, env: Env): Promise<Response> {
+  try {
+    if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+    const url = new URL(request.url);
+    const businessId = url.searchParams.get("businessId");
+    if (!businessId) return json({ error: "business_id_required" }, 400);
+    const business = await env.DB.prepare("SELECT id FROM businesses WHERE id = ?")
+      .bind(businessId).first<{ id: string }>();
+    if (!business) return json({ error: "business_not_found" }, 404);
+
+    const rawLimit = url.searchParams.get("limit");
+    let limit = 50;
+    if (rawLimit !== null) {
+      if (!/^\d+$/.test(rawLimit)) return json({ error: "invalid_limit" }, 400);
+      limit = Number(rawLimit);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100) return json({ error: "invalid_limit" }, 400);
+    }
+
+    const status = url.searchParams.get("status");
+    if (status !== null && !ADMIN_OPERATION_STATUSES.has(status)) {
+      return json({ error: "invalid_status" }, 400);
+    }
+
+    let cursor: { createdAt: string; id: string } | null = null;
+    const rawCursor = url.searchParams.get("cursor");
+    if (rawCursor !== null) {
+      try {
+        const parsed: unknown = JSON.parse(atob(rawCursor));
+        if (!parsed || typeof parsed !== "object" ||
+            typeof (parsed as Record<string, unknown>).createdAt !== "string" ||
+            typeof (parsed as Record<string, unknown>).id !== "string" ||
+            !(parsed as Record<string, unknown>).createdAt ||
+            !(parsed as Record<string, unknown>).id) {
+          return json({ error: "invalid_cursor" }, 400);
+        }
+        cursor = {
+          createdAt: (parsed as { createdAt: string }).createdAt,
+          id: (parsed as { id: string }).id
+        };
+        if (!Number.isFinite(Date.parse(cursor.createdAt)) || cursor.id.length > 200) {
+          return json({ error: "invalid_cursor" }, 400);
+        }
+      } catch {
+        return json({ error: "invalid_cursor" }, 400);
+      }
+    }
+
+    const countRows = await env.DB.prepare(
+      "SELECT status, COUNT(*) AS count FROM operations WHERE business_id = ? GROUP BY status"
+    ).bind(businessId).all<{ status: string; count: number }>();
+    const statusCounts: Record<string, number> = {};
+    for (const row of countRows.results ?? []) statusCounts[row.status] = row.count;
+
+    let sql = `
+      SELECT o.id, o.agent_id, a.name AS agent_name, o.task_id, o.network, o.token,
+             o.amount_atoms, o.purpose, o.status, o.action, o.available_atoms,
+             o.shortfall_atoms, o.source_wallet_id, o.transaction_hash,
+             o.received_output_atoms, o.settlement_note, o.created_at,
+             ap.decision AS approval_decision, ap.decided_at AS approval_decided_at,
+             ap.telegram_user_id AS approval_telegram_user_id,
+             CASE WHEN EXISTS (
+               SELECT 1 FROM reservations r
+               WHERE r.operation_id = o.id AND r.status = 'active'
+                 AND julianday(r.expires_at) > julianday('now')
+             ) THEN 1 ELSE 0 END AS has_active_reservation
+      FROM operations o
+      JOIN agents a ON a.id = o.agent_id AND a.business_id = o.business_id
+      LEFT JOIN telegram_operation_approvals ap ON ap.operation_id = o.id
+      WHERE o.business_id = ?
+    `;
+    const bindings: unknown[] = [businessId];
+    if (status !== null) {
+      sql += " AND o.status = ?";
+      bindings.push(status);
+    }
+    if (cursor) {
+      sql += " AND (o.created_at < ? OR (o.created_at = ? AND o.id < ?))";
+      bindings.push(cursor.createdAt, cursor.createdAt, cursor.id);
+    }
+    sql += " ORDER BY o.created_at DESC, o.id DESC LIMIT ?";
+    bindings.push(limit + 1);
+
+    const rows = await env.DB.prepare(sql).bind(...bindings).all<AdminOperationRow>();
+    const page = rows.results ?? [];
+    const hasMore = page.length > limit;
+    const visible = hasMore ? page.slice(0, limit) : page;
+    const operations = visible.map((row) => {
+      const decimals = row.token === "SOL" ? 9 : 6;
+      const approvalState = row.approval_decision === "approved" || row.approval_decision === "rejected"
+        ? row.approval_decision
+        : row.status === "reserved" && row.action === "direct_fulfillment" && row.has_active_reservation === 1
+          ? "pending"
+          : "not_applicable";
+      return {
+        operationId: row.id,
+        agentId: row.agent_id,
+        agentName: row.agent_name,
+        taskId: row.task_id,
+        network: row.network,
+        token: row.token,
+        amount: formatTokenAmount(BigInt(row.amount_atoms), decimals),
+        purpose: row.purpose,
+        status: row.status,
+        action: row.action,
+        available: formatTokenAmount(BigInt(row.available_atoms), decimals),
+        shortfall: formatTokenAmount(BigInt(row.shortfall_atoms), decimals),
+        sourceWalletId: row.source_wallet_id,
+        approval: {
+          state: approvalState,
+          decidedAt: row.approval_decided_at,
+          decidedByTelegramUserId: row.approval_telegram_user_id
+        },
+        execution: {
+          transactionHash: row.transaction_hash
+        },
+        settlement: {
+          receivedUSDC: row.received_output_atoms
+            ? formatTokenAmount(BigInt(row.received_output_atoms), 6)
+            : null,
+          note: row.settlement_note,
+          status: row.status
+        },
+        createdAt: row.created_at
+      };
+    });
+
+    const last = visible[visible.length - 1];
+    const nextCursor = hasMore && last
+      ? btoa(JSON.stringify({ createdAt: last.created_at, id: last.id }))
+      : null;
+
+    return json({ operations, statusCounts, nextCursor, limit });
+  } catch {
+    return json({ error: "internal_error" }, 500);
+  }
+}
+
 async function listAgentOperations(request: Request, env: Env): Promise<Response> {
   const agent = await authenticate(request, env.DB);
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
@@ -3178,6 +3449,15 @@ export default {
   },
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/pixel-field.svg") {
+      return new Response(pixelFieldSvg, {
+        headers: {
+          "content-type": "image/svg+xml; charset=utf-8",
+          "cache-control": "public, max-age=3600",
+          "x-content-type-options": "nosniff"
+        }
+      });
+    }
     if (request.method === "GET" && url.pathname === "/health") {
       try {
         const database = await env.DB.prepare("SELECT 1 AS ok").first<{ ok: number }>();
@@ -3188,7 +3468,8 @@ export default {
           version: "0.3.0",
           database: "connected",
           dashboard: true,
-          telegramConfigured: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_WEBHOOK_SECRET)
+          telegramConfigured: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_WEBHOOK_SECRET),
+          telegramSupportConfigured: Boolean(telegramSupportMarkup(env))
         });
       } catch {
         return json({
@@ -3201,6 +3482,8 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/admin/session") return createAdminSession(request, env);
     if (request.method === "DELETE" && url.pathname === "/v1/admin/session") return endAdminSession(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/workspace") return getBusinessWorkspace(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/admin/operations") return getAdminBusinessOperations(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/admin/forecast") return getAdminBusinessForecast(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/bootstrap") return bootstrapBusiness(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/agents") return provisionAgent(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/agents") return listBusinessAgents(request, env);
@@ -3241,8 +3524,8 @@ export default {
     if (request.method === "POST" && releaseMatch) return releaseOperation(request, env, releaseMatch[1]);
     const operationMatch = url.pathname.match(/^\/v1\/operations\/([a-zA-Z0-9_-]+)$/);
     if (request.method === "GET" && operationMatch) return getOperation(request, env, operationMatch[1]);
-    if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/app" || url.pathname === "/control")) {
-      const page = url.pathname === "/app" ? dashboardHtml : url.pathname === "/control" ? controlHtml : landingHtml;
+    if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/app" || url.pathname === "/control" || url.pathname === "/dashboard")) {
+      const page = url.pathname === "/app" ? dashboardHtml : url.pathname === "/control" ? controlHtml : url.pathname === "/dashboard" ? businessDashboardHtml : landingHtml;
       return new Response(page, {
         headers: {
           "content-type": "text/html; charset=utf-8",

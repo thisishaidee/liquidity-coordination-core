@@ -3,6 +3,9 @@ account_id = "ce0ffaff7491ff502fa23f17606a138a"
 main = "src/index.ts"
 compatibility_date = "2026-11-11"
 
+[vars]
+NERITH_SUPPORT_URL = "https://neritth.pages.dev"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "liquidity-coordination"

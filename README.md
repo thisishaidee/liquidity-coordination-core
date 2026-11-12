@@ -18,10 +18,13 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 |---|---|---|
 | GET | `/` | Public NERITH landing page |
 | GET | `/app` | Read-only agent-scoped browser console |
+| GET | `/dashboard` | Operator-managed business dashboard preview |
 | GET | `/health` | Service health |
 | POST | `/v1/admin/bootstrap` | Create a business and its first agent |
 | POST | `/v1/admin/agents` | Provision an additional scoped agent |
 | GET | `/v1/admin/agents?businessId=...` | List agents without exposing their keys |
+| GET | `/v1/admin/operations?businessId=...` | Business-scoped operation history with approval, execution and settlement states |
+| GET | `/v1/admin/forecast?businessId=...` | Business-wide 30-day obligation forecast across active agents and operating wallets |
 | POST | `/v1/admin/agents/:id/rotate-key` | Rotate an agent API key immediately |
 | POST | `/v1/admin/agents/:id/disable` | Disable an agent credential |
 | POST | `/v1/admin/wallets/:id/disable` | Revoke a wallet after its active reservations clear |
@@ -337,7 +340,7 @@ The x402 client wallet must match the registered `api_payment` wallet and needs 
 
 ## Browser dashboard
 
-The Worker serves a public product landing page at `/`, a business-owner setup and Telegram linking page at `/control`, and the responsive read-only agent-scoped dashboard at `/app`. `npm run build:dashboard` regenerates the embedded HTML modules from `public/landing.html`, `public/index.html` and `public/control.html`. Connect with an agent API key to inspect authorized operating-wallet balances, the separate x402 payment reserve, and the agent's latest 50 operations. API-payment balances are visible but never included in operating liquidity or forecasts. The key is held in page memory only and is not written to local or session storage. The dashboard cannot sign transactions, move funds, or change permissions.
+The Worker serves a public product landing page at `/`, a business-owner setup and Telegram linking page at `/control`, a read-only agent console at `/app`, and an operator-managed business dashboard preview at `/dashboard`. `npm run build:dashboard` regenerates the embedded HTML modules from `public/landing.html`, `public/index.html`, `public/control.html`, `public/dashboard.html` and `public/pixel-field.svg`. The business preview reuses the existing HttpOnly admin session cookie created through Business Setup; it does not introduce a second login, cookie or browser token store. Enter a business ID to inspect workspace data, agents, operating liquidity, separate x402 reserves, business-wide forecasts, operations and Telegram connections. Its read-only endpoints are scoped to the requested business. API-payment wallets are excluded from operating liquidity and forecasts. The preview does not sign transactions, move funds, change agent permissions or imply customer authentication is available. The current admin session remains operator-wide rather than customer/business-member scoped.
 
 ## Telegram business companion
 

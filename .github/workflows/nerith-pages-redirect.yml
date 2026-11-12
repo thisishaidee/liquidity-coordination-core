@@ -1,0 +1,39 @@
+name: Deploy NERITH Pages gateway
+
+on:
+  push:
+    branches:
+      - main
+      - feat/nerith-dashboard-preview
+    paths:
+      - ".github/workflows/nerith-pages-redirect.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: neritth-pages-gateway
+  cancel-in-progress: true
+
+jobs:
+  deploy-gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare Pages gateway
+        run: |
+          mkdir -p "$RUNNER_TEMP/nerith-pages-gateway"
+          cat > "$RUNNER_TEMP/nerith-pages-gateway/_worker.js" <<'EOF'
+          export default {
+            async fetch(request) {
+              const incoming = new URL(request.url);
+              const upstream = new URL(incoming.pathname + incoming.search, "https://liquidity-coordination-api.haideecoded-e0f.workers.dev");
+              return fetch(new Request(upstream, request));
+            }
+          };
+          EOF
+      - name: Deploy Cloudflare Pages gateway
+        run: npx --yes wrangler@4.45.0 pages deploy "$RUNNER_TEMP/nerith-pages-gateway" --project-name=neritth --branch=main
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ce0ffaff7491ff502fa23f17606a138a
