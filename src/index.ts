@@ -1211,6 +1211,9 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
 }
 
 async function telegramWebhook(request: Request, env: Env): Promise<Response> {
+  const secret = env.TELEGRAM_WEBHOOK_SECRET;
+  const supplied = request.headers.get("x-telegram-bot-api-secret-token") ?? "";
+  if (!secret || !(await constantTimeEqual(secret, supplied))) return json({ error: "unauthorized" }, 401);
   const update = await readJson(request.clone());
   if (!update) return json({ error: "invalid_update" }, 400);
   const updateId = update.update_id;
