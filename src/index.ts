@@ -152,6 +152,27 @@ async function authenticate(request: Request, db: D1Database): Promise<AgentRow 
   ).bind(hash).first<AgentRow>();
 }
 
+async function enforceAgentRateLimit(env: Env, agentId: string, action: string, limit: number, windowSeconds: number): Promise<Response | null> {
+  const windowKey = Math.floor(Date.now() / (windowSeconds * 1000));
+  const bucketKey = agentId + ":" + action;
+  await env.DB.prepare(`
+    INSERT INTO api_rate_limits (bucket_key, window_key, request_count)
+    VALUES (?, ?, 1)
+    ON CONFLICT(bucket_key) DO UPDATE SET
+      request_count = CASE WHEN api_rate_limits.window_key = excluded.window_key THEN api_rate_limits.request_count + 1 ELSE 1 END,
+      window_key = excluded.window_key,
+      updated_at = datetime('now')
+  `).bind(bucketKey, windowKey).run();
+  const row = await env.DB.prepare("SELECT request_count FROM api_rate_limits WHERE bucket_key = ? AND window_key = ?")
+    .bind(bucketKey, windowKey).first<{ request_count: number }>();
+  if (!row || row.request_count <= limit) return null;
+  const retryAfter = Math.max(1, (windowKey + 1) * windowSeconds - Math.floor(Date.now() / 1000));
+  return new Response(JSON.stringify({ error: "rate_limited", retryAfterSeconds: retryAfter }), {
+    status: 429,
+    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "retry-after": String(retryAfter) }
+  });
+}
+
 function newSecret(prefix: string): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -159,13 +180,27 @@ function newSecret(prefix: string): string {
 }
 
 async function readJson(request: Request): Promise<Record<string, unknown> | null> {
+  const declaredLength = Number(request.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declaredLength) && declaredLength > 256_000) return null;
   try {
-    const value: unknown = await request.json();
+    if (!request.body) return null;
+    const reader = request.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > 256_000) { await reader.cancel(); return null; }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    const value: unknown = JSON.parse(new TextDecoder().decode(bytes));
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     return value as Record<string, unknown>;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 function telegramSupportMarkup(env: Env): Record<string, unknown> | undefined {
@@ -1179,6 +1214,50 @@ async function telegramWebhook(request: Request, env: Env): Promise<Response> {
   const secret = env.TELEGRAM_WEBHOOK_SECRET;
   const supplied = request.headers.get("x-telegram-bot-api-secret-token") ?? "";
   if (!secret || !(await constantTimeEqual(secret, supplied))) return json({ error: "unauthorized" }, 401);
+  const update = await readJson(request.clone());
+  if (!update) return json({ error: "invalid_update" }, 400);
+  const updateId = update.update_id;
+  if (!(typeof updateId === "number" && Number.isSafeInteger(updateId) && updateId >= 0)) {
+    return json({ error: "invalid_update_id" }, 400);
+  }
+  const id = String(updateId);
+  const claim = await env.DB.prepare("INSERT OR IGNORE INTO telegram_processed_updates (update_id) VALUES (?)")
+    .bind(id).run();
+  if ((claim.meta?.changes ?? 0) !== 1) {
+    const existing = await env.DB.prepare("SELECT status, locked_until FROM telegram_processed_updates WHERE update_id = ?")
+      .bind(id).first<{ status: string; locked_until: string }>();
+    if (existing?.status === "completed" ||
+        (existing?.status === "processing" && existing.locked_until > new Date().toISOString().replace("T", " ").slice(0, 19))) {
+      return json({ ok: true, duplicate: true });
+    }
+    const reclaimed = await env.DB.prepare(`
+      UPDATE telegram_processed_updates
+      SET status = 'processing', locked_until = datetime('now', '+2 minutes'), processed_at = datetime('now')
+      WHERE update_id = ? AND (status != 'processing' OR locked_until <= datetime('now'))
+    `).bind(id).run();
+    if ((reclaimed.meta?.changes ?? 0) !== 1) return json({ ok: true, duplicate: true });
+  }
+  try {
+    const response = await processTelegramWebhook(request, env);
+    if (response.ok) {
+      await env.DB.prepare("UPDATE telegram_processed_updates SET status = 'completed', locked_until = datetime('now') WHERE update_id = ?")
+        .bind(id).run();
+    } else {
+      await env.DB.prepare("DELETE FROM telegram_processed_updates WHERE update_id = ? AND status = 'processing'")
+        .bind(id).run();
+    }
+    return response;
+  } catch (error) {
+    await env.DB.prepare("DELETE FROM telegram_processed_updates WHERE update_id = ? AND status = 'processing'")
+      .bind(id).run();
+    throw error;
+  }
+}
+
+async function processTelegramWebhook(request: Request, env: Env): Promise<Response> {
+  const secret = env.TELEGRAM_WEBHOOK_SECRET;
+  const supplied = request.headers.get("x-telegram-bot-api-secret-token") ?? "";
+  if (!secret || !(await constantTimeEqual(secret, supplied))) return json({ error: "unauthorized" }, 401);
 
   const update = await readJson(request);
   if (!update) return json({ error: "invalid_update" }, 400);
@@ -1806,15 +1885,51 @@ async function proxyHermes(
   if (payment) headers.set("X-PAYMENT", payment);
   if (paymentSignature) headers.set("PAYMENT-SIGNATURE", paymentSignature);
 
-  const upstream = await fetch(`https://hermes.swap.io${path}`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload)
-  });
+  let upstream: Response;
+  try {
+    upstream = await fetch(`https://hermes.swap.io${path}`, {
+      method: "POST", headers, body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(12_000), redirect: "error"
+    });
+  } catch {
+    return json({ error: "swap_provider_unavailable", message: "Hermes did not respond within the allowed time." }, 504);
+  }
+
+  const maxBytes = path === "/v1/swap/quote" ? 1_000_000 : 512_000;
+  const declaredSize = Number(upstream.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declaredSize) && declaredSize > maxBytes) {
+    await upstream.body?.cancel();
+    return json({ error: "swap_provider_response_too_large" }, 502);
+  }
+
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  const reader = upstream.body?.getReader();
+  if (reader) {
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > maxBytes) {
+          await reader.cancel();
+          return json({ error: "swap_provider_response_too_large" }, 502);
+        }
+        chunks.push(value);
+      }
+    } catch {
+      await reader.cancel().catch(() => undefined);
+      return json({ error: "swap_provider_response_incomplete" }, 502);
+    }
+  }
+  const responseBody = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { responseBody.set(chunk, offset); offset += chunk.byteLength; }
 
   const responseHeaders = new Headers({
     "content-type": upstream.headers.get("content-type") ?? "application/json",
-    "cache-control": "no-store"
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff"
   });
   for (const name of ["x-payment-required", "payment-required", "x-payment-response", "payment-response"]) {
     const value = upstream.headers.get(name);
@@ -1822,32 +1937,22 @@ async function proxyHermes(
   }
   for (const [name, value] of Object.entries(extraHeaders)) responseHeaders.set(name, value);
 
-  const responseBody = await upstream.arrayBuffer();
   if (upstream.status === 200 && (path === "/v1/swap/quote" || path === "/v1/swap/build-tx")) {
     const receiptHeader = upstream.headers.get("x-payment-response") ?? upstream.headers.get("payment-response");
     let receipt: { success?: boolean } | null = null;
-    try {
-      if (receiptHeader) receipt = JSON.parse(atob(receiptHeader)) as { success?: boolean };
-    } catch {
-      receipt = null;
-    }
+    try { if (receiptHeader) receipt = JSON.parse(atob(receiptHeader)) as { success?: boolean }; } catch { receipt = null; }
     if (!receipt?.success) {
-      return json({
-        error: "swap_payment_receipt_missing_or_invalid",
-        message: "Hermes returned HTTP 200 without a successful x402 settlement receipt. The response was not accepted."
-      }, 502);
+      return json({ error: "swap_payment_receipt_missing_or_invalid", message: "Hermes returned HTTP 200 without a successful x402 settlement receipt. The response was not accepted." }, 502);
     }
   }
-
-  return new Response(responseBody, {
-    status: upstream.status,
-    headers: responseHeaders
-  });
+  return new Response(responseBody, { status: upstream.status, headers: responseHeaders });
 }
 
 async function requestSwapQuote(request: Request, env: Env): Promise<Response> {
   const agent = await authenticate(request, env.DB);
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
+  const limited = await enforceAgentRateLimit(env, agent.id, "swap_quote", 4, 600);
+  if (limited) return limited;
   const body = await readJson(request);
   if (!body) return json({ error: "invalid_json" }, 400);
 
@@ -1940,6 +2045,8 @@ async function requestSwapQuote(request: Request, env: Env): Promise<Response> {
 async function prepareSwapTransaction(request: Request, env: Env): Promise<Response> {
   const agent = await authenticate(request, env.DB);
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
+  const limited = await enforceAgentRateLimit(env, agent.id, "swap_prepare", 3, 600);
+  if (limited) return limited;
   const body = await readJson(request);
   if (!body || typeof body.quoteId !== "string" || !/^qte_[a-f0-9-]{36}$/i.test(body.quoteId)) {
     return json({ error: "invalid_quote_id" }, 400);
@@ -2115,6 +2222,8 @@ async function prepareSwapTransaction(request: Request, env: Env): Promise<Respo
 async function createLiquidityRequest(request: Request, env: Env, trustedAgent?: AgentRow, telegramOrigin?: { chatId: string; userId: string }): Promise<Response> {
   const agent = trustedAgent ?? await authenticate(request, env.DB);
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
+  const limited = await enforceAgentRateLimit(env, agent.id, "liquidity_create", 20, 60);
+  if (limited) return limited;
   const body = await readJson(request);
   if (!body) return json({ error: "invalid_json" }, 400);
 
@@ -2646,6 +2755,8 @@ async function expireReservationsAdmin(request: Request, env: Env): Promise<Resp
 async function trackSwapTransaction(request: Request, env: Env): Promise<Response> {
   const agent = await authenticate(request, env.DB);
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
+  const limited = await enforceAgentRateLimit(env, agent.id, "swap_track", 20, 60);
+  if (limited) return limited;
   const body = await readJson(request);
   if (!body) return json({ error: "invalid_json" }, 400);
 
@@ -2698,6 +2809,8 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
   const agent = await authenticate(request, env.DB);
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
 
+  const limited = await enforceAgentRateLimit(env, agent.id, "swap_status", 30, 60);
+  if (limited) return limited;
   const operation = await env.DB.prepare(
     "SELECT id, status, transaction_hash, source_reservation_id, target_reservation_id, shortfall_atoms, received_output_atoms, settlement_note FROM operations WHERE id = ? AND agent_id = ?"
   ).bind(operationId, agent.id).first<{
@@ -3663,6 +3776,8 @@ export default {
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
     await expireReservations(env);
     await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE expires_at <= datetime('now')").run();
+    await env.DB.prepare("DELETE FROM telegram_processed_updates WHERE processed_at < datetime('now', '-30 days')").run();
+    await env.DB.prepare("DELETE FROM api_rate_limits WHERE updated_at < datetime('now', '-2 days')").run();
     await deliverTelegramOutbox(env);
   },
   async fetch(request: Request, env: Env): Promise<Response> {
