@@ -61,7 +61,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     <div class="side-bottom">OPERATOR PREVIEW<br><span id="sideBusiness">Business not selected</span><br><a href="/control">Business Setup ↗</a></div>
   </aside>
   <div class="main">
-    <header class="mobile-header"><div class="brand">NERITH</div><button class="mobile-menu" id="mobileMenuToggle" aria-expanded="false">Menu</button></header>
+    <header class="mobile-header"><div class="brand">NERITH</div><button class="mobile-menu" id="mobileMenuToggle" type="button" aria-controls="mobileDrawer" aria-expanded="false" aria-label="Toggle dashboard navigation">Menu</button></header>
     <nav class="mobile-drawer" id="mobileDrawer" aria-label="Dashboard navigation">
       <button class="nav-item active" data-page="overview"><span class="nav-glyph">◫</span>Overview</button>
       <button class="nav-item" data-page="agents"><span class="nav-glyph">⌘</span>Agents</button>
@@ -338,6 +338,16 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   $("mobileMenuToggle").addEventListener("click",()=>{
     const menu=$("mobileDrawer");const open=menu.classList.toggle("open");
     $("mobileMenuToggle").setAttribute("aria-expanded",String(open));
+  });
+  document.addEventListener("keydown",event=>{
+    if(event.key==="Escape"&&$("mobileDrawer").classList.contains("open")){
+      $("mobileDrawer").classList.remove("open");$("mobileMenuToggle").setAttribute("aria-expanded","false");$("mobileMenuToggle").focus();
+    }
+  });
+  document.addEventListener("click",event=>{
+    if(!$("mobileDrawer").classList.contains("open"))return;
+    if(event.target.closest("#mobileDrawer")||event.target.closest("#mobileMenuToggle"))return;
+    $("mobileDrawer").classList.remove("open");$("mobileMenuToggle").setAttribute("aria-expanded","false");
   });
   const refresh=()=>state.businessId?loadAll():null;
   ["refreshBtn","overviewRefresh","agentsRefresh","liquidityRefresh","forecastRefresh","operationsRefresh","telegramRefresh"].forEach(id=>$(id).addEventListener("click",refresh));
