@@ -1,0 +1,38 @@
+name: Deploy NERITH visual preview
+
+on:
+  push:
+    branches:
+      - feat/nerith-dashboard-preview
+    paths:
+      - ".github/workflows/nerith-visual-preview.yml"
+      - "public/landing.html"
+      - "public/dashboard.html"
+      - "public/pixel-field.svg"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nerith-visual-preview
+  cancel-in-progress: true
+
+jobs:
+  deploy-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare static preview files
+        run: |
+          mkdir -p "$RUNNER_TEMP/nerith-preview/dashboard"
+          cp public/landing.html "$RUNNER_TEMP/nerith-preview/index.html"
+          cp public/dashboard.html "$RUNNER_TEMP/nerith-preview/dashboard/index.html"
+          cp public/pixel-field.svg "$RUNNER_TEMP/nerith-preview/pixel-field.svg"
+      - name: Deploy isolated Cloudflare Pages preview
+        run: npx --yes wrangler@4.45.0 pages deploy "$RUNNER_TEMP/nerith-preview" --project-name=nerith-visual-preview --branch=visual-audit
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ce0ffaff7491ff502fa23f17606a138a
