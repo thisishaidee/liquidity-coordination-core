@@ -334,6 +334,11 @@ describe("business operations aggregation and dashboard route", () => {
     expect(html).toContain("Operator-managed preview");
     expect(html).toContain("Forecasts");
     expect(html).toContain("x402 payment reserve");
+    expect(html).toContain("@media(max-width:900px)");
+    expect(html).toContain("@media(max-width:560px)");
+    expect(html).toContain("@media(max-width:360px)");
+    expect(html).toContain("bottom-nav");
+    expect(html).toContain("Support / Privacy / Terms: not yet published");
   });
 });
 
