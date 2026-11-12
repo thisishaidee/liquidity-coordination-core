@@ -2196,7 +2196,7 @@ async function proxyHermes(
 ): Promise<Response> {
   const payment = request.headers.get("x-payment");
   const paymentSignature = request.headers.get("payment-signature");
-  if (paymentSignature && !payment) {
+  if (paymentSignature) {
     return json({ error: "unsupported_x402_version", message: "Hermes requires its documented V1 X-PAYMENT envelope." }, 400);
   }
   if (payment && !x402Context) return json({ error: "x402_budget_context_missing" }, 500);
@@ -2268,7 +2268,7 @@ async function proxyHermes(
   }
   for (const [name, value] of Object.entries(extraHeaders)) responseHeaders.set(name, value);
 
-  if (upstream.status === 402 && !payment && x402Context) {
+  if (upstream.status === 402 && x402Context) {
     await storeX402Challenge(x402Context, path, responseText);
   }
 
