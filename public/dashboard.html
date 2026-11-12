@@ -349,6 +349,15 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     if(!state.nextCursor)return;
     try{await loadOperations(true);}catch(error){showError("Could not load more operations: "+String(error.message||error));}
   });
+  if(window.NERITH_STATIC_DESIGN_PREVIEW===true){
+    $("access").hidden=true;$("app").hidden=false;
+    $("topBusiness").textContent="Design preview · no live workspace";
+    $("sideBusiness").textContent="No business data loaded";
+    renderOverview();renderAgents();renderLiquidity();renderForecast();renderOperations();renderTelegram();renderSettings();
+    const notice=document.createElement("div");notice.className="note";notice.style.marginBottom="18px";notice.textContent="STATIC DESIGN PREVIEW · No business data, balances, agents or operations are connected."; $("globalError").after(notice);
+    $("refreshBtn").disabled=true;
+    document.querySelectorAll("[data-page]").forEach(el=>el.addEventListener("click",()=>{}));
+  }
 })();
 </script>
 </body>
