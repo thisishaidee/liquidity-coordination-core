@@ -873,8 +873,14 @@ async function handleTelegramApprovalCallback(env: Env, callback: {
       return;
     }
     await env.DB.prepare("UPDATE telegram_approval_actions SET consumed_at = datetime('now') WHERE token_hash = ? AND consumed_at IS NULL").bind(tokenHash).run();
-    await env.DB.prepare("INSERT INTO telegram_pending_approvals (id, business_id, operation_id, telegram_chat_id, telegram_user_id, decision, snapshot_hash, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', '+5 minutes'))")
+    const challenge = await env.DB.prepare("INSERT OR IGNORE INTO telegram_pending_approvals (id, business_id, operation_id, telegram_chat_id, telegram_user_id, decision, snapshot_hash, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', '+5 minutes'))")
       .bind("tpa_" + crypto.randomUUID().replaceAll("-", ""), action.business_id, action.operation_id, chatId, userId, decision, action.snapshot_hash).run();
+    if ((challenge.meta?.changes ?? 0) !== 1) {
+      await answerTelegramCallback(env, callbackId, "An authenticator challenge is already active for this request.");
+      return;
+    }
+    await env.DB.prepare("UPDATE telegram_approval_actions SET consumed_at = datetime('now') WHERE business_id = ? AND operation_id = ? AND consumed_at IS NULL")
+      .bind(action.business_id, action.operation_id).run();
     await answerTelegramCallback(env, callbackId, "Authenticator verification required.");
     await sendTelegramMessage(env, chatId, "Confirm your own request decision\n\nOpen Google Authenticator and send /confirmapproval followed by its current six-digit code. This challenge expires in five minutes; the code can only be used once.");
     return;
