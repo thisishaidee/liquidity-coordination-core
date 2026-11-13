@@ -100,7 +100,7 @@ async function isAdmin(request: Request, env: Env): Promise<boolean> {
   if (!match) return false;
   const hash = await sha256(match[1]);
   const session = await env.DB.prepare(
-    "SELECT business_id FROM admin_sessions WHERE token_hash = ? AND expires_at > datetime('now') LIMIT 1"
+    "SELECT business_id FROM admin_sessions WHERE token_hash = ? AND julianday(expires_at) > julianday('now') LIMIT 1"
   ).bind(hash).first<{ business_id: string | null }>();
   if (!session?.business_id) return false;
 
