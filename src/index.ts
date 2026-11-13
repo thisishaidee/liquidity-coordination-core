@@ -14,6 +14,7 @@ import { canCreateTelegramRequest, canReviewTelegramRequest, isTelegramDraftCanc
 import { decryptTotpSecret, encryptTotpSecret, generateTotpSecret, verifyTotpStep } from "./telegram-totp";
 import { verifySolSourceDebit, type SolanaSettlementTransaction } from "./settlement";
 import { parseHermesPaymentPayload, parseHermesPaymentRequirement, parseHermesPaymentReceipt, verifyHermesPaymentTransaction, type HermesPaymentRequirement } from "./x402";
+import { describeAdminRoute, matchesBusinessScope } from "./admin-auth";
 
 interface Env {
   DB: D1Database;
@@ -67,36 +68,71 @@ async function constantTimeEqual(a: string, b: string): Promise<boolean> {
   return difference === 0;
 }
 
-async function isAdmin(request: Request, env: Env): Promise<boolean> {
+async function isBootstrapTokenAuthorized(request: Request, env: Env): Promise<boolean> {
   const configured = env.ADMIN_BOOTSTRAP_TOKEN;
   const supplied = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
-  if (configured && supplied && await constantTimeEqual(configured, supplied)) return true;
-  const cookie = request.headers.get("cookie") ?? "";
-  const match = cookie.match(/(?:^|;\s*)nerith_admin_session=([a-f0-9]{64})(?:;|$)/);
-  if (!match) return false;
+  if (!configured || !supplied || !(await constantTimeEqual(configured, supplied))) return false;
   if (request.method !== "GET" && request.method !== "HEAD") {
     const origin = request.headers.get("origin");
     if (!origin || origin !== new URL(request.url).origin) return false;
   }
+  return true;
+}
+
+async function isAdmin(request: Request, env: Env): Promise<boolean> {
+  const url = new URL(request.url);
+  let body: Record<string, unknown> | null = null;
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    const contentLength = Number(request.headers.get("content-length") ?? "0");
+    if (Number.isFinite(contentLength) && contentLength > 256 * 1024) return false;
+    body = await readJson(request.clone());
+  }
+  const target = describeAdminRoute(request.method, url.pathname, url.searchParams, body);
+  if (target.kind === "global") return isBootstrapTokenAuthorized(request, env);
+  if (target.kind !== "business") return false;
+
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    const origin = request.headers.get("origin");
+    if (!origin || origin !== url.origin) return false;
+  }
+  const cookie = request.headers.get("cookie") ?? "";
+  const match = cookie.match(/(?:^|;\s*)nerith_admin_session=([a-f0-9]{64})(?:;|$)/);
+  if (!match) return false;
   const hash = await sha256(match[1]);
   const session = await env.DB.prepare(
-    "SELECT token_hash FROM admin_sessions WHERE token_hash = ? AND expires_at > datetime('now') LIMIT 1"
-  ).bind(hash).first<{ token_hash: string }>();
-  return Boolean(session);
+    "SELECT business_id FROM admin_sessions WHERE token_hash = ? AND julianday(expires_at) > julianday('now') LIMIT 1"
+  ).bind(hash).first<{ business_id: string | null }>();
+  if (!session?.business_id) return false;
+
+  let resourceBusinessId: string | null = null;
+  if (target.resource) {
+    const table = target.resource.table;
+    const row = await env.DB.prepare(
+      "SELECT business_id FROM " + table + " WHERE id = ? LIMIT 1"
+    ).bind(target.resource.id).first<{ business_id: string }>();
+    if (!row?.business_id) return false;
+    resourceBusinessId = row.business_id;
+  }
+  if (target.businessId && resourceBusinessId && target.businessId !== resourceBusinessId) return false;
+  const requestedBusinessId = target.businessId ?? resourceBusinessId;
+  return matchesBusinessScope(session.business_id, requestedBusinessId);
 }
 
 async function createAdminSession(request: Request, env: Env): Promise<Response> {
-  const configured = env.ADMIN_BOOTSTRAP_TOKEN;
-  const supplied = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
-  if (!configured || !supplied || !(await constantTimeEqual(configured, supplied))) {
-    return json({ error: "unauthorized" }, 401);
+  if (!(await isBootstrapTokenAuthorized(request, env))) return json({ error: "unauthorized" }, 401);
+  const body = await readJson(request.clone());
+  if (!body || typeof body.businessId !== "string" || !/^biz_[a-f0-9]{32}$/i.test(body.businessId)) {
+    return json({ error: "business_id_required" }, 400);
   }
+  const business = await env.DB.prepare("SELECT id FROM businesses WHERE id = ?")
+    .bind(body.businessId).first<{ id: string }>();
+  if (!business) return json({ error: "business_not_found" }, 404);
   const token = newSecret("");
   const hash = await sha256(token);
   const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
-  await env.DB.prepare("INSERT INTO admin_sessions (token_hash, expires_at) VALUES (?, ?)")
-    .bind(hash, expiresAt).run();
-  return new Response(JSON.stringify({ authenticated: true, expiresAt }), {
+  await env.DB.prepare("INSERT INTO admin_sessions (token_hash, business_id, expires_at) VALUES (?, ?, ?)")
+    .bind(hash, business.id, expiresAt).run();
+  return new Response(JSON.stringify({ authenticated: true, businessId: business.id, expiresAt }), {
     status: 200,
     headers: {
       "content-type": "application/json; charset=utf-8",
@@ -105,7 +141,6 @@ async function createAdminSession(request: Request, env: Env): Promise<Response>
     }
   });
 }
-
 async function endAdminSession(request: Request, env: Env): Promise<Response> {
   const cookie = request.headers.get("cookie") ?? "";
   const match = cookie.match(/(?:^|;\s*)nerith_admin_session=([a-f0-9]{64})(?:;|$)/);

@@ -25,7 +25,8 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 | GET | `/app` | Read-only agent-scoped browser console |
 | GET | `/dashboard` | Operator-managed business dashboard preview |
 | GET | `/health` | Service health |
-| POST | `/v1/admin/bootstrap` | Create a business and its first agent |
+| POST | `/v1/admin/bootstrap` | Platform-token-only creation of a business and its first agent |
+| POST | `/v1/admin/session` | Establish a 12-hour session bound to one existing business |
 | POST | `/v1/admin/agents` | Provision an additional scoped agent |
 | GET | `/v1/admin/agents?businessId=...` | List agents without exposing their keys |
 | GET | `/v1/admin/operations?businessId=...` | Business-scoped operation history with approval, execution and settlement states |
@@ -36,8 +37,9 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 | POST | `/v1/admin/wallets` | Register an authorized Solana wallet |
 | POST | `/v1/admin/balances` | Record a controlled manual balance snapshot |
 | POST | `/v1/admin/balances/sync` | Refresh registered wallet balances from Solana RPC |
-| POST | `/v1/admin/reservations/expire` | Manually sweep expired reservations |
-| POST | `/v1/admin/telegram/setup` | Verify the bot, register its webhook and publish bot commands |
+| POST | `/v1/admin/reservations/expire` | Platform-token-only manual sweep of expired reservations |
+| POST | `/v1/admin/telegram/setup` | Platform-token-only shared bot setup, webhook registration and command publishing |
+| GET | `/v1/admin/telegram/status` | Platform-token-only shared Telegram webhook status |
 | GET/POST | `/v1/admin/x402/budgets` | Read or set business-wide and per-agent daily x402 USDC spending limits |
 | POST | `/v1/admin/x402/reconcile` | Reconcile a pending x402 reservation with its finalized on-chain receipt |
 | POST | `/v1/admin/telegram/link-codes` | Create a one-time private Telegram linking invitation |
@@ -57,7 +59,7 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 | POST | `/v1/operations/:id/release` | Release an active internal reservation |
 | POST | `/v1/operations/:id/complete` | Consume reservations after the agent reports task completion |
 
-Admin routes require `ADMIN_BOOTSTRAP_TOKEN` as a Bearer token. Agent routes require an agent API key.
+`ADMIN_BOOTSTRAP_TOKEN` is a platform-wide root credential, not a business password. It is accepted only for workspace bootstrap, session establishment, shared Telegram bot setup/status and the manual reservation-expiry route. To establish a business session, send `POST /v1/admin/session` with the platform token and JSON body `{ "businessId": "biz_..." }`. The Worker verifies the business and sets an HttpOnly, Secure, SameSite=Strict cookie that expires after 12 hours. All ordinary admin workspace routes require that cookie and must match its business ID. Agent, wallet, manual balance and x402 reservation actions resolve the resource's owning business from D1 before authorization. The bootstrap token alone cannot access a business workspace. Migration `0023_admin_session_business_scope.sql` invalidates old unscoped sessions. Agent routes require an agent API key.
 
 ## Implemented
 
@@ -125,7 +127,7 @@ npm run typecheck
 npm test
 ```
 
-Use the dedicated Cloudflare D1 database already provisioned for this repository. Its ID is configured in `wrangler.toml`; migrations 0001 through 0012 have been applied and recorded in `d1_migrations`. For a fresh environment, create a D1 database and apply migrations:
+Use the dedicated Cloudflare D1 database already provisioned for this repository. Its ID is configured in `wrangler.toml`; migrations 0001 through 0023 are tracked in `migrations/`; apply all pending migrations and verify them in `d1_migrations`. For a fresh environment, create a D1 database and apply migrations:
 
 ```bash
 npx wrangler d1 create liquidity-coordination
@@ -135,6 +137,20 @@ npx wrangler d1 migrations apply liquidity-coordination --remote
 ```
 
 For a remote database, apply migrations with `--remote`. Do not deploy until the Worker secret is configured. The database binding is already set up.
+
+## Establish a business-scoped admin session
+
+After creating a business, or when reconnecting to an existing one, establish a browser or CLI session for that exact business. The legacy global admin sessions are invalidated by migration 0023.
+
+```bash
+curl -c admin.cookies -X POST http://localhost:8787/v1/admin/session \
+  -H "Authorization: Bearer YOUR_ADMIN_BOOTSTRAP_TOKEN" \
+  -H "Origin: http://localhost:8787" \
+  -H "Content-Type: application/json" \
+  -d '{"businessId":"biz_..."}'
+```
+
+Use `-b admin.cookies` and the same-origin `Origin` header for subsequent POST requests to business-scoped admin routes. Do not send the platform token to those routes. Shared Telegram bot setup/status and manual reservation expiry remain platform-wide and require the platform token.
 
 ## Provision a business and first agent
 
@@ -157,7 +173,8 @@ Use the admin endpoint to add more agents to an existing business. Each agent ge
 
 ```bash
 curl -X POST http://localhost:8787/v1/admin/agents \
-  -H "Authorization: Bearer YOUR_ADMIN_BOOTSTRAP_TOKEN" \
+  -H "Origin: http://localhost:8787" \
+  -b admin.cookies \
   -H "Content-Type: application/json" \
   -d '{
     "businessId": "biz_...",
@@ -172,10 +189,12 @@ List agents with `GET /v1/admin/agents?businessId=biz_...`. The response never i
 
 ```bash
 curl -X POST http://localhost:8787/v1/admin/agents/agt_.../rotate-key \
-  -H "Authorization: Bearer YOUR_ADMIN_BOOTSTRAP_TOKEN"
+  -H "Origin: http://localhost:8787" \
+  -b admin.cookies
 
 curl -X POST http://localhost:8787/v1/admin/agents/agt_.../disable \
-  -H "Authorization: Bearer YOUR_ADMIN_BOOTSTRAP_TOKEN"
+  -H "Origin: http://localhost:8787" \
+  -b admin.cookies
 ```
 
 Rotation invalidates the old key immediately and returns the replacement once. Disabling an agent prevents future authenticated requests.
@@ -184,7 +203,8 @@ Rotation invalidates the old key immediately and returns the replacement once. D
 
 ```bash
 curl -X POST http://localhost:8787/v1/admin/wallets/wal_.../disable \
-  -H "Authorization: Bearer YOUR_ADMIN_BOOTSTRAP_TOKEN"
+  -H "Origin: http://localhost:8787" \
+  -b admin.cookies
 ```
 
 Wallet revocation is refused while active internal reservations reference that wallet.
@@ -193,7 +213,8 @@ Wallet revocation is refused while active internal reservations reference that w
 
 ```bash
 curl -X POST http://localhost:8787/v1/admin/wallets \
-  -H "Authorization: Bearer YOUR_ADMIN_BOOTSTRAP_TOKEN" \
+  -H "Origin: http://localhost:8787" \
+  -b admin.cookies \
   -H "Content-Type: application/json" \
   -d '{
     "businessId": "biz_...",
@@ -213,7 +234,8 @@ Use a separate business wallet for API fees. Do not register this wallet as an o
 
 ```bash
 curl -X POST http://localhost:8787/v1/admin/wallets \
-  -H "Authorization: Bearer YOUR_ADMIN_BOOTSTRAP_TOKEN" \
+  -H "Origin: http://localhost:8787" \
+  -b admin.cookies \
   -H "Content-Type: application/json" \
   -d '{
     "businessId": "biz_...",
@@ -232,7 +254,8 @@ This admin-only endpoint is for controlled development/testing. It does not veri
 
 ```bash
 curl -X POST http://localhost:8787/v1/admin/balances \
-  -H "Authorization: Bearer YOUR_ADMIN_BOOTSTRAP_TOKEN" \
+  -H "Origin: http://localhost:8787" \
+  -b admin.cookies \
   -H "Content-Type: application/json" \
   -d '{
     "walletId": "wal_...",
@@ -249,7 +272,8 @@ The sync endpoint reads native SOL and the canonical Solana USDC mint for every 
 
 ```bash
 curl -X POST http://localhost:8787/v1/admin/balances/sync \
-  -H "Authorization: Bearer YOUR_ADMIN_BOOTSTRAP_TOKEN"
+  -H "Origin: http://localhost:8787" \
+  -b admin.cookies
 ```
 
 Snapshots older than five minutes are excluded from liquidity decisions.
@@ -372,7 +396,7 @@ The x402 client wallet must match the registered `api_payment` wallet and needs 
 
 ## Browser dashboard
 
-The Worker serves a public product landing page at `/`, a business-owner setup and Telegram linking page at `/control`, a read-only agent console at `/app`, and an operator-managed business dashboard preview at `/dashboard`. `npm run build:dashboard` regenerates the embedded HTML modules from `public/landing.html`, `public/index.html`, `public/control.html`, `public/dashboard.html` and `public/pixel-field.svg`. The business preview reuses the existing HttpOnly admin session cookie created through Business Setup; it does not introduce a second login, cookie or browser token store. Enter a business ID to inspect workspace data, agents, operating liquidity, separate x402 reserves, business-wide forecasts, operations and Telegram connections. Its read-only endpoints are scoped to the requested business. API-payment wallets are excluded from operating liquidity and forecasts. The preview does not sign transactions, move funds, change agent permissions or imply customer authentication is available. The current admin session remains operator-wide rather than customer/business-member scoped.
+The Worker serves a public product landing page at `/`, a business-owner setup and Telegram linking page at `/control`, a read-only agent console at `/app`, and an operator-managed business dashboard preview at `/dashboard`. `npm run build:dashboard` regenerates the embedded HTML modules from `public/landing.html`, `public/index.html`, `public/control.html`, `public/dashboard.html` and `public/pixel-field.svg`. The business preview reuses the HttpOnly admin session cookie created through Business Setup; it does not introduce a second login, cookie or browser token store. Each session is bound to the selected business, and read-only endpoints cannot switch to another business by changing a query parameter. Resource-ID actions are checked against the owning business in D1. API-payment wallets are excluded from operating liquidity and forecasts. The preview does not sign transactions, move funds or imply individual customer identity or role-based membership is available yet. The shared platform token remains an operator-level root credential and must be kept private.
 
 ## Telegram business companion
 
@@ -404,7 +428,8 @@ Create a one-time invitation for the business:
 
 ```bash
 curl -X POST https://YOUR_WORKER/v1/admin/telegram/link-codes \
-  -H "Authorization: Bearer YOUR_ADMIN_BOOTSTRAP_TOKEN" \
+  -H "Origin: http://localhost:8787" \
+  -b admin.cookies \
   -H "Content-Type: application/json" \
   -d '{"businessId":"biz_..."}'
 ```
@@ -428,7 +453,7 @@ Telegram reports business-wide operating balances only to a chat linked through 
 
 ## Next milestones
 
-1. Business-level authentication and scoped admin roles.
+1. Individual admin identities and role-based permissions within each business.
 2. Approval policies and isolated wallet signer integration.
 3. Multi-wallet split reservations and direct task-completion reconciliation.
 4. Quote schema validation and automated minimum-output selection.

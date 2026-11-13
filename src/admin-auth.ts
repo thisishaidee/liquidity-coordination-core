@@ -1,0 +1,64 @@
+export type AdminResource =
+  | { table: "agents" | "wallets" | "x402_payment_reservations"; id: string };
+
+export type AdminRouteTarget =
+  | { kind: "global" }
+  | { kind: "business"; businessId: string | null; resource?: AdminResource }
+  | { kind: "invalid" };
+
+type Body = Record<string, unknown> | null;
+
+export function describeAdminRoute(
+  method: string,
+  pathname: string,
+  search: URLSearchParams,
+  body: Body
+): AdminRouteTarget {
+  const queryBusinessId = search.get("businessId");
+  const bodyBusinessId = typeof body?.businessId === "string" ? body.businessId : null;
+  if (queryBusinessId && bodyBusinessId && queryBusinessId !== bodyBusinessId) return { kind: "invalid" };
+  const businessId = bodyBusinessId ?? queryBusinessId;
+
+  if (
+    (method === "POST" && pathname === "/v1/admin/bootstrap") ||
+    (method === "GET" && pathname === "/v1/admin/telegram/status") ||
+    (method === "POST" && pathname === "/v1/admin/telegram/setup") ||
+    (method === "POST" && pathname === "/v1/admin/reservations/expire")
+  ) return { kind: "global" };
+
+  if (
+    (method === "GET" && ["/v1/admin/workspace", "/v1/admin/operations", "/v1/admin/forecast", "/v1/admin/agents", "/v1/admin/wallets"].includes(pathname)) ||
+    (method === "POST" && ["/v1/admin/agents", "/v1/admin/wallets", "/v1/admin/balances/sync", "/v1/admin/telegram/test", "/v1/admin/telegram/permissions", "/v1/admin/telegram/link-codes"].includes(pathname)) ||
+    ((method === "GET" || method === "POST") && pathname === "/v1/admin/x402/budgets") ||
+    (method === "GET" && pathname === "/v1/admin/telegram/connections")
+  ) {
+    return businessId ? { kind: "business", businessId } : { kind: "invalid" };
+  }
+
+  const agentMatch = pathname.match(/^\/v1\/admin\/agents\/([a-zA-Z0-9_-]+)\/(?:rotate-key|disable)$/);
+  if (method === "POST" && agentMatch) {
+    return { kind: "business", businessId, resource: { table: "agents", id: agentMatch[1] } };
+  }
+
+  const walletMatch = pathname.match(/^\/v1\/admin\/wallets\/([a-zA-Z0-9_-]+)\/disable$/);
+  if (method === "POST" && walletMatch) {
+    return { kind: "business", businessId, resource: { table: "wallets", id: walletMatch[1] } };
+  }
+
+  if (method === "POST" && pathname === "/v1/admin/balances" && typeof body?.walletId === "string") {
+    return { kind: "business", businessId, resource: { table: "wallets", id: body.walletId } };
+  }
+
+  if (method === "POST" && pathname === "/v1/admin/x402/reconcile" && typeof body?.reservationId === "string") {
+    return { kind: "business", businessId, resource: { table: "x402_payment_reservations", id: body.reservationId } };
+  }
+
+  return { kind: "invalid" };
+}
+
+export function matchesBusinessScope(
+  sessionBusinessId: string | null | undefined,
+  targetBusinessId: string | null | undefined
+): boolean {
+  return Boolean(sessionBusinessId && targetBusinessId && sessionBusinessId === targetBusinessId);
+}
