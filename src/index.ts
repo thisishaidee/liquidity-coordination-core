@@ -14,7 +14,7 @@ import { canCreateTelegramRequest, canReviewTelegramRequest, isTelegramDraftCanc
 import { decryptTotpSecret, encryptTotpSecret, generateTotpSecret, verifyTotpStep } from "./telegram-totp";
 import { verifySolSourceDebit, type SolanaSettlementTransaction } from "./settlement";
 import { parseHermesPaymentPayload, parseHermesPaymentRequirement, parseHermesPaymentReceipt, verifyHermesPaymentTransaction, type HermesPaymentRequirement } from "./x402";
-import { describeAdminRoute } from "./admin-auth";
+import { describeAdminRoute, matchesBusinessScope } from "./admin-auth";
 
 interface Env {
   DB: D1Database;
@@ -115,7 +115,7 @@ async function isAdmin(request: Request, env: Env): Promise<boolean> {
   }
   if (target.businessId && resourceBusinessId && target.businessId !== resourceBusinessId) return false;
   const requestedBusinessId = target.businessId ?? resourceBusinessId;
-  return Boolean(requestedBusinessId && requestedBusinessId === session.business_id);
+  return matchesBusinessScope(session.business_id, requestedBusinessId);
 }
 
 async function createAdminSession(request: Request, env: Env): Promise<Response> {
