@@ -56,6 +56,11 @@ export function describeAdminRoute(
   return { kind: "invalid" };
 }
 
+export function isDashboardRoleAllowed(role: string | null | undefined, method: string): boolean {
+  if (method === "GET" || method === "HEAD") return ["owner", "admin", "analyst"].includes(role ?? "");
+  return role === "owner" || role === "admin";
+}
+
 export function matchesBusinessScope(
   sessionBusinessId: string | null | undefined,
   targetBusinessId: string | null | undefined
