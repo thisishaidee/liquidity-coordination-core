@@ -14,7 +14,7 @@ import { canCreateTelegramRequest, canReviewTelegramRequest, isTelegramDraftCanc
 import { decryptTotpSecret, encryptTotpSecret, generateTotpSecret, verifyTotpStep } from "./telegram-totp";
 import { verifySolSourceDebit, type SolanaSettlementTransaction } from "./settlement";
 import { parseHermesPaymentPayload, parseHermesPaymentRequirement, parseHermesPaymentReceipt, verifyHermesPaymentTransaction, type HermesPaymentRequirement } from "./x402";
-import { describeAdminRoute, isAllowedAdminOrigin, matchesBusinessScope } from "./admin-auth";
+import { describeAdminRoute, isAllowedAdminOrigin, isDashboardRoleAllowed, matchesBusinessScope } from "./admin-auth";
 
 interface Env {
   DB: D1Database;
@@ -27,6 +27,7 @@ interface Env {
   TELEGRAM_WEBHOOK_SECRET?: string;
   TELEGRAM_TOTP_ENCRYPTION_KEY?: string;
   NERITH_SUPPORT_URL?: string;
+  NERITH_PUBLIC_URL?: string;
 }
 
 type AgentRow = {
@@ -101,9 +102,15 @@ async function isAdmin(request: Request, env: Env): Promise<boolean> {
   if (!match) return false;
   const hash = await sha256(match[1]);
   const session = await env.DB.prepare(
-    "SELECT business_id FROM admin_sessions WHERE token_hash = ? AND julianday(expires_at) > julianday('now') LIMIT 1"
-  ).bind(hash).first<{ business_id: string | null }>();
-  if (!session?.business_id) return false;
+    "SELECT business_id, role, telegram_user_id FROM admin_sessions WHERE token_hash = ? AND julianday(expires_at) > julianday('now') LIMIT 1"
+  ).bind(hash).first<{ business_id: string | null; role: string; telegram_user_id: string | null }>();
+  if (!session?.business_id || !isDashboardRoleAllowed(session.role, request.method)) return false;
+  if (session.telegram_user_id) {
+    const membership = await env.DB.prepare(
+      "SELECT dashboard_role FROM telegram_connections WHERE business_id = ? AND telegram_user_id = ? AND status = 'active' LIMIT 1"
+    ).bind(session.business_id, session.telegram_user_id).first<{ dashboard_role: string }>();
+    if (!membership || membership.dashboard_role !== session.role) return false;
+  }
 
   let resourceBusinessId: string | null = null;
   if (target.resource) {
@@ -131,7 +138,7 @@ async function createAdminSession(request: Request, env: Env): Promise<Response>
   const token = newSecret("");
   const hash = await sha256(token);
   const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
-  await env.DB.prepare("INSERT INTO admin_sessions (token_hash, business_id, expires_at) VALUES (?, ?, ?)")
+  await env.DB.prepare("INSERT INTO admin_sessions (token_hash, business_id, expires_at, role) VALUES (?, ?, ?, 'owner')")
     .bind(hash, business.id, expiresAt).run();
   return new Response(JSON.stringify({ authenticated: true, businessId: business.id, expiresAt }), {
     status: 200,
@@ -142,6 +149,54 @@ async function createAdminSession(request: Request, env: Env): Promise<Response>
     }
   });
 }
+async function getCurrentAdminSession(request: Request, env: Env): Promise<Response> {
+  const cookie = request.headers.get("cookie") ?? "";
+  const match = cookie.match(/(?:^|;\\s*)nerith_admin_session=([a-f0-9]{64})(?:;|$)/);
+  if (!match) return json({ authenticated: false });
+  const session = await env.DB.prepare(
+    "SELECT business_id, role, telegram_user_id, expires_at FROM admin_sessions WHERE token_hash = ? AND julianday(expires_at) > julianday('now') LIMIT 1"
+  ).bind(await sha256(match[1])).first<{ business_id: string; role: string; telegram_user_id: string | null; expires_at: string }>();
+  if (!session) return json({ authenticated: false });
+  if (session.telegram_user_id) {
+    const membership = await env.DB.prepare(
+      "SELECT dashboard_role FROM telegram_connections WHERE business_id = ? AND telegram_user_id = ? AND status = 'active' LIMIT 1"
+    ).bind(session.business_id, session.telegram_user_id).first<{ dashboard_role: string }>();
+    if (!membership || membership.dashboard_role !== session.role) return json({ authenticated: false });
+  }
+  return json({ authenticated: true, businessId: session.business_id, role: session.role, expiresAt: session.expires_at });
+}
+
+async function consumeTelegramLoginTicket(request: Request, env: Env): Promise<Response> {
+  const origin = request.headers.get("origin");
+  if (!isAllowedAdminOrigin(origin, new URL(request.url).origin, env.ADMIN_ALLOWED_ORIGINS)) return json({ error: "origin_not_allowed" }, 403);
+  const body = await readJson(request);
+  if (!body || typeof body.ticket !== "string" || !/^[a-f0-9]{64}$/i.test(body.ticket)) return json({ error: "invalid_login_ticket" }, 400);
+  const tokenHash = await sha256(body.ticket);
+  const ticket = await env.DB.prepare(
+    "SELECT business_id, chat_id, telegram_user_id, role FROM telegram_login_tickets WHERE token_hash = ? AND consumed_at IS NULL AND julianday(expires_at) > julianday('now') LIMIT 1"
+  ).bind(tokenHash).first<{ business_id: string; chat_id: string; telegram_user_id: string; role: string }>();
+  if (!ticket) return json({ error: "login_ticket_invalid_or_expired" }, 401);
+  const claim = await env.DB.prepare(
+    "UPDATE telegram_login_tickets SET consumed_at = datetime('now') WHERE token_hash = ? AND consumed_at IS NULL AND julianday(expires_at) > julianday('now')"
+  ).bind(tokenHash).run();
+  if ((claim.meta?.changes ?? 0) !== 1) return json({ error: "login_ticket_already_used" }, 409);
+  const membership = await env.DB.prepare(
+    "SELECT dashboard_role FROM telegram_connections WHERE business_id = ? AND chat_id = ? AND telegram_user_id = ? AND status = 'active' LIMIT 1"
+  ).bind(ticket.business_id, ticket.chat_id, ticket.telegram_user_id).first<{ dashboard_role: string }>();
+  if (!membership || membership.dashboard_role !== ticket.role) return json({ error: "workspace_access_revoked" }, 403);
+  const sessionToken = newSecret("");
+  const sessionHash = await sha256(sessionToken);
+  const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+  await env.DB.prepare(
+    "INSERT INTO admin_sessions (token_hash, business_id, expires_at, role, telegram_user_id) VALUES (?, ?, ?, ?, ?)"
+  ).bind(sessionHash, ticket.business_id, expiresAt, ticket.role, ticket.telegram_user_id).run();
+  return new Response(JSON.stringify({ authenticated: true, businessId: ticket.business_id, role: ticket.role, expiresAt }), {
+    status: 200,
+    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store",
+      "set-cookie": "nerith_admin_session=" + sessionToken + "; Path=/v1/admin; HttpOnly; Secure; SameSite=Strict; Max-Age=43200" }
+  });
+}
+
 async function endAdminSession(request: Request, env: Env): Promise<Response> {
   const cookie = request.headers.get("cookie") ?? "";
   const match = cookie.match(/(?:^|;\s*)nerith_admin_session=([a-f0-9]{64})(?:;|$)/);
@@ -4306,8 +4361,10 @@ export default {
         }, 503);
       }
     }
+    if (request.method === "GET" && url.pathname === "/v1/admin/session") return getCurrentAdminSession(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/session") return createAdminSession(request, env);
     if (request.method === "DELETE" && url.pathname === "/v1/admin/session") return endAdminSession(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/auth/telegram/consume") return consumeTelegramLoginTicket(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/workspace") return getBusinessWorkspace(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/operations") return getAdminBusinessOperations(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/forecast") return getAdminBusinessForecast(request, env);
