@@ -1501,7 +1501,7 @@ async function processTelegramWebhook(request: Request, env: Env): Promise<Respo
     return json({ ok: true });
   }
 
-  await sendTelegramMessage(env, chatId, "Your Telegram chat is now connected to your NERITH workspace.\n\nStart with /status for a business overview, /liquidity for available and reserved balances, or /forecast for upcoming obligations. Use /newrequest to submit a liquidity request and /review to review prepared requests.\n\nUse /help for the full command list. NERITH records business decisions but never signs or broadcasts blockchain transactions or moves funds.");
+  await sendTelegramMessage(env, chatId, "Your Telegram chat is now connected to your NERITH workspace.\n\nStart with /status for a business overview, /liquidity for available and reserved balances, or /forecast for upcoming obligations. Use /newrequest to submit a liquidity request and /review to review prepared requests.\n\nUse /login to open the secure business dashboard, or /help for the full command list. NERITH records business decisions but never signs or broadcasts blockchain transactions or moves funds.");
   return json({ ok: true, linked: true });
 }
 
