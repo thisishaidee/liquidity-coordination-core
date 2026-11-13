@@ -33,16 +33,16 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
 <div id="access" class="access-wrap">
   <div class="brand"><span class="brand-symbol"><svg viewBox="0 0 652 524" role="img" aria-label="NERITH mark" focusable="false"><g fill="#CFF86B"><path d="M14 479 L14 483 L76 517 L91 522 L109 522 L304 421 L338 419 L365 427 L525 515 L544 522 L556 523 L572 519 L570 518 L613 497 L637 481 L367 333 L333 322 L299 327 Z"/><path d="M305 0 L225 45 L206 66 L202 80 L202 219 L196 236 L171 260 L28 339 L12 353 L4 366 L0 381 L0 438 L13 437 L277 288 L298 267 L307 242 Z"/><path d="M352 1 L349 4 L349 241 L359 269 L377 288 L649 443 L651 378 L643 358 L634 347 L493 268 L461 241 L454 229 L450 212 L450 78 L447 68 L429 46 L378 16 L373 16 L374 14 Z"/></g></svg></span><span>NERITH<small>BUSINESS LIQUIDITY COORDINATION</small></span></div>
   <div class="access-card">
-    <div class="pixel">Operator-managed preview</div>
+    <div class="pixel">Secure team sign-in</div>
     <h1>Business overview.</h1>
-    <p>This preview uses the existing NERITH operator session. It is not customer sign-in. Start or refresh your operator session through Business Setup, then enter the business ID below. No API key is requested or stored here.</p>
+    <p>Sign in with the Telegram account your workspace administrator invited. Your workspace and dashboard permissions are checked automatically.</p>
     <div id="accessError" class="error" hidden></div>
-    <form id="accessForm" class="access-form">
-      <div class="field"><label for="businessId">Business ID</label><input id="businessId" class="input" autocomplete="off" spellcheck="false" placeholder="biz_…" required></div>
-      <button class="btn primary" type="submit">Open business preview ↗</button>
-      <a class="btn" href="/control" style="display:flex;align-items:center;justify-content:center">Open Business Setup</a>
-    </form>
-    <p class="pixel" style="margin-top:24px">Customer accounts and per-business membership authentication are a separate future milestone.</p>
+    <div id="accessForm" class="access-form">
+      <a class="btn primary" href="https://t.me/NerithLiquidityBot" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center;justify-content:center">Open NERITH on Telegram ↗</a>
+      <p class="muted">In the private bot chat, send <strong>/login</strong>. Choose your workspace and open the one-time sign-in link sent by the bot. The link expires after five minutes.</p>
+      <a class="btn" href="/control" style="display:flex;align-items:center;justify-content:center">Workspace administrator setup</a>
+    </div>
+    <p class="pixel" style="margin-top:24px">Private Telegram identity · Business-scoped access · 12-hour sessions</p>
   </div>
   <footer class="footer"><span>NERITH · Liquidity coordination for autonomous agents</span><nav class="footer-links" aria-label="Footer navigation"><a href="/">Product</a><a href="/app">Agent console</a><a href="/control">Business setup</a><a href="/health">Service status</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/thisishaidee/liquidity-coordination-core" target="_blank" rel="noopener noreferrer">GitHub</a></nav><span>Business-controlled custody · © 2026 NERITH.</span></footer>
 </div>
@@ -60,7 +60,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       <button type="button" class="nav-item" data-page="telegram"><span class="nav-glyph">◎</span>Telegram</button>
       <button type="button" class="nav-item" data-page="settings"><span class="nav-glyph">⚙</span>Settings</button>
     </nav>
-    <div class="side-bottom">OPERATOR PREVIEW<br><span id="sideBusiness">Business not selected</span><br><a href="/control">Business Setup ↗</a></div>
+    <div class="side-bottom">SECURE WORKSPACE<br><span id="sideBusiness">Business not selected</span><br><span id="sessionRole" class="muted">Not signed in</span><br><a href="/control">Business Setup ↗</a><br><button id="dashboardLogout" class="btn" type="button" style="margin-top:12px;min-height:36px">Sign out</button></div>
   </aside>
   <div class="main">
     <header class="mobile-header"><div class="brand"><span class="brand-symbol"><svg viewBox="0 0 652 524" role="img" aria-label="NERITH mark" focusable="false"><g fill="#CFF86B"><path d="M14 479 L14 483 L76 517 L91 522 L109 522 L304 421 L338 419 L365 427 L525 515 L544 522 L556 523 L572 519 L570 518 L613 497 L637 481 L367 333 L333 322 L299 327 Z"/><path d="M305 0 L225 45 L206 66 L202 80 L202 219 L196 236 L171 260 L28 339 L12 353 L4 366 L0 381 L0 438 L13 437 L277 288 L298 267 L307 242 Z"/><path d="M352 1 L349 4 L349 241 L359 269 L377 288 L649 443 L651 378 L643 358 L634 347 L493 268 L461 241 L454 229 L450 212 L450 78 L447 68 L429 46 L378 16 L373 16 L374 14 Z"/></g></svg></span><span>NERITH</span></div><button class="mobile-menu" id="mobileMenuToggle" type="button" aria-controls="mobileDrawer" aria-expanded="false" aria-label="Toggle dashboard navigation">Menu</button></header>
@@ -159,7 +159,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { businessId: "", workspace: null, agents: [], wallets: [], telegram: [], forecast: null, operations: [], nextCursor: null, operationStatus: "", loadErrors: {} };
+  const state = { businessId: "", role: "", workspace: null, agents: [], wallets: [], telegram: [], forecast: null, operations: [], nextCursor: null, operationStatus: "", loadErrors: {} };
   const parseDecimalAtoms = (value, decimals=6) => {
     const text=String(value??"0");
     if(!/^\d+(?:\.\d+)?$/.test(text))return 0n;
@@ -332,6 +332,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       $("access").hidden=true;$("app").hidden=false;
       $("topBusiness").textContent=(workspace.business?.name||"Business")+" · "+state.businessId;
       $("sideBusiness").textContent=state.businessId;
+      $("sessionRole").textContent=(state.role||"member").toUpperCase();
       const requests=[
         ["Agents",api("/v1/admin/agents?businessId="+id),value=>{state.agents=requireArray(value,"agents","agents");}],
         ["Wallets",api("/v1/admin/wallets?businessId="+id),value=>{state.wallets=requireArray(value,"wallets","wallets");if(state.wallets.some(wallet=>!Array.isArray(wallet.balances)))throw new Error("invalid_wallet_balances_response");}],
@@ -365,11 +366,11 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       else showError("Could not refresh this workspace: "+message);
     } finally {$("refreshBtn").disabled=false;}
   }
-  $("accessForm").addEventListener("submit",async event=>{
-    event.preventDefault();clearError("accessError");
-    state.businessId=$("businessId").value.trim();
-    if(!state.businessId){showError("Enter the business ID from Business Setup.","accessError");return;}
-    await loadAll();
+  $("dashboardLogout").addEventListener("click",async()=>{
+    $("dashboardLogout").disabled=true;
+    try{await fetch("/v1/admin/session",{method:"DELETE",credentials:"same-origin"});}finally{
+      state.businessId="";state.role="";$("app").hidden=true;$("access").hidden=false;$("dashboardLogout").disabled=false;
+    }
   });
   document.addEventListener("click",event=>{
     const button=event.target.closest("[data-page]");
@@ -414,6 +415,28 @@ function renderTourStep(){const step=tourSteps[tourIndex];setPage(step.page);$("
 function openTour(){if(!state.businessId)return;tourIndex=0;$("tourBackdrop").hidden=false;renderTourStep();$("tourNext").focus();}
 function closeTour(completed=false){$("tourBackdrop").hidden=true;if(completed){try{localStorage.setItem(tourKey(),"complete");}catch{}$("tourBanner").hidden=true;}$("tourLaunch").focus();}
 $("startTourBanner").addEventListener("click",openTour);$("tourLaunch").addEventListener("click",openTour);$("tourClose").addEventListener("click",()=>closeTour(false));$("tourSkip").addEventListener("click",()=>closeTour(true));$("tourBack").addEventListener("click",()=>{if(tourIndex>0){tourIndex--;renderTourStep();}});$("tourNext").addEventListener("click",()=>{if(tourIndex===tourSteps.length-1){closeTour(true);return;}tourIndex++;renderTourStep();});$("tourBackdrop").addEventListener("click",event=>{if(event.target===$("tourBackdrop"))closeTour(false);});document.addEventListener("keydown",event=>{if(event.key==="Escape"&&!$("tourBackdrop").hidden)closeTour(false);});
+  async function initializeDashboardSession(){
+    clearError("accessError");
+    const params=new URLSearchParams(location.search);
+    const ticket=params.get("login_ticket");
+    if(ticket){
+      params.delete("login_ticket");
+      const cleanUrl=location.pathname+(params.toString()?"?"+params.toString():"")+location.hash;
+      history.replaceState(null,"",cleanUrl);
+      try{
+        const response=await fetch("/v1/auth/telegram/consume",{method:"POST",credentials:"same-origin",cache:"no-store",headers:{"content-type":"application/json",accept:"application/json"},body:JSON.stringify({ticket})});
+        const result=await response.json().catch(()=>({}));
+        if(!response.ok)throw new Error(result.message||result.error||"This sign-in link is invalid or expired. Send /login to the Telegram bot for a new one.");
+      }catch(error){showError(String(error.message||error),"accessError");return;}
+    }
+    try{
+      const session=await api("/v1/admin/session");
+      if(!session.authenticated){if(!ticket)clearError("accessError");return;}
+      state.businessId=session.businessId;
+      state.role=session.role;
+      await loadAll();
+    }catch(error){showError("Could not verify your dashboard session: "+String(error.message||error),"accessError");}
+  }
   if(window.NERITH_STATIC_DESIGN_PREVIEW===true){
     $("access").hidden=true;$("app").hidden=false;
     $("topBusiness").textContent="Design preview · no live workspace";
@@ -422,6 +445,8 @@ $("startTourBanner").addEventListener("click",openTour);$("tourLaunch").addEvent
     $("tourBanner").hidden=true;$("tourLaunch").hidden=true;
     const notice=document.createElement("div");notice.className="note";notice.style.marginBottom="18px";notice.textContent="STATIC DESIGN PREVIEW · No business data, balances, agents or operations are connected."; $("globalError").after(notice);
     document.querySelectorAll("#refreshBtn,#overviewRefresh,#agentsRefresh,#liquidityRefresh,#forecastRefresh,#operationsRefresh,#telegramRefresh,#loadMoreOperations,#operationFilter").forEach(el=>{el.disabled=true;});
+  } else {
+    initializeDashboardSession();
   }
 })();
 </script>
