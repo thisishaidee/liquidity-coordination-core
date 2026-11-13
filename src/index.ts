@@ -492,7 +492,7 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      "Welcome to NERITH. Use one linked Telegram account to monitor business liquidity, create requests and review prepared operations. Google Authenticator protects decisions on your own requests.\n\nTo connect, ask your business administrator to generate a one-time Telegram invitation, then open that link here.\n\nCommands: /help"
+      "Welcome to NERITH | Liquidity Coordinator.\n\nMonitor business liquidity, connected agents, upcoming obligations and recent operations from a private Telegram chat.\n\nTo get started, ask your business administrator for a one-time linking invitation. Once connected, use /status or /help.\n\nNERITH records business decisions and request activity. It does not sign or broadcast blockchain transactions or move funds."
     );
     return;
   }
@@ -510,7 +510,7 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      "This private chat is not connected to a NERITH business yet. Ask your business administrator for a one-time linking invitation. Use /help to see what I can do."
+      "This private chat is not linked to a NERITH workspace yet. Ask your business administrator for a one-time linking invitation. Use /help to explore the bot's capabilities."
     );
     return;
   }
@@ -1159,26 +1159,48 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
       return json({ error: "telegram_webhook_setup_failed", message: webhook.description ?? "Telegram rejected the webhook configuration." }, 502);
     }
 
+    const nameResponse = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setMyName`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "NERITH | Liquidity Coordinator" })
+    });
+    const nameResult = await nameResponse.json() as { ok?: boolean; description?: string };
+    if (!nameResponse.ok || !nameResult.ok) {
+      return json({ error: "telegram_name_setup_failed", message: nameResult.description ?? "Telegram rejected the bot name." }, 502);
+    }
+
+    const shortDescriptionResponse = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setMyShortDescription`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        short_description: "Liquidity coordination for autonomous agents. Monitor liquidity, funding needs and agent operations with NERITH."
+      })
+    });
+    const shortDescriptionResult = await shortDescriptionResponse.json() as { ok?: boolean; description?: string };
+    if (!shortDescriptionResponse.ok || !shortDescriptionResult.ok) {
+      return json({ error: "telegram_short_description_setup_failed", message: shortDescriptionResult.description ?? "Telegram rejected the short description." }, 502);
+    }
+
     const commandsResponse = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setMyCommands`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         commands: [
-          { command: "start", description: "Open NERITH" },
-          { command: "help", description: "Show available commands" },
-          { command: "businessid", description: "Show linked Business ID(s)" },
-          { command: "workspace", description: "Show linked workspace details" },
-          { command: "status", description: "Business liquidity overview" },
+          { command: "start", description: "Open your NERITH workspace" },
+          { command: "help", description: "Explore commands and safety" },
+          { command: "businessid", description: "Show linked business IDs" },
+          { command: "workspace", description: "View linked workspace details" },
+          { command: "status", description: "Business and agent overview" },
           { command: "liquidity", description: "Available and reserved balances" },
-          { command: "forecast", description: "Upcoming planned obligations" },
-          { command: "agents", description: "Agent status" },
-          { command: "operations", description: "Recent liquidity operations" },
+          { command: "forecast", description: "Upcoming liquidity obligations" },
+          { command: "agents", description: "Connected agent status" },
+          { command: "operations", description: "Recent liquidity activity" },
           { command: "newrequest", description: "Create a liquidity request" },
-          { command: "review", description: "Review prepared liquidity requests" },
+          { command: "review", description: "Review pending requests" },
           { command: "setupauth", description: "Set up Google Authenticator" },
           { command: "verifyauth", description: "Verify authenticator setup" },
-          { command: "confirmapproval", description: "Confirm a self-approval" },
-          { command: "cancel", description: "Cancel a request draft" },
+          { command: "confirmapproval", description: "Confirm a request decision" },
+          { command: "cancel", description: "Cancel an unfinished request" },
           { command: "disconnect", description: "Disconnect this Telegram chat" }
         ]
       })
@@ -1192,7 +1214,7 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        description: "Welcome to NERITH. Monitor business liquidity, agents and operations, create liquidity requests, and let authorised approvers review prepared requests. Decisions are recorded against the exact operation. Wallet signing and transaction execution remain separately secured."
+        description: "NERITH coordinates business liquidity across autonomous-agent workflows. Monitor available and reserved balances, connected agents, upcoming obligations and recent operations. Create liquidity requests and let authorised business approvers review them. NERITH records business decisions but does not sign or broadcast blockchain transactions or move funds."
       })
     });
     const descriptionResult = await descriptionResponse.json() as { ok?: boolean; description?: string };
@@ -1325,7 +1347,7 @@ async function processTelegramWebhook(request: Request, env: Env): Promise<Respo
     return json({ ok: true });
   }
 
-  await sendTelegramMessage(env, chatId, "This Telegram chat is now connected to your business.\n\nTry /status, /liquidity, /forecast, /agents, /operations or /newrequest.\nUse /help to see all commands. Requests and approvals are recorded by NERITH, but this bot cannot sign or broadcast transactions.");
+  await sendTelegramMessage(env, chatId, "Your Telegram chat is now connected to your NERITH workspace.\n\nStart with /status for a business overview, /liquidity for available and reserved balances, or /forecast for upcoming obligations. Use /newrequest to submit a liquidity request and /review to review prepared requests.\n\nUse /help for the full command list. NERITH records business decisions but never signs or broadcasts blockchain transactions or moves funds.");
   return json({ ok: true, linked: true });
 }
 
