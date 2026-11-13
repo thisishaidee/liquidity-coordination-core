@@ -43,6 +43,10 @@ describe("responsive page source contracts", () => {
     }
   });
 
+  it("declares business-dashboard action buttons as non-submit controls", () => {
+    expect(businessDashboardHtml).not.toMatch(/<button\\b(?![^>]*\\btype\\s*=)[^>]*>/i);
+  });
+
   it("sets dark browser chrome for the agent console", () => {
     expect(dashboardHtml).toContain('<meta name="color-scheme" content="dark">');
     expect(dashboardHtml).toContain('<meta name="theme-color" content="#0B0B0B">');
