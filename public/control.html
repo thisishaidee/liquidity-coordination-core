@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#f5f6f1">
-<title>NERITH · Business setup</title>
+<title>NERITH · Workspace setup</title>
 <style>
 :root{color-scheme:light;--ink:#20271f;--muted:#737b70;--line:#e2e6dc;--paper:#f5f6f1;--white:#fff;--lime:#c8ef68;--red:#a33d32;--green:#426d35}
 *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
@@ -15,25 +15,26 @@ a{color:inherit}.shell{max-width:1020px;margin:0 auto;padding:28px 24px 44px}.to
 <body>
 <div class="shell">
 <header class="top"><a class="brand" href="/"><span class="brand-symbol"><svg viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" fill="#DFFF00"/><g fill="none" stroke="#111111" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"><path d="M50 8 C65 8 67 27 59 41 C55 48 51 50 50 57"/><path d="M9 78 C2 65 17 55 31 50 C40 46 46 49 50 57"/><path d="M91 78 C98 65 83 55 69 50 C60 46 54 49 50 57"/></g><path d="M50 40 L57 53 L50 61 L43 53 Z" fill="#111111"/></svg></span><span>NERITH</span></a><nav class="toplinks"><a href="/">Website</a><a href="/app">Agent console</a></nav></header>
-<section class="hero"><div class="eyebrow">Business workspace</div><h1>Your NERITH workspace.</h1><p>Review your business setup, agents, operating wallets and Telegram connection. Create a workspace only when setting up a new business.</p></section>
+<section class="hero"><div class="eyebrow">Workspace setup</div><h1>Set up your NERITH workspace.</h1><p>Your workspace is your team’s private operating space in NERITH. It brings your agents, business wallets, liquidity requests, permissions and operating limits together, so your team can coordinate funding in one place. It is an organisation boundary, not a wallet or a place where funds are held.</p></section>
 <div class="layout">
 <main class="panel">
 <section id="bootstrapSection">
-<h2>Create your workspace</h2>
-<p class="sub">This creates your business record and first agent. The agent API key is shown once, so save it somewhere secure.</p>
+<h2>1. Create a new workspace</h2>
+<p class="sub">Use this if you are setting up NERITH for a new business or team. Your workspace name is simply how your team is identified here; this form does not ask for company registration documents. We will also create your first agent and show its API key once, so save it securely.</p>
 <form id="bootstrapForm">
-<div class="field"><label for="adminToken">Platform admin token</label><input id="adminToken" type="password" autocomplete="off" placeholder="Your platform admin token" required></div>
-<div class="field"><label for="businessName">Business / workspace name</label><input id="businessName" minlength="2" maxlength="100" placeholder="e.g. Acme Operations" required></div>
-<div class="field"><label for="agentName">First agent name</label><input id="agentName" minlength="2" maxlength="100" placeholder="e.g. Payments Agent" required></div>
-<button class="btn" id="createBtn" type="submit">Create business workspace</button>
+<div class="field"><label for="adminToken">Platform admin token</label><input id="adminToken" type="password" autocomplete="off" placeholder="Enter the NERITH setup token" required><p class="sub">This token is provided by the person who manages the NERITH deployment. It is the ADMIN_BOOTSTRAP_TOKEN Worker secret, not your Cloudflare API token.</p></div>
+<div class="field"><label for="businessName">Workspace name</label><input id="businessName" minlength="2" maxlength="100" placeholder="e.g. Treasury Operations" required></div>
+<div class="field"><label for="agentName">First agent name</label><input id="agentName" minlength="2" maxlength="100" placeholder="e.g. Payments Agent" required><p class="sub">An agent is the software workflow that will call NERITH, not a person on your team. Give it a name your team will recognise.</p></div>
+<button class="btn" id="createBtn" type="submit">Create workspace</button>
 </form>
+<div class="notice">Creating a workspace only sets up your NERITH business space and first agent. It does not connect a wallet, deposit funds, approve a request, or authorise a transaction. Only use this form if you are the person setting up a new workspace.</div>
 <div id="bootstrapStatus" class="status"></div>
 <div id="keyBox" class="keybox hidden"><small>ONE-TIME AGENT API KEY · SAVE IT NOW</small><div id="apiKeyValue" class="keyvalue"></div><div class="btnrow"><button class="btn secondary" id="copyKey" type="button">Copy agent key</button></div><p class="workspace" id="workspaceInfo"></p></div>
 </section>
 <section id="existingSection">
 <div class="divider"></div>
-<h2>Already have a workspace?</h2>
-<p class="sub">Reconnect to your existing workspace using the platform admin token configured as ADMIN_BOOTSTRAP_TOKEN in Cloudflare Worker secrets. This is not your Cloudflare API token. The token is used once to establish a secure browser session and is not saved in browser storage.</p>
+<h2>Already have a workspace? Connect it here.</h2>
+<p class="sub">Do not create another workspace if your team already uses NERITH. Enter the existing Business ID and the NERITH platform setup token to open its secure admin session. This is not your Cloudflare API token, and it is not saved in browser storage. If you are a team member rather than the workspace administrator, ask your administrator for a private Telegram invitation instead.</p>
 <form id="existingForm">
 <div class="field"><label for="existingBusinessId">Business ID</label><input id="existingBusinessId" autocomplete="off" placeholder="biz_..." required></div>
 <div class="field"><label for="existingAdminToken">Platform admin token</label><input id="existingAdminToken" type="password" autocomplete="off" placeholder="Enter the platform admin token" required></div>
@@ -44,8 +45,8 @@ a{color:inherit}.shell{max-width:1020px;margin:0 auto;padding:28px 24px 44px}.to
 <section id="workspaceReview" class="hidden"><div class="divider"></div><h2>Workspace overview</h2><div id="workspaceSummary" class="keybox"></div><div class="btnrow"><button class="btn secondary" id="refreshWorkspace" type="button">Refresh workspace details</button><button class="btn secondary" id="logoutWorkspace" type="button">Sign out</button></div><div id="workspaceStatus" class="status"></div></section>
 <section id="telegramSection" class="hidden">
 <div class="divider"></div>
-<h2>Connect Telegram</h2>
-<p class="sub">First create a bot with @BotFather and add its token and a webhook secret to this Worker in Cloudflare. Then configure the webhook and create a private invitation.</p>
+<h2>4. Connect your team on Telegram (optional)</h2>
+<p class="sub">Telegram is an optional way for your team to check the workspace and manage supported liquidity requests. It connects to this workspace; it does not create a separate one. Your administrator configures the bot, then creates a private, one-use invitation for each team member.</p>
 <div class="workspace" id="selectedWorkspace"></div>
 <div class="btnrow"><button class="btn" id="configureBot" type="button">Configure Telegram bot</button><button class="btn secondary" id="checkTelegramStatus" type="button">Check webhook status</button><button class="btn secondary" id="makeInvite" type="button" disabled>Create private invitation</button><button class="btn secondary" id="testTelegram" type="button">Send test alert</button></div>
 <div id="telegramStatus" class="status"></div>
@@ -63,7 +64,7 @@ a{color:inherit}.shell{max-width:1020px;margin:0 auto;padding:28px 24px 44px}.to
 
 <section id="walletSection" class="hidden">
 <div class="divider"></div>
-<h2>Business wallets</h2>
+<h2>2. Register business wallets</h2>
 <p class="sub">Register public Solana addresses only. NERITH reads confirmed SOL and USDC balances; it never asks for a seed phrase or private key.</p>
 <div class="divider"></div>
 <h3 style="font-size:14px;margin:0 0 7px">Operating wallet</h3>
@@ -87,7 +88,7 @@ a{color:inherit}.shell{max-width:1020px;margin:0 auto;padding:28px 24px 44px}.to
 
 <section id="x402Section" class="hidden">
 <div class="divider"></div>
-<h2>Swap.io API payment limits</h2>
+<h2>3. Set Swap.io API payment limits (optional)</h2>
 <p class="sub">Set daily USDC limits for paid quote and transaction-build requests. Each payment counts against both its agent limit and the shared business limit. A limit of 0 disables paid requests at that scope.</p>
 <div class="btnrow"><button class="btn secondary" id="refreshX402" type="button">Refresh payment usage</button></div>
 <div id="x402BudgetList" class="keybox">Connect a workspace to load payment limits.</div>
@@ -107,14 +108,14 @@ a{color:inherit}.shell{max-width:1020px;margin:0 auto;padding:28px 24px 44px}.to
 
 </main>
 <aside class="panel">
-<h2>Before you begin</h2><p class="sub">A few account-owned steps are required before the bot can go live.</p>
+<h2>How setup works</h2><p class="sub">Start with the workspace. Telegram comes after your team and operating setup are in place.</p>
 <div class="steps">
-<div class="step"><div class="num">1</div><div><strong>Create the Telegram bot</strong><p>Open <a href="https://t.me/BotFather" target="_blank" rel="noreferrer">@BotFather</a>, send /newbot and copy the token it gives you.</p></div></div>
-<div class="step"><div class="num">2</div><div><strong>Add Worker secrets</strong><p>In Cloudflare → Workers & Pages → liquidity-coordination-api → Settings → Variables and Secrets, add ADMIN_BOOTSTRAP_TOKEN, TELEGRAM_BOT_TOKEN and TELEGRAM_WEBHOOK_SECRET as secrets.</p></div></div>
-<div class="step"><div class="num">3</div><div><strong>Create your workspace</strong><p>Use the form with the same admin token configured in Cloudflare. The first agent key is only shown once.</p></div></div>
-<div class="step"><div class="num">4</div><div><strong>Link your private Telegram</strong><p>Configure the webhook, create an invitation and open it from your own private Telegram account. Group chats are not accepted.</p></div></div>
+<div class="step"><div class="num">1</div><div><strong>Create the workspace</strong><p>Enter a workspace name and your first agent. Save the one-time agent API key when it appears.</p></div></div>
+<div class="step"><div class="num">2</div><div><strong>Register your operating wallet</strong><p>Add the public Solana wallet address your business uses for operating liquidity. Never enter a seed phrase or private key.</p></div></div>
+<div class="step"><div class="num">3</div><div><strong>Set up agents and controls</strong><p>Review agent access, connect the wallets your business uses, and set daily API payment limits where needed.</p></div></div>
+<div class="step"><div class="num">4</div><div><strong>Connect Telegram (optional)</strong><p>Create a bot with <a href="https://t.me/BotFather" target="_blank" rel="noreferrer">@BotFather</a>, configure its Worker secrets and webhook, then issue private invitations to your team.</p></div></div>
 </div>
-<div class="notice"><strong>Security boundary</strong><br>Operators can create requests and review prepared operations from one Telegram account. If the same account created the request, Google Authenticator verification is required before the decision is recorded. Viewers can only read business information. Telegram never stores wallet keys and cannot sign, broadcast or move funds. Decisions are recorded against the exact operation.</div>
+<div class="notice"><strong>What a workspace means</strong><br>A workspace keeps one team’s agents, wallets, requests and permissions together. It is not a wallet and does not hold funds. Telegram is simply another interface to the same workspace. Operators can create requests and review prepared operations; sensitive self-approval requires Google Authenticator. Telegram cannot sign, broadcast or move funds.</div>
 </aside>
 </div>
 <footer class="footer"><span>NERITH · Liquidity coordination for autonomous agents</span><nav class="footerlinks" aria-label="Footer navigation"><a href="/">Website</a><a href="/app">Agent console</a><a href="/dashboard">Business dashboard</a><a href="/health">Service status</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/thisishaidee/liquidity-coordination-core" target="_blank" rel="noreferrer">GitHub</a></nav></footer>
