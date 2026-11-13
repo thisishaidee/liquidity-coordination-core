@@ -14,11 +14,12 @@ import { canCreateTelegramRequest, canReviewTelegramRequest, isTelegramDraftCanc
 import { decryptTotpSecret, encryptTotpSecret, generateTotpSecret, verifyTotpStep } from "./telegram-totp";
 import { verifySolSourceDebit, type SolanaSettlementTransaction } from "./settlement";
 import { parseHermesPaymentPayload, parseHermesPaymentRequirement, parseHermesPaymentReceipt, verifyHermesPaymentTransaction, type HermesPaymentRequirement } from "./x402";
-import { describeAdminRoute, matchesBusinessScope } from "./admin-auth";
+import { describeAdminRoute, isAllowedAdminOrigin, matchesBusinessScope } from "./admin-auth";
 
 interface Env {
   DB: D1Database;
   ADMIN_BOOTSTRAP_TOKEN?: string;
+  ADMIN_ALLOWED_ORIGINS?: string;
   SOLANA_RPC_URL?: string;
   SOLANA_USDC_MINT?: string;
   TELEGRAM_BOT_TOKEN?: string;
@@ -74,7 +75,7 @@ async function isBootstrapTokenAuthorized(request: Request, env: Env): Promise<b
   if (!configured || !supplied || !(await constantTimeEqual(configured, supplied))) return false;
   if (request.method !== "GET" && request.method !== "HEAD") {
     const origin = request.headers.get("origin");
-    if (!origin || origin !== new URL(request.url).origin) return false;
+    if (!isAllowedAdminOrigin(origin, new URL(request.url).origin, env.ADMIN_ALLOWED_ORIGINS)) return false;
   }
   return true;
 }
@@ -93,7 +94,7 @@ async function isAdmin(request: Request, env: Env): Promise<boolean> {
 
   if (request.method !== "GET" && request.method !== "HEAD") {
     const origin = request.headers.get("origin");
-    if (!origin || origin !== url.origin) return false;
+    if (!isAllowedAdminOrigin(origin, url.origin, env.ADMIN_ALLOWED_ORIGINS)) return false;
   }
   const cookie = request.headers.get("cookie") ?? "";
   const match = cookie.match(/(?:^|;\s*)nerith_admin_session=([a-f0-9]{64})(?:;|$)/);
