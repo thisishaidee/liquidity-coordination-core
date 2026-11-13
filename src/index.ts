@@ -403,6 +403,16 @@ async function createTelegramLinkCode(request: Request, env: Env): Promise<Respo
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
   const body = await readJson(request);
   if (!body || typeof body.businessId !== "string") return json({ error: "invalid_request" }, 400);
+  const dashboardRole = body.dashboardRole === undefined ? "analyst" : body.dashboardRole;
+  if (dashboardRole !== "admin" && dashboardRole !== "analyst") return json({ error: "invalid_dashboard_role" }, 400);
+  if (dashboardRole === "admin") {
+    const cookie = request.headers.get("cookie") ?? "";
+    const match = cookie.match(/(?:^|;\\s*)nerith_admin_session=([a-f0-9]{64})(?:;|$)/);
+    if (!match) return json({ error: "owner_required_for_admin_invitation" }, 403);
+    const session = await env.DB.prepare("SELECT role FROM admin_sessions WHERE token_hash = ? AND julianday(expires_at) > julianday('now') LIMIT 1")
+      .bind(await sha256(match[1])).first<{ role: string }>();
+    if (session?.role !== "owner") return json({ error: "owner_required_for_admin_invitation" }, 403);
+  }
 
   const business = await env.DB.prepare("SELECT id FROM businesses WHERE id = ?")
     .bind(body.businessId).first<{ id: string }>();
@@ -427,13 +437,14 @@ async function createTelegramLinkCode(request: Request, env: Env): Promise<Respo
   const linkId = "tlg_" + crypto.randomUUID().replaceAll("-", "");
   const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
   await env.DB.prepare(
-    "INSERT INTO telegram_link_codes (id, business_id, code_hash, expires_at) VALUES (?, ?, ?, ?)"
-  ).bind(linkId, business.id, codeHash, expiresAt).run();
+    "INSERT INTO telegram_link_codes (id, business_id, code_hash, expires_at, dashboard_role) VALUES (?, ?, ?, ?, ?)"
+  ).bind(linkId, business.id, codeHash, expiresAt, dashboardRole).run();
 
   return json({
     linkId,
     code,
     expiresAt,
+    dashboardRole,
     deepLink: `https://t.me/${botUsername}?start=${code}`,
     instruction: "Open the bot link from the private Telegram account that should operate this business. The linked account can create and review requests; Google Authenticator is required for decisions on its own requests. This code works once and expires in 15 minutes."
   }, 201);
@@ -578,6 +589,33 @@ async function handleTelegramCommand(
 ): Promise<void> {
   const rawCommand = (rawText.trim().split(/\s+/, 1)[0] ?? "").split("@", 1)[0].toLowerCase();
   const command = normalizeTelegramCommand(rawCommand);
+
+  if (command === "/login") {
+    const linked = await env.DB.prepare(`
+      SELECT c.business_id, c.dashboard_role, b.name AS business_name
+      FROM telegram_connections c JOIN businesses b ON b.id = c.business_id
+      WHERE c.chat_id = ? AND c.telegram_user_id = ? AND c.status = 'active'
+      ORDER BY b.name COLLATE NOCASE LIMIT 10
+    `).bind(chatId, userId).all<{ business_id: string; dashboard_role: string; business_name: string }>();
+    const workspaces = linked.results ?? [];
+    if (!workspaces.length) {
+      await sendTelegramMessage(env, chatId, "No active NERITH workspace is linked to this Telegram account. Ask a workspace administrator for a private invitation first.");
+      return;
+    }
+    const baseUrl = (env.NERITH_PUBLIC_URL || "https://neritth.pages.dev").replace(/\/$/, "");
+    const keyboard: Array<Array<{ text: string; url: string }>> = [];
+    for (const workspace of workspaces) {
+      const ticket = newSecret("");
+      const ticketHash = await sha256(ticket);
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+      await env.DB.prepare(
+        "INSERT INTO telegram_login_tickets (token_hash, business_id, chat_id, telegram_user_id, role, expires_at) VALUES (?, ?, ?, ?, ?, ?)"
+      ).bind(ticketHash, workspace.business_id, chatId, userId, workspace.dashboard_role, expiresAt).run();
+      keyboard.push([{ text: workspace.business_name + " · " + workspace.dashboard_role, url: baseUrl + "/dashboard?login_ticket=" + ticket }]);
+    }
+    await sendTelegramMessage(env, chatId, "Choose the NERITH workspace to open. Each sign-in link expires in 5 minutes and works once.", { inline_keyboard: keyboard });
+    return;
+  }
 
   if (command === "/start" && !rawText.trim().match(/^\/start\s+[a-f0-9]{64}$/i)) {
     await sendTelegramMessage(
@@ -1141,13 +1179,13 @@ async function listTelegramConnections(request: Request, env: Env): Promise<Resp
     .bind(businessId).first<{ id: string }>();
   if (!business) return json({ error: "business_not_found" }, 404);
   const rows = await env.DB.prepare(`
-    SELECT id, chat_id, telegram_user_id, permission, status, linked_at
+    SELECT id, chat_id, telegram_user_id, permission, dashboard_role, status, linked_at
     FROM telegram_connections
     WHERE business_id = ?
     ORDER BY linked_at ASC
   `).bind(businessId).all<{
     id: string; chat_id: string; telegram_user_id: string;
-    permission: string; status: string; linked_at: string;
+    permission: string; dashboard_role: string; status: string; linked_at: string;
   }>();
   return json({
     businessId,
@@ -1156,6 +1194,7 @@ async function listTelegramConnections(request: Request, env: Env): Promise<Resp
       chatId: row.chat_id,
       telegramUserId: row.telegram_user_id,
       permission: row.permission,
+      dashboardRole: row.dashboard_role,
       status: row.status,
       linkedAt: row.linked_at
     }))
@@ -1423,8 +1462,8 @@ async function processTelegramWebhook(request: Request, env: Env): Promise<Respo
 
   const codeHash = await sha256(match[1]);
   const linkCode = await env.DB.prepare(
-    "SELECT id, business_id FROM telegram_link_codes WHERE code_hash = ? AND consumed_at IS NULL AND julianday(expires_at) > julianday('now')"
-  ).bind(codeHash).first<{ id: string; business_id: string }>();
+    "SELECT id, business_id, dashboard_role FROM telegram_link_codes WHERE code_hash = ? AND consumed_at IS NULL AND julianday(expires_at) > julianday('now')"
+  ).bind(codeHash).first<{ id: string; business_id: string; dashboard_role: string }>();
   if (!linkCode) {
     await sendTelegramMessage(env, chatId, "That invitation is invalid or expired. Ask your business administrator for a new one.");
     return json({ ok: true });
@@ -1445,8 +1484,8 @@ async function processTelegramWebhook(request: Request, env: Env): Promise<Respo
 
   try {
     await env.DB.prepare(
-      "INSERT INTO telegram_connections (id, business_id, chat_id, telegram_user_id, permission) VALUES (?, ?, ?, ?, 'approver') ON CONFLICT(business_id, chat_id, telegram_user_id) DO UPDATE SET status = 'active', permission = 'approver'"
-    ).bind("tg_" + crypto.randomUUID().replaceAll("-", ""), linkCode.business_id, chatId, userId).run();
+      "INSERT INTO telegram_connections (id, business_id, chat_id, telegram_user_id, permission, dashboard_role) VALUES (?, ?, ?, ?, 'approver', ?) ON CONFLICT(business_id, chat_id, telegram_user_id) DO UPDATE SET status = 'active', permission = 'approver', dashboard_role = excluded.dashboard_role"
+    ).bind("tg_" + crypto.randomUUID().replaceAll("-", ""), linkCode.business_id, chatId, userId, linkCode.dashboard_role).run();
   } catch {
     await env.DB.prepare("UPDATE telegram_link_codes SET consumed_at = NULL WHERE id = ?")
       .bind(linkCode.id).run();
