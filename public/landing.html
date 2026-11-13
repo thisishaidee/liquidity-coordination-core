@@ -3,179 +3,105 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#0B0B0B">
-<meta name="description" content="NERITH anticipates liquidity needs across autonomous agents, coordinates authorized capital and helps keep agent workflows moving.">
-<title>NERITH — Liquidity coordination for autonomous agents</title>
+<meta name="theme-color" content="#080808">
+<meta name="description" content="NERITH anticipates liquidity needs across autonomous agents, coordinates authorized capital and prepares asset conversions before a task gets stuck.">
+<title>NERITH — Keep autonomous agents moving</title>
 <style>
-:root{color-scheme:dark;--black:#111111;--page:#0B0B0B;--panel:#151515;--inset:#1C1C1C;--lemon:#DFFF00;--paper:#F2F2EC;--muted:#A3A39B;--line:#2A2A2A;--dotted:#3A3A3A;--max:1240px}
+:root{color-scheme:dark;--bg:#080808;--panel:#111;--panel2:#151515;--lime:#dfff00;--paper:#f2f2ec;--muted:#92928a;--line:#292929;--max:1380px}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth;scroll-padding-top:90px}
-body{margin:0;background:var(--page) url('/pixel-field.svg') left top/640px 640px repeat;color:var(--paper);font-family:Manrope,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
-a{color:inherit;text-decoration:none}
-button{font:inherit}
-.wrap{width:min(var(--max),calc(100% - 64px));margin-inline:auto}
-.pixel-label{font-family:"Arial Narrow",ui-monospace,monospace;font-size:11px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--muted)}
-.brand{display:inline-flex;align-items:center;gap:12px;min-width:0;font-size:18px;font-weight:800;letter-spacing:.14em;color:var(--paper)}
-.brand-symbol{display:block;width:40px;height:32px;flex:none}
-.brand-symbol svg{display:block;width:100%;height:100%}
-.site-header{position:sticky;top:0;z-index:20;background:rgba(5,5,5,.92);border-bottom:1px solid var(--line);backdrop-filter:none}
-.nav{min-height:78px;display:flex;align-items:center;justify-content:space-between;gap:24px}
-.nav-links{display:flex;align-items:center;gap:clamp(18px,3vw,38px);color:#CFCFC8;font-size:12px}
-.nav-links a:hover,.footer-links a:hover{color:var(--lemon)}
-.button{min-height:46px;padding:0 18px;display:inline-flex;align-items:center;justify-content:center;gap:12px;border:1px solid transparent;background:var(--lemon);color:var(--black);font-size:12px;font-weight:800;letter-spacing:.01em;clip-path:polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px)}
-.button.secondary{background:var(--paper);color:var(--black)}
-.button.outline{background:transparent;color:var(--paper);border-color:#6B6B64;clip-path:none}
-.button:hover{filter:brightness(.94)}
-.menu-button{display:none;min-height:44px;padding:0 14px;background:transparent;color:var(--paper);border:1px solid #6B6B64}
-.hero{padding:clamp(76px,10vw,138px) 0 92px;display:grid;grid-template-columns:minmax(0,1.06fr) minmax(300px,.94fr);gap:clamp(42px,7vw,100px);align-items:center}
-.hero h1{max-width:760px;margin:24px 0 25px;font-size:clamp(54px,7.5vw,96px);line-height:.96;letter-spacing:-.075em;font-weight:800}
-.hero h1 em,.section-heading em{font-family:Georgia,"Times New Roman",serif;font-weight:400;font-style:italic;color:var(--lemon);letter-spacing:-.06em}
-.hero-copy{max-width:590px;color:#CFCFC8;font-size:16px;line-height:1.8;margin:0}
-.hero-actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:30px}
-.hero-footnote{margin:25px 0 0;color:var(--muted);font-size:11px}
-.hero-art{position:relative;min-height:470px;border:1px solid var(--line);background:rgba(21,21,21,.92);clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px);padding:28px;overflow:hidden}
-.art-top{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:2px dotted var(--dotted);padding-bottom:18px}
-.art-grid{position:absolute;inset:92px 28px 72px;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:12px}
-.art-node{position:relative;background:var(--inset);border:1px solid #353535;padding:18px;display:flex;flex-direction:column;justify-content:space-between;min-width:0}
-.art-node.featured{border-color:var(--lemon)}
-.art-node .node-number{font-family:ui-monospace,monospace;color:var(--muted);font-size:11px}
-.art-node strong{display:block;font-size:15px;line-height:1.2;margin:18px 0 6px}
-.art-node small{color:var(--muted);font-size:11px;line-height:1.5}
-.node-tag{align-self:flex-start;margin-top:12px;padding:5px 7px;border:1px solid #6B6B64;color:var(--muted);font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
-.featured .node-tag{background:var(--lemon);border-color:var(--lemon);color:var(--black)}
-.art-bottom{position:absolute;left:28px;right:28px;bottom:22px;display:flex;justify-content:space-between;gap:12px;border-top:2px dotted var(--dotted);padding-top:13px;color:var(--muted);font-family:ui-monospace,monospace;font-size:9px;letter-spacing:.08em}
-.flow-arrow{position:absolute;z-index:2;color:var(--lemon);font-size:18px}
-.flow-arrow.one{left:calc(50% - 8px);top:calc(50% - 15px)}
-.flow-arrow.two{right:calc(25% - 8px);top:calc(50% - 15px)}
-.signal-row{border-top:2px dotted var(--dotted);border-bottom:2px dotted var(--dotted);padding:21px 0;display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;color:var(--muted);font-family:ui-monospace,monospace;font-size:10px;letter-spacing:.09em;text-transform:uppercase}
-.signal-row strong{color:var(--paper)}
-.section{padding:clamp(78px,9vw,116px) 0}
-.section-head{display:grid;grid-template-columns:1.05fr .95fr;align-items:end;gap:60px;margin-bottom:42px}
-.section-heading{font-size:clamp(38px,5vw,64px);line-height:1.02;letter-spacing:-.065em;margin:14px 0 0;max-width:700px}
-.section-intro{color:var(--muted);font-size:14px;line-height:1.8;max-width:510px;margin:0}
-.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
-.card{position:relative;min-width:0;min-height:235px;padding:24px;background:rgba(21,21,21,.94);border:1px solid var(--line);clip-path:polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px)}
-.card-number{font-family:ui-monospace,monospace;color:var(--muted);font-size:11px}
-.card h3{font-size:19px;letter-spacing:-.035em;margin:48px 0 10px}
-.card p{color:var(--muted);font-size:13px;line-height:1.75;margin:0;max-width:340px}
-.dark-section{background:rgba(5,5,5,.88);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
-.principle-list{display:grid;gap:0}
-.principle{display:grid;grid-template-columns:48px 1fr;gap:14px;padding:19px 0;border-bottom:2px dotted var(--dotted)}
-.principle:last-child{border-bottom:0}
-.principle-index{color:var(--lemon);font-family:ui-monospace,monospace;font-size:11px}
-.principle strong{font-size:14px}
-.principle p{margin:5px 0 0;color:var(--muted);font-size:12px;line-height:1.65}
-.workflow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
-.workflow-step{min-width:0;background:rgba(21,21,21,.92);border:1px solid var(--line);padding:20px}
-.workflow-step .step-no{color:var(--lemon);font-family:ui-monospace,monospace;font-size:11px}
-.workflow-step h3{font-size:15px;margin:32px 0 8px}
-.workflow-step p{margin:0;color:var(--muted);font-size:12px;line-height:1.7}
-.cta-band{margin:10px auto 100px;background:var(--lemon);color:var(--black);padding:clamp(32px,6vw,66px);display:flex;align-items:center;justify-content:space-between;gap:28px;clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)}
-.cta-band h2{font-size:clamp(34px,5vw,58px);line-height:1;letter-spacing:-.065em;margin:0;max-width:650px}
-.cta-band h2 em{font-family:Georgia,serif;font-style:italic;font-weight:400}
-.cta-band .button{background:var(--black);color:var(--lemon);flex:none}
-.footer{border-top:1px solid var(--line);padding:28px 0 36px;display:grid;grid-template-columns:1.2fr 1fr auto;gap:22px;align-items:center;color:var(--muted);font-size:11px}
-.footer-description{max-width:320px;margin-top:10px;line-height:1.6}
-.footer-links{display:flex;flex-wrap:wrap;gap:16px;color:#CFCFC8}
-.footer-meta{text-align:right;line-height:1.8}
+body{margin:0;background:var(--bg) url('/pixel-field.svg') center top/720px 720px repeat;color:var(--paper);font-family:Manrope,Arial,ui-sans-serif,system-ui,sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}button{font:inherit}
+.wrap{width:min(var(--max),calc(100% - 88px));margin-inline:auto}
+.site-header{position:relative;z-index:10;background:rgba(7,7,7,.9);border-bottom:1px solid rgba(255,255,255,.08)}
+.nav{min-height:82px;display:flex;align-items:center;justify-content:space-between;gap:28px}
+.brand{display:inline-flex;align-items:center;gap:12px;font-weight:850;letter-spacing:.17em;font-size:17px;white-space:nowrap}
+.brand-mark{width:30px;height:26px;color:var(--lime);display:block;flex:none}
+.brand-mark svg{width:100%;height:100%;display:block}
+.nav-links{display:flex;align-items:center;gap:clamp(22px,3.4vw,52px);font-size:12px;color:#c7c7bf}
+.nav-links a:hover,.footer-links a:hover{color:var(--lime)}
+.button{min-height:44px;padding:0 17px;display:inline-flex;align-items:center;justify-content:center;gap:12px;background:var(--lime);color:#080808;font-size:11px;font-weight:800;letter-spacing:.015em;border:1px solid var(--lime);transition:filter .18s ease,transform .18s ease}
+.button:hover{filter:brightness(.92);transform:translateY(-1px)}
+.button.light{background:var(--paper);border-color:var(--paper)}
+.button.dark{background:#080808;border-color:#080808;color:var(--lime)}
+.button.outline{background:transparent;border-color:#555;color:var(--paper)}
+.menu-button{display:none;min-height:42px;padding:0 14px;border:1px solid #555;background:transparent;color:var(--paper)}
 .mobile-nav{display:none}
-@media(max-width:900px){.wrap{width:min(var(--max),calc(100% - 40px))}.nav-links{display:none}.menu-button{display:inline-flex;align-items:center;justify-content:center}.hero{grid-template-columns:1fr;gap:34px;padding-top:76px}.hero-art{min-height:420px}.section-head{grid-template-columns:1fr;gap:18px}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.workflow{grid-template-columns:repeat(2,minmax(0,1fr))}.footer{grid-template-columns:1fr 1fr}.footer-meta{text-align:left}}
-@media(max-width:560px){.wrap{width:calc(100% - 32px)}.nav{min-height:68px}.brand{font-size:16px}.brand-symbol{width:34px;height:27px}.nav-cta-desktop{display:none}.hero{padding:62px 0 60px}.hero h1{font-size:clamp(49px,13vw,68px);line-height:.98}.hero-copy{font-size:14px}.hero-art{min-height:430px;padding:18px}.art-top{padding-bottom:14px}.art-grid{inset:78px 18px 74px;gap:8px}.art-node{padding:12px}.art-node strong{font-size:13px;margin:12px 0 5px}.art-node small{font-size:10px}.node-tag{font-size:8px}.art-bottom{left:18px;right:18px;font-size:8px}.signal-row{justify-content:flex-start;gap:12px 22px}.section{padding:72px 0}.section-heading{font-size:42px}.cards,.workflow{grid-template-columns:1fr}.card{min-height:0;padding:21px}.card h3{margin:30px 0 9px}.workflow-step h3{margin:22px 0 8px}.cta-band{margin-bottom:70px;align-items:flex-start;flex-direction:column;padding:30px 22px}.cta-band h2{font-size:40px}.footer{grid-template-columns:1fr;gap:18px}.footer-meta{font-size:10px}}
-@media(max-width:360px){.wrap{width:calc(100% - 24px)}.hero h1{font-size:47px}.hero-actions{display:grid;grid-template-columns:1fr}.hero-actions .button{width:100%}.hero-art{min-height:450px}.art-node{padding:9px}.art-node strong{font-size:12px}.art-node small{font-size:9px}.art-bottom{flex-direction:column;gap:5px}.cta-band h2{font-size:35px}}
-@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+.eyebrow{font-family:ui-monospace,SFMono-Regular,monospace;font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--lime)}
+.hero{min-height:570px;padding:100px 0 64px;display:grid;grid-template-columns:minmax(0,1fr) minmax(400px,.94fr);align-items:center;gap:4vw;position:relative}
+.hero-copy{position:relative;z-index:2;max-width:680px}
+.hero h1{font-size:clamp(64px,7.4vw,112px);line-height:.91;letter-spacing:-.078em;font-weight:780;margin:24px 0 24px;max-width:780px}
+.hero h1 em,.section-heading em{font-family:Georgia,'Times New Roman',serif;font-weight:400;color:var(--lime);letter-spacing:-.065em}
+.hero-copy p{max-width:530px;margin:0;color:#b5b5ad;font-size:14px;line-height:1.8}
+.hero-actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:28px}
+.hero-note{font-size:10px!important;color:#777;margin-top:20px!important}
+.hero-visual{min-height:400px;display:flex;align-items:center;justify-content:center;position:relative;isolation:isolate}
+.hero-visual:before{content:"";position:absolute;inset:4% -8% 0;background:radial-gradient(ellipse,rgba(223,255,0,.12),transparent 62%);z-index:-1}
+.hero-symbol{width:min(100%,570px);color:var(--lime);filter:drop-shadow(0 0 22px rgba(223,255,0,.12))}
+.hero-symbol svg{width:100%;height:auto;display:block}
+.hero-visual:after{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(8,8,8,.02),rgba(8,8,8,.02)),url('/pixel-field.svg');background-size:auto,360px 360px;opacity:.22;mix-blend-mode:screen;pointer-events:none;mask-image:radial-gradient(ellipse,black 35%,transparent 75%)}
+.flow-label{padding:8px 0 13px;border-bottom:1px dotted #555;display:flex;justify-content:space-between;gap:12px;color:#9a9a92;font:9px ui-monospace,monospace;letter-spacing:.12em;text-transform:uppercase}
+.flow-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:14px 0 74px}
+.flow-card{min-width:0;min-height:92px;background:rgba(18,18,18,.94);border:1px solid #242424;padding:15px 16px}
+.flow-card strong{display:block;font-size:11px;margin-bottom:6px}
+.flow-card p{font-size:10px;line-height:1.55;color:#898981;margin:0}
+.flow-card span{color:var(--lime);font:9px ui-monospace,monospace;letter-spacing:.06em}
+.section{padding:54px 0 84px}
+.section-head{display:flex;align-items:end;justify-content:space-between;gap:50px;margin-bottom:28px}
+.section-heading{font-size:clamp(38px,4.2vw,62px);line-height:1.02;letter-spacing:-.065em;margin:12px 0 0;max-width:700px}
+.section-intro{max-width:440px;margin:0;color:#92928a;font-size:12px;line-height:1.8}
+.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.card{min-height:150px;padding:19px;background:rgba(17,17,17,.94);border:1px solid #292929;min-width:0}
+.card h3{font-size:13px;margin:15px 0 6px}
+.card p{font-size:10px;line-height:1.65;color:#92928a;margin:0}
+.card-index{font:9px ui-monospace,monospace;color:var(--lime);letter-spacing:.08em}
+.principles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.principle{padding:18px 16px;background:rgba(17,17,17,.94);border:1px solid #292929;min-height:116px}
+.principle strong{display:block;font-size:11px;margin-bottom:7px}
+.principle p{font-size:10px;line-height:1.6;color:#92928a;margin:0}
+.cta-band{margin:4px auto 62px;background:var(--lime);color:#080808;padding:27px 32px;display:flex;align-items:center;justify-content:space-between;gap:26px}
+.cta-band h2{font-size:clamp(28px,3.2vw,44px);line-height:1.05;letter-spacing:-.06em;margin:0;font-weight:750}
+.cta-band h2 em{font-family:Georgia,serif;font-weight:400}
+.footer{border-top:1px solid var(--line);padding:25px 0 32px;display:grid;grid-template-columns:1fr 1.5fr auto;gap:28px;align-items:start;color:#85857d;font-size:10px}
+.footer-description{max-width:250px;line-height:1.6;margin:9px 0 0}
+.footer-links{display:flex;flex-wrap:wrap;gap:12px 19px;color:#b8b8b0}
+.footer-meta{text-align:right;line-height:1.8;white-space:nowrap}
+@media(min-width:1500px){.hero{min-height:630px}.hero h1{font-size:112px}.hero-visual{min-height:470px}.hero-symbol{width:620px}}
+@media(max-width:1000px){.wrap{width:calc(100% - 48px)}.hero{grid-template-columns:1fr .85fr;gap:20px;padding-top:76px;min-height:500px}.hero h1{font-size:clamp(56px,7.8vw,82px)}.hero-visual{min-height:330px}.nav-links{gap:18px}.nav-cta{display:none}.section-head{gap:25px}.principles{grid-template-columns:repeat(2,minmax(0,1fr))}.footer{grid-template-columns:1fr 1.5fr}.footer-meta{text-align:left;grid-column:1/-1}}
+@media(max-width:720px){.wrap{width:calc(100% - 36px)}.nav{min-height:68px}.nav-links,.nav-cta{display:none}.menu-button{display:inline-flex;align-items:center;justify-content:center}.mobile-nav{padding:8px 18px 16px;background:#080808;border-top:1px solid #292929;grid-template-columns:1fr 1fr;gap:4px}.mobile-nav.open{display:grid}.mobile-nav a{min-height:44px;padding:0 10px;display:flex;align-items:center;font-size:12px;color:#c7c7bf}.hero{display:flex;flex-direction:column;align-items:stretch;gap:10px;padding:62px 0 34px;min-height:0}.hero h1{font-size:clamp(53px,12.5vw,78px);max-width:620px;margin:19px 0}.hero-copy p{font-size:13px;line-height:1.75}.hero-visual{min-height:0;height:auto;padding:12px 8px 18px}.hero-symbol{width:min(76vw,330px)}.hero-visual:after{background-size:auto,260px 260px}.flow-label{font-size:8px}.flow-grid{grid-template-columns:repeat(2,minmax(0,1fr));padding:12px 0 48px;gap:8px}.flow-card{min-height:88px;padding:13px}.section{padding:42px 0 55px}.section-head{display:block;margin-bottom:20px}.section-heading{font-size:clamp(37px,9vw,48px);margin-top:10px}.section-intro{font-size:11px;margin-top:13px}.cards{grid-template-columns:1fr;gap:8px}.card{min-height:0;padding:17px}.card h3{margin:10px 0 5px}.principles{grid-template-columns:1fr 1fr;gap:8px}.principle{min-height:110px;padding:14px}.cta-band{margin:0 auto 44px;padding:23px 19px;align-items:flex-start;flex-direction:column;gap:18px}.cta-band h2{font-size:34px}.footer{grid-template-columns:1fr;gap:18px;padding-top:22px}.footer-links{gap:11px 16px}.footer-meta{grid-column:auto;text-align:left}}
+@media(max-width:380px){.wrap{width:calc(100% - 28px)}.hero h1{font-size:50px}.hero-actions{display:grid;grid-template-columns:1fr}.hero-actions .button{width:100%}.principles{grid-template-columns:1fr}.flow-card{padding:11px}.flow-card p{font-size:9px}.brand{font-size:15px}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*:before,*:after{transition:none!important}}
 </style>
 </head>
 <body>
 <header class="site-header">
-  <div class="wrap nav">
-    <a class="brand" href="/" aria-label="NERITH home"><span class="brand-symbol"><svg viewBox="0 0 652 524" role="img" aria-label="NERITH mark" focusable="false"><g fill="#CFF86B"><path d="M14 479 L14 483 L76 517 L91 522 L109 522 L304 421 L338 419 L365 427 L525 515 L544 522 L556 523 L572 519 L570 518 L613 497 L637 481 L367 333 L333 322 L299 327 Z"/><path d="M305 0 L225 45 L206 66 L202 80 L202 219 L196 236 L171 260 L28 339 L12 353 L4 366 L0 381 L0 438 L13 437 L277 288 L298 267 L307 242 Z"/><path d="M352 1 L349 4 L349 241 L359 269 L377 288 L649 443 L651 378 L643 358 L634 347 L493 268 L461 241 L454 229 L450 212 L450 78 L447 68 L429 46 L378 16 L373 16 L374 14 Z"/></g></svg></span><span>NERITH</span></a>
-    <nav class="nav-links" aria-label="Main navigation">
-      <a href="#system">How it works</a><a href="#principles">Principles</a><a href="#workflow">Workflow</a><a href="/control">Business setup</a>
-    </nav>
-    <a class="button nav-cta-desktop" href="/control">Business setup <span aria-hidden="true">↗</span></a>
-    <button class="menu-button" id="menuToggle" type="button" aria-expanded="false" aria-controls="mobileMenu">Menu</button>
-  </div>
-  <nav class="mobile-nav" id="mobileMenu" aria-label="Mobile navigation">
-    <a href="#system">How it works</a><a href="#principles">Principles</a><a href="#workflow">Workflow</a><a href="/control">Business setup ↗</a>
-  </nav>
+ <div class="wrap nav">
+  <a class="brand" href="/" aria-label="NERITH home"><span class="brand-mark"><svg viewBox="0 0 652 524" role="img" aria-label="NERITH mark" focusable="false"><g fill="currentColor"><path d="M14 479 L14 483 L76 517 L91 522 L109 522 L304 421 L338 419 L365 427 L525 515 L544 522 L556 523 L572 519 L570 518 L613 497 L637 481 L367 333 L333 322 L299 327 Z"/><path d="M305 0 L225 45 L206 66 L202 80 L202 219 L196 236 L171 260 L28 339 L12 353 L4 366 L0 381 L0 438 L13 437 L277 288 L298 267 L307 242 Z"/><path d="M352 1 L349 4 L349 241 L359 269 L377 288 L649 443 L651 378 L643 358 L634 347 L493 268 L461 241 L454 229 L450 212 L450 78 L447 68 L429 46 L378 16 L373 16 L374 14 Z"/></g></svg></span><span>NERITH</span></a>
+  <nav class="nav-links" aria-label="Main navigation"><a href="#system">How it works</a><a href="#principles">Principles</a><a href="#workflow">Workflow</a><a href="/control">Business setup</a></nav>
+  <a class="button nav-cta" href="/control">Open console <span aria-hidden="true">↗</span></a>
+  <button class="menu-button" id="menuToggle" type="button" aria-expanded="false" aria-controls="mobileMenu">Menu</button>
+ </div>
+ <nav class="mobile-nav" id="mobileMenu" aria-label="Mobile navigation"><a href="#system">How it works</a><a href="#principles">Principles</a><a href="#workflow">Workflow</a><a href="/control">Business setup ↗</a><a href="/app">Agent console ↗</a></nav>
 </header>
 <main>
-  <section class="wrap hero">
-    <div>
-      <div class="pixel-label">Liquidity coordination infrastructure</div>
-      <h1>Keep autonomous agents <em>moving.</em></h1>
-      <p class="hero-copy">NERITH anticipates what your agents will need, coordinates authorized liquidity across business wallets, and prepares asset conversions before a task gets stuck.</p>
-      <div class="hero-actions"><a class="button" href="#workflow">Explore how it works <span aria-hidden="true">↗</span></a><a class="button outline" href="#principles">Our principles</a></div>
-      <p class="hero-footnote">Built for businesses operating multiple autonomous agents on Solana.</p>
-    </div>
-    <div class="hero-art" aria-label="Illustration showing a liquidity coordination workflow">
-      <div class="art-top"><span class="pixel-label">A coordinated workflow</span><span class="pixel-label">01 — 04</span></div>
-      <div class="art-grid">
-        <article class="art-node"><span class="node-number">01 / REQUEST</span><div><strong>Agent task</strong><small>Task amount and target asset</small></div><span class="node-tag">Request</span></article>
-        <article class="art-node"><span class="node-number">02 / DETECT</span><div><strong>Liquidity assessment</strong><small>Fresh eligible balance assessment</small></div><span class="node-tag">Detect</span></article>
-        <article class="art-node featured"><span class="node-number">03 / COORDINATE</span><div><strong>Authorized conversion</strong><small>Evaluate SOL → USDC route</small></div><span class="node-tag">Coordinate</span></article>
-        <article class="art-node"><span class="node-number">04 / CONFIRM</span><div><strong>Verified settlement</strong><small>Refresh balances before fulfillment</small></div><span class="node-tag">Confirm</span></article>
-      </div>
-      <div class="art-bottom"><span>POLICY-AWARE ALLOCATION</span><span>BUSINESS-CONTROLLED CUSTODY</span></div>
-    </div>
-  </section>
-  <div class="wrap signal-row"><strong>Predictive + reactive</strong><span>Scoped agent access</span><span>Shared liquidity policies</span><span>Verified settlement</span></div>
-  <section class="wrap section" id="system">
-    <div class="section-head"><div><div class="pixel-label">The coordination layer</div><h2 class="section-heading">Liquidity should be ready when the work is.</h2></div><p class="section-intro">As agents execute more tasks, their funding needs become harder to manage one wallet and one request at a time. NERITH gives businesses a coordinated view of upcoming obligations, available capital and the actions needed to close a gap.</p></div>
-    <div class="cards">
-      <article class="card"><span class="card-number">01 / ANTICIPATE</span><h3>See the need before the block.</h3><p>Model upcoming obligations against fresh, authorized balances and identify tasks that are covered, may need conversion, or remain blocked.</p></article>
-      <article class="card"><span class="card-number">02 / COORDINATE</span><h3>Allocate with explicit permission.</h3><p>Respect agent-level boundaries while allowing designated agents to draw on approved business wallets. Reservations help prevent double allocation.</p></article>
-      <article class="card"><span class="card-number">03 / VERIFY</span><h3>Know what actually settled.</h3><p>Evaluate conversion routes, prepare unsigned transactions for a business-controlled signer, and verify on-chain settlement before balances are trusted again.</p></article>
-    </div>
-  </section>
-  <section class="dark-section" id="principles">
-    <div class="wrap section">
-      <div class="section-head"><div><div class="pixel-label">Control stays with the business</div><h2 class="section-heading">Coordination without <em>custody.</em></h2></div><p class="section-intro">NERITH does not take possession of business funds or agent private keys. It works within the permissions and wallet boundaries your business defines.</p></div>
-      <div class="principle-list">
-        <div class="principle"><span class="principle-index">01</span><div><strong>Scoped agent credentials</strong><p>Each agent operates through its own API identity and authorized access.</p></div></div>
-        <div class="principle"><span class="principle-index">02</span><div><strong>Business-controlled signing</strong><p>Transactions are prepared unsigned. Your designated signer retains control.</p></div></div>
-        <div class="principle"><span class="principle-index">03</span><div><strong>Policy-aware allocation</strong><p>Business wallet access is explicit, never assumed across agents.</p></div></div>
-        <div class="principle"><span class="principle-index">04</span><div><strong>Settlement is independently checked</strong><p>A quote or reservation is not treated as a completed transfer.</p></div></div>
-      </div>
-    </div>
-  </section>
-  <section class="wrap section" id="workflow">
-    <div class="section-head"><div><div class="pixel-label">From task to readiness</div><h2 class="section-heading">A clear path from shortfall to settlement.</h2></div><p class="section-intro">When an agent needs more of a target asset, NERITH makes the funding state visible and coordinates the next permitted step. It never treats a quote as funds or a reservation as a transfer.</p></div>
-    <div class="workflow">
-      <article class="workflow-step"><span class="step-no">STEP 01</span><h3>Agent requests</h3><p>A task declares its target asset, amount and purpose.</p></article>
-      <article class="workflow-step"><span class="step-no">STEP 02</span><h3>NERITH assesses</h3><p>Fresh balances and wallet permissions determine available liquidity.</p></article>
-      <article class="workflow-step"><span class="step-no">STEP 03</span><h3>Business authorizes</h3><p>If needed, an eligible conversion is quoted and prepared for signing.</p></article>
-      <article class="workflow-step"><span class="step-no">STEP 04</span><h3>Settlement verifies</h3><p>On-chain results are checked before the workflow proceeds.</p></article>
-    </div>
-  </section>
-  <section class="wrap cta-band"><h2>Make liquidity part of the <em>workflow.</em></h2><a class="button" href="/control">Open business setup <span aria-hidden="true">↗</span></a></section>
+ <section class="wrap hero">
+  <div class="hero-copy"><div class="eyebrow">Liquidity coordination infrastructure</div><h1>Keep autonomous agents <em>moving.</em></h1><p>NERITH anticipates what your agents will need, coordinates authorized liquidity across business wallets, and prepares asset conversions before a task gets stuck.</p><div class="hero-actions"><a class="button" href="#workflow">Explore the console <span aria-hidden="true">↗</span></a><a class="button light" href="#system">See how NERITH works</a></div><p class="hero-note">Built for businesses operating multiple autonomous agents on Solana.</p></div>
+  <div class="hero-visual" aria-label="NERITH three-pronged brand mark"><div class="hero-symbol"><svg viewBox="0 0 652 524" role="img" aria-label="NERITH mark" focusable="false"><g fill="currentColor"><path d="M14 479 L14 483 L76 517 L91 522 L109 522 L304 421 L338 419 L365 427 L525 515 L544 522 L556 523 L572 519 L570 518 L613 497 L637 481 L367 333 L333 322 L299 327 Z"/><path d="M305 0 L225 45 L206 66 L202 80 L202 219 L196 236 L171 260 L28 339 L12 353 L4 366 L0 381 L0 438 L13 437 L277 288 L298 267 L307 242 Z"/><path d="M352 1 L349 4 L349 241 L359 269 L377 288 L649 443 L651 378 L643 358 L634 347 L493 268 L461 241 L454 229 L450 212 L450 78 L447 68 L429 46 L378 16 L373 16 L374 14 Z"/></g></svg></div></div>
+ </section>
+ <section class="wrap" id="workflow"><div class="flow-label"><span>A coordinated liquidity flow</span><span>Request / Detect / Coordinate / Confirm</span></div><div class="flow-grid">
+  <article class="flow-card"><span>01 / REQUEST</span><strong>Agent task</strong><p>Target asset, amount and purpose are identified.</p></article>
+  <article class="flow-card"><span>02 / DETECT</span><strong>Liquidity assessment</strong><p>Fresh balances and permissions are checked.</p></article>
+  <article class="flow-card"><span>03 / COORDINATE</span><strong>Authorized conversion</strong><p>Eligible routes are evaluated and prepared.</p></article>
+  <article class="flow-card"><span>04 / CONFIRM</span><strong>Verified settlement</strong><p>On-chain results are checked before fulfillment.</p></article>
+ </div></section>
+ <section class="wrap section" id="system"><div class="section-head"><div><div class="eyebrow">The coordination layer</div><h2 class="section-heading">Liquidity should be <em>ready</em> when the work is.</h2></div><p class="section-intro">As agents execute more tasks, their funding needs become harder to manage one wallet and one request at a time. NERITH gives businesses a coordinated view of upcoming obligations, available capital and the actions needed to close a gap.</p></div>
+  <div class="cards"><article class="card"><span class="card-index">01 / ANTICIPATE</span><h3>See the need before the block.</h3><p>Model upcoming obligations against fresh, authorized balances and identify tasks that are covered, may need conversion, or remain blocked.</p></article><article class="card"><span class="card-index">02 / COORDINATE</span><h3>Allocate with explicit permission.</h3><p>Respect agent-level boundaries while allowing designated agents to draw on approved business wallets. Reservations help prevent double allocation.</p></article><article class="card"><span class="card-index">03 / VERIFY</span><h3>Know what actually settled.</h3><p>Evaluate conversion routes, prepare unsigned transactions for a business-controlled signer, and verify on-chain settlement before balances are trusted again.</p></article></div>
+ </section>
+ <section class="wrap section" id="principles"><div class="section-head"><div><div class="eyebrow">Control stays with the business</div><h2 class="section-heading">Coordination <em>without</em> custody.</h2></div><p class="section-intro">NERITH does not take possession of business funds or agent private keys. It works within the permissions and wallet boundaries your business defines.</p></div>
+  <div class="principles"><article class="principle"><strong>Scoped agent credentials</strong><p>Each agent operates through its own API identity and authorized access.</p></article><article class="principle"><strong>Business-controlled signing</strong><p>Transactions are prepared unsigned. Your designated signer retains control.</p></article><article class="principle"><strong>Policy-aware allocation</strong><p>Business wallet access is explicit, never assumed across agents.</p></article><article class="principle"><strong>Settlement is checked</strong><p>A quote or reservation is not treated as a completed transfer.</p></article></div>
+ </section>
+ <section class="wrap cta-band"><h2>Make liquidity part of the <em>workflow.</em></h2><a class="button dark" href="/control">Open NERITH console ↗</a></section>
 </main>
-<footer class="wrap footer">
-  <div><a class="brand" href="/" aria-label="NERITH home"><span class="brand-symbol"><svg viewBox="0 0 652 524" role="img" aria-label="NERITH mark" focusable="false"><g fill="#CFF86B"><path d="M14 479 L14 483 L76 517 L91 522 L109 522 L304 421 L338 419 L365 427 L525 515 L544 522 L556 523 L572 519 L570 518 L613 497 L637 481 L367 333 L333 322 L299 327 Z"/><path d="M305 0 L225 45 L206 66 L202 80 L202 219 L196 236 L171 260 L28 339 L12 353 L4 366 L0 381 L0 438 L13 437 L277 288 L298 267 L307 242 Z"/><path d="M352 1 L349 4 L349 241 L359 269 L377 288 L649 443 L651 378 L643 358 L634 347 L493 268 L461 241 L454 229 L450 212 L450 78 L447 68 L429 46 L378 16 L373 16 L374 14 Z"/></g></svg></span><span>NERITH</span></a><p class="footer-description">Liquidity coordination for autonomous agents. Business-controlled custody.</p></div>
-  <nav class="footer-links" aria-label="Footer navigation"><a href="#system">Product</a><a href="#principles">Security</a><a href="/app">Agent console</a><a href="/control">Business setup</a><a href="/dashboard">Business dashboard</a><a href="/health">Service status</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/thisishaidee/liquidity-coordination-core" target="_blank" rel="noopener noreferrer">GitHub ↗</a></nav>
-  <div class="footer-meta">Solana · USDC<br>Business-controlled custody<br>© 2026 NERITH. All rights reserved.</div>
-</footer>
-<script>
-(() => {
-  const toggle = document.getElementById("menuToggle");
-  const menu = document.getElementById("mobileMenu");
-  if (!toggle || !menu) return;
-  toggle.addEventListener("click", () => {
-    const expanded = toggle.getAttribute("aria-expanded") === "true";
-    toggle.setAttribute("aria-expanded", String(!expanded));
-    menu.classList.toggle("open", !expanded);
-  });
-  menu.querySelectorAll("a").forEach(link => link.addEventListener("click", () => {
-    menu.classList.remove("open");
-    toggle.setAttribute("aria-expanded", "false");
-  }));
-})();
-</script>
-<style>
-.mobile-nav{display:none;background:#050505;border-top:1px solid #2A2A2A;padding:8px 20px 14px;grid-template-columns:1fr 1fr;gap:4px}
-.mobile-nav.open{display:grid}
-.mobile-nav a{min-height:44px;display:flex;align-items:center;padding:0 10px;color:#CFCFC8;font-size:12px}
-.mobile-nav a:hover{color:#DFFF00}
-</style>
-</body>
-</html>
+<footer class="wrap footer"><div><a class="brand" href="/" aria-label="NERITH home"><span class="brand-mark"><svg viewBox="0 0 652 524" role="img" aria-label="NERITH mark" focusable="false"><g fill="currentColor"><path d="M14 479 L14 483 L76 517 L91 522 L109 522 L304 421 L338 419 L365 427 L525 515 L544 522 L556 523 L572 519 L570 518 L613 497 L637 481 L367 333 L333 322 L299 327 Z"/><path d="M305 0 L225 45 L206 66 L202 80 L202 219 L196 236 L171 260 L28 339 L12 353 L4 366 L0 381 L0 438 L13 437 L277 288 L298 267 L307 242 Z"/><path d="M352 1 L349 4 L349 241 L359 269 L377 288 L649 443 L651 378 L643 358 L634 347 L493 268 L461 241 L454 229 L450 212 L450 78 L447 68 L429 46 L378 16 L373 16 L374 14 Z"/></g></svg></span><span>NERITH</span></a><p class="footer-description">Liquidity coordination for autonomous agents. Business-controlled custody.</p></div><nav class="footer-links" aria-label="Footer navigation"><a href="#system">Product</a><a href="#principles">Security</a><a href="/app">Agent console</a><a href="/control">Business setup</a><a href="/dashboard">Business dashboard</a><a href="/health">Service status</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/thisishaidee/liquidity-coordination-core" target="_blank" rel="noopener noreferrer">GitHub ↗</a></nav><div class="footer-meta">Solana · USDC<br>Business-controlled custody<br>© 2026 NERITH. All rights reserved.</div></footer>
+<script>(()=>{const toggle=document.getElementById("menuToggle"),menu=document.getElementById("mobileMenu");if(!toggle||!menu)return;toggle.addEventListener("click",()=>{const open=toggle.getAttribute("aria-expanded")==="true";toggle.setAttribute("aria-expanded",String(!open));menu.classList.toggle("open",!open)});menu.querySelectorAll("a").forEach(a=>a.addEventListener("click",()=>{menu.classList.remove("open");toggle.setAttribute("aria-expanded","false")}));})();</script>
+</body></html>
