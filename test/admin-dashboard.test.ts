@@ -91,6 +91,42 @@ describe("admin dashboard read endpoints", () => {
     expect(queries.some(query => query.sql.includes("FROM businesses"))).toBe(false);
   });
 
+  it("rejects cross-business resource-id actions before any mutation", async () => {
+    const queries: QueryRecord[] = [];
+    const db = {
+      prepare(sql: string) {
+        let values: unknown[] = [];
+        const statement = {
+          bind(...args: unknown[]) { values = args; return statement; },
+          async first<T>() {
+            queries.push({ sql, values });
+            if (sql.includes("FROM admin_sessions")) return { business_id: "biz_a" } as T;
+            if (sql.includes("FROM agents") || sql.includes("FROM wallets") || sql.includes("FROM x402_payment_reservations")) {
+              return { business_id: "biz_b" } as T;
+            }
+            return null;
+          },
+          async all<T>() { queries.push({ sql, values }); return { results: [] as T[] }; },
+          async run() { queries.push({ sql, values }); return { success: true, meta: { changes: 0 } }; }
+        };
+        return statement;
+      }
+    };
+    const env = { DB: db as unknown as D1Database, ADMIN_BOOTSTRAP_TOKEN: token } as TestEnv;
+    const headers = { cookie: sessionCookie, origin: "https://nerith.test", "content-type": "application/json" };
+    const requests = [
+      new Request("https://nerith.test/v1/admin/agents/agt_b/disable", { method: "POST", headers }),
+      new Request("https://nerith.test/v1/admin/wallets/wal_b/disable", { method: "POST", headers }),
+      new Request("https://nerith.test/v1/admin/balances", { method: "POST", headers, body: JSON.stringify({ walletId: "wal_b", token: "USDC", amount: "1" }) }),
+      new Request("https://nerith.test/v1/admin/x402/reconcile", { method: "POST", headers, body: JSON.stringify({ reservationId: "x4r_b" }) })
+    ];
+    for (const request of requests) {
+      const response = await worker.fetch(request, env);
+      expect(response.status).toBe(401);
+    }
+    expect(queries.some(query => /^(UPDATE|INSERT|DELETE)/i.test(query.sql.trim()))).toBe(false);
+  });
+
   it("accepts the existing HttpOnly admin session cookie", async () => {
     const { env } = makeEnv({ cookieSessionValid: true });
     const response = await call("/v1/admin/operations?businessId=biz_1", env, { cookie: sessionCookie });
