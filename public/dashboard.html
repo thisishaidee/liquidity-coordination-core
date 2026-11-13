@@ -59,8 +59,6 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       <button type="button" class="nav-item" data-page="operations"><span class="nav-glyph">↗</span>Operations</button>
       <button type="button" class="nav-item" data-page="telegram"><span class="nav-glyph">◎</span>Telegram</button>
       <button type="button" class="nav-item" data-page="settings"><span class="nav-glyph">⚙</span>Settings</button>
-      <div class="pixel" style="padding:18px 12px 8px">SIGNED IN AS <span id="sessionRoleMobile">—</span></div>
-      <button type="button" class="nav-item" id="dashboardLogoutMobile">Sign out</button>
     </nav>
     <div class="side-bottom">SECURE WORKSPACE<br><span id="sideBusiness">Business not selected</span><br><span id="sessionRole" class="muted">Not signed in</span><br><a href="/control">Business Setup ↗</a><br><button id="dashboardLogout" class="btn" type="button" style="margin-top:12px;min-height:36px">Sign out</button></div>
   </aside>
@@ -75,7 +73,9 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       <button type="button" class="nav-item" data-page="operations"><span class="nav-glyph">↗</span>Operations</button>
       <button type="button" class="nav-item" data-page="telegram"><span class="nav-glyph">◎</span>Telegram</button>
       <button type="button" class="nav-item" data-page="settings"><span class="nav-glyph">⚙</span>Settings</button>
-    </nav>
+          <div class="pixel" style="padding:18px 12px 8px">SIGNED IN AS <span id="sessionRoleMobile">—</span></div>
+      <button type="button" class="nav-item" id="dashboardLogoutMobile">Sign out</button>
+</nav>
     <div class="topbar"><div class="topbar-title"><span class="status-dot"></span>Business workspace</div><div class="topbar-right"><span class="business-pill" id="topBusiness"></span><button type="button" class="btn" id="refreshBtn">Refresh data ↻</button></div></div>
     <main class="content">
       <div id="globalError" class="error" hidden></div>
