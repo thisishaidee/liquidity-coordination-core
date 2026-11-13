@@ -105,6 +105,8 @@ describe("Telegram dashboard sign-in experience", () => {
     expect(businessDashboardHtml).toContain("/v1/auth/telegram/consume");
     expect(businessDashboardHtml).toContain("login_ticket");
     expect(businessDashboardHtml).toContain("dashboardLogout");
+    expect(businessDashboardHtml).toContain("dashboardLogoutMobile");
+    expect(businessDashboardHtml).toContain("sessionRoleMobile");
   });
   it("lets workspace owners choose dashboard access on invitations", () => {
     expect(controlHtml).toContain('id="inviteDashboardRole"');
