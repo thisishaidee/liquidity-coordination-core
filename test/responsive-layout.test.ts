@@ -6,7 +6,7 @@ import { dashboardHtml } from "../src/dashboard";
 
 describe("responsive page source contracts", () => {
   const pages = [
-    { name: "landing page", html: landingHtml, breakpoints: ["900px", "560px", "360px"] },
+    { name: "landing page", html: landingHtml, breakpoints: ["1000px", "720px", "380px"] },
     { name: "business control", html: controlHtml, breakpoints: ["760px", "420px"] },
     { name: "business dashboard", html: businessDashboardHtml, breakpoints: ["1100px", "900px", "560px", "360px"] },
     { name: "agent console", html: dashboardHtml, breakpoints: ["900px", "640px"] }
@@ -21,10 +21,25 @@ describe("responsive page source contracts", () => {
     });
   }
 
+  it("builds the desktop landing hero around the supplied oversized brand mark", () => {
+    expect(landingHtml).toContain('class="hero-visual"');
+    expect(landingHtml).toContain('class="hero-symbol"');
+    expect(landingHtml).toContain('Keep autonomous agents <em>moving.</em>');
+    expect(landingHtml).toContain('grid-template-columns:repeat(4,minmax(0,1fr))');
+  });
+
+  it("keeps the landing page navigation and content usable on phones", () => {
+    expect(landingHtml).toContain('id="mobileMenu"');
+    expect(landingHtml).toContain('.mobile-nav.open{display:grid}');
+    expect(landingHtml).toContain('@media(max-width:720px)');
+    expect(landingHtml).toContain('.hero{display:flex;flex-direction:column');
+    expect(landingHtml).toContain('prefers-reduced-motion:reduce');
+  });
+
   it("uses the supplied NERITH mark across all product workspaces", () => {
     for (const entry of pages) {
       expect(entry.html).toContain('viewBox="0 0 652 524"');
-      expect(entry.html).toContain('fill="#CFF86B"');
+      expect(entry.html).toMatch(/fill="(?:#CFF86B|currentColor)"/);
     }
   });
 
