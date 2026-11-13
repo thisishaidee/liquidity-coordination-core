@@ -70,7 +70,7 @@ async function constantTimeEqual(a: string, b: string): Promise<boolean> {
 
 async function isBootstrapTokenAuthorized(request: Request, env: Env): Promise<boolean> {
   const configured = env.ADMIN_BOOTSTRAP_TOKEN;
-  const supplied = request.headers.get("authorization")?.replace(/^Bearer\\s+/i, "") ?? "";
+  const supplied = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
   if (!configured || !supplied || !(await constantTimeEqual(configured, supplied))) return false;
   if (request.method !== "GET" && request.method !== "HEAD") {
     const origin = request.headers.get("origin");
@@ -85,7 +85,7 @@ async function isAdmin(request: Request, env: Env): Promise<boolean> {
   if (request.method !== "GET" && request.method !== "HEAD") {
     const contentLength = Number(request.headers.get("content-length") ?? "0");
     if (Number.isFinite(contentLength) && contentLength > 256 * 1024) return false;
-    body = await request.clone().json().catch(() => null) as Record<string, unknown> | null;
+    body = await readJson(request.clone());
   }
   const target = describeAdminRoute(request.method, url.pathname, url.searchParams, body);
   if (target.kind === "global") return isBootstrapTokenAuthorized(request, env);
@@ -120,7 +120,7 @@ async function isAdmin(request: Request, env: Env): Promise<boolean> {
 
 async function createAdminSession(request: Request, env: Env): Promise<Response> {
   if (!(await isBootstrapTokenAuthorized(request, env))) return json({ error: "unauthorized" }, 401);
-  const body = await request.clone().json().catch(() => null) as Record<string, unknown> | null;
+  const body = await readJson(request.clone());
   if (!body || typeof body.businessId !== "string" || !/^biz_[a-f0-9]{32}$/i.test(body.businessId)) {
     return json({ error: "business_id_required" }, 400);
   }
