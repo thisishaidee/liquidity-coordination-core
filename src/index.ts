@@ -619,7 +619,7 @@ async function handleTelegramCommand(
       await env.DB.prepare(
         "INSERT INTO telegram_login_tickets (token_hash, business_id, chat_id, telegram_user_id, role, expires_at) VALUES (?, ?, ?, ?, ?, ?)"
       ).bind(ticketHash, workspace.business_id, chatId, userId, workspace.dashboard_role, expiresAt).run();
-      keyboard.push([{ text: workspace.business_name + " · " + workspace.dashboard_role, url: baseUrl + "/dashboard?login_ticket=" + ticket }]);
+      keyboard.push([{ text: workspace.business_name + " · " + workspace.dashboard_role, url: baseUrl + "/dashboard#login_ticket=" + ticket }]);
     }
     await sendTelegramMessage(env, chatId, "Choose the NERITH workspace to open. Each sign-in link expires in 5 minutes and works once.", { inline_keyboard: keyboard });
     return;
