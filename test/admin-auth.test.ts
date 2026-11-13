@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeAdminRoute, isAllowedAdminOrigin, matchesBusinessScope } from "../src/admin-auth";
+import { describeAdminRoute, isAllowedAdminOrigin, isDashboardRoleAllowed, matchesBusinessScope } from "../src/admin-auth";
 
 describe("business-scoped admin route classification", () => {
   it("requires a business id for query- and body-scoped routes", () => {
@@ -59,5 +59,17 @@ describe("admin request origin validation", () => {
   it("normalizes configured origins but does not accept a different host", () => {
     expect(isAllowedAdminOrigin("https://neritth.pages.dev", "https://api.example.workers.dev", " https://neritth.pages.dev/ ")).toBe(true);
     expect(isAllowedAdminOrigin("https://neritth.pages.dev.evil.example", "https://api.example.workers.dev", "https://neritth.pages.dev")).toBe(false);
+  });
+});
+
+
+describe("dashboard role authorization", () => {
+  it("allows reads for all roles and writes only for owner and admin", () => {
+    for (const role of ["owner", "admin", "analyst"]) expect(isDashboardRoleAllowed(role, "GET")).toBe(true);
+    expect(isDashboardRoleAllowed("owner", "POST")).toBe(true);
+    expect(isDashboardRoleAllowed("admin", "POST")).toBe(true);
+    expect(isDashboardRoleAllowed("analyst", "POST")).toBe(false);
+    expect(isDashboardRoleAllowed(null, "GET")).toBe(false);
+    expect(isDashboardRoleAllowed("unknown", "POST")).toBe(false);
   });
 });

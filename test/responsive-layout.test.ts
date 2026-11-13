@@ -95,3 +95,24 @@ describe("responsive page source contracts", () => {
     expect(controlHtml).toContain("min-width:0");
   });
 });
+
+
+describe("Telegram dashboard sign-in experience", () => {
+  it("replaces business-id entry with private Telegram authentication", () => {
+    expect(businessDashboardHtml).toContain("Secure team sign-in");
+    expect(businessDashboardHtml).toContain("https://t.me/NerithLiquidityBot");
+    expect(businessDashboardHtml).toContain("send <strong>/login</strong>");
+    expect(businessDashboardHtml).toContain("/v1/auth/telegram/consume");
+    expect(businessDashboardHtml).toContain("login_ticket");
+    expect(businessDashboardHtml).toContain('location.hash.replace(/^#/,"")');
+    expect(businessDashboardHtml).toContain("dashboardLogout");
+    expect(businessDashboardHtml).toContain("dashboardLogoutMobile");
+    expect(businessDashboardHtml).toContain("sessionRoleMobile");
+  });
+  it("lets workspace owners choose dashboard access on invitations", () => {
+    expect(controlHtml).toContain('id="inviteDashboardRole"');
+    expect(controlHtml).toContain('value="admin"');
+    expect(controlHtml).toContain('value="analyst"');
+    expect(controlHtml).toContain("dashboardRole:byId(\"inviteDashboardRole\").value");
+  });
+});

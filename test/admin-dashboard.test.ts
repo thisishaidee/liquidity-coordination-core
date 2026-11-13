@@ -23,7 +23,7 @@ function makeEnv(options: {
           queries.push({ sql, values });
           if (options.throwOn && sql.includes(options.throwOn)) throw new Error("database internals must not escape");
           if (sql.includes("FROM admin_sessions")) {
-            return (options.cookieSessionValid ? { business_id: options.sessionBusinessId ?? "biz_1" } : null) as T | null;
+            return (options.cookieSessionValid ? { business_id: options.sessionBusinessId ?? "biz_1", role: "owner", telegram_user_id: null } : null) as T | null;
           }
           if (sql.includes("FROM businesses")) {
             return (options.businessExists === false ? null : { id: values[0] }) as T | null;
@@ -121,7 +121,7 @@ describe("admin dashboard read endpoints", () => {
           bind(...args: unknown[]) { values = args; return statement; },
           async first<T>() {
             queries.push({ sql, values });
-            if (sql.includes("FROM admin_sessions")) return { business_id: "biz_a" } as T;
+            if (sql.includes("FROM admin_sessions")) return { business_id: "biz_a", role: "owner", telegram_user_id: null } as T;
             if (sql.includes("FROM agents") || sql.includes("FROM wallets") || sql.includes("FROM x402_payment_reservations")) {
               return { business_id: "biz_b" } as T;
             }
@@ -363,7 +363,7 @@ describe("business operations aggregation and dashboard route", () => {
           bind(...args: unknown[]) { values = args; return statement; },
           async first<T>() {
             queries.push({ sql, values });
-            if (sql.includes("FROM admin_sessions")) return { business_id: "biz_shared" } as T;
+            if (sql.includes("FROM admin_sessions")) return { business_id: "biz_shared", role: "owner", telegram_user_id: null } as T;
             if (sql.includes("FROM businesses")) return { id: values[0] } as T;
             return null;
           },
@@ -544,7 +544,7 @@ it("marks stale forecast balances and resulting shortfalls as indicative", async
         bind(...args: unknown[]) { values = args; return statement; },
         async first<T>() {
           queries.push({ sql, values });
-          if (sql.includes("FROM admin_sessions")) return { business_id: "biz_stale" } as T;
+          if (sql.includes("FROM admin_sessions")) return { business_id: "biz_stale", role: "owner", telegram_user_id: null } as T;
           if (sql.includes("FROM businesses")) return { id: values[0] } as T;
           return null;
         },
@@ -609,7 +609,7 @@ it("returns all active agents' obligations in the business forecast", async () =
         bind(...args: unknown[]) { values = args; return statement; },
         async first<T>() {
           queries.push({ sql, values });
-          if (sql.includes("FROM admin_sessions")) return { business_id: "biz_multi" } as T;
+          if (sql.includes("FROM admin_sessions")) return { business_id: "biz_multi", role: "owner", telegram_user_id: null } as T;
           if (sql.includes("FROM businesses")) return { id: values[0] } as T;
           return null;
         },
@@ -670,7 +670,7 @@ it("returns approval, execution and verified settlement as separate operation st
       let values: unknown[] = [];
       const statement = {
         bind(...args: unknown[]) { values = args; return statement; },
-        async first<T>() { if (sql.includes("FROM admin_sessions")) return { business_id: "biz_settled" } as T; return sql.includes("FROM businesses") ? { id: values[0] } as T : null; },
+        async first<T>() { if (sql.includes("FROM admin_sessions")) return { business_id: "biz_settled", role: "owner", telegram_user_id: null } as T; return sql.includes("FROM businesses") ? { id: values[0] } as T : null; },
         async all<T>() {
           if (sql.includes("COUNT(*) AS count FROM operations")) return { results: [{ status: "conversion_settled", count: 1 }] as T[] };
           if (sql.includes("FROM operations o")) return { results: [row] as unknown as T[] };
