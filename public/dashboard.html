@@ -26,6 +26,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
 @media(max-width:560px){.content{padding:24px 16px 122px}.content-grid,.overview-insights{grid-template-columns:1fr}.page-head{align-items:flex-start;flex-direction:column;margin-bottom:20px}.page-head h1{font-size:36px}.page-head .actions{width:100%}.page-head .actions .btn{flex:1}.metric-grid{gap:9px}.panel{padding:15px}.metric-value{font-size:27px;margin:13px 0 3px}.metric-label{font-size:9px}.wallet-grid{grid-template-columns:1fr}.signal-row{gap:10px}.footer{flex-direction:column}.access-card h1{font-size:34px}}
 @media(max-width:360px){.content{padding-left:12px;padding-right:12px}.mobile-header{padding:0 12px}.metric-grid{grid-template-columns:1fr 1fr}.metric-value{font-size:23px}.panel{padding:13px}.mobile-drawer{padding-left:10px;padding-right:10px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+.tour-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px 17px;margin:0 0 20px;border:1px solid #424A1D;background:#171A0C}.tour-banner strong{display:block;color:var(--paper);font-size:12px}.tour-banner span{display:block;color:var(--muted);font-size:11px;margin-top:3px;line-height:1.5}.tour-launch{position:fixed;right:22px;bottom:22px;z-index:31;min-height:46px;padding:0 16px;background:var(--lemon);color:#111;border:1px solid var(--lemon);font-weight:800;font-size:11px}.tour-backdrop[hidden]{display:none!important}.tour-backdrop{position:fixed;inset:0;z-index:100;display:grid;place-items:center;padding:18px;background:#000c}.tour-card{width:min(540px,100%);max-height:88dvh;overflow:auto;background:#151515;border:1px solid #454545;padding:clamp(20px,4vw,30px)}.tour-top{display:flex;align-items:center;justify-content:space-between}.tour-step{color:var(--lemon);font:10px ui-monospace,monospace;letter-spacing:.12em}.tour-progress{height:3px;background:#333;margin:17px 0 25px}.tour-progress span{display:block;height:100%;background:var(--lemon)}.tour-card h2{font-size:clamp(25px,5vw,34px);line-height:1.08;letter-spacing:-.055em;margin:0 0 13px}.tour-card p{color:var(--muted);font-size:12px;line-height:1.8;margin:0}.tour-card .tour-detail{margin-top:13px;padding:12px 13px;border-left:2px solid var(--lemon);background:#1D1D1D;color:#D7D7D0}.tour-actions{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:25px}.tour-actions>div{display:flex;gap:8px}.tour-actions button{min-height:44px;padding:0 14px;border:1px solid #555;background:transparent;color:var(--paper);font-size:11px;font-weight:750}.tour-actions button.primary{background:var(--lemon);border-color:var(--lemon);color:#111}.tour-actions button:disabled{opacity:.35}.tour-close{border:0!important;background:transparent!important;color:var(--muted)!important}@media(max-width:900px){.tour-launch{bottom:82px;right:14px}}@media(max-width:560px){.tour-banner{align-items:stretch;flex-direction:column}.tour-banner button{width:100%}.tour-launch{right:12px;bottom:78px}.tour-backdrop{padding:12px;align-items:end}.tour-card{max-height:86dvh;padding:20px}.tour-actions button{padding:0 10px}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 </style>
 </head>
 <body>
@@ -76,6 +77,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     <div class="topbar"><div class="topbar-title"><span class="status-dot"></span>Business workspace</div><div class="topbar-right"><span class="business-pill" id="topBusiness"></span><button type="button" class="btn" id="refreshBtn">Refresh data ↻</button></div></div>
     <main class="content">
       <div id="globalError" class="error" hidden></div>
+      <div class="tour-banner" id="tourBanner"><div><strong>New to NERITH?</strong><span>Take a short tour to understand your workspace, liquidity, forecasts and operations.</span></div><button type="button" class="btn primary" id="startTourBanner">Start the 2-minute tour</button></div>
       <section class="page active" id="page-overview">
         <div class="page-head"><div><div class="pixel">Business intelligence / 01</div><h1>Overview</h1><p>One view of authorized liquidity, agent activity records and upcoming funding needs.</p></div><div class="actions"><button type="button" class="btn" data-page="liquidity">View liquidity ↗</button><button type="button" class="btn primary" id="overviewRefresh">Refresh ↻</button></div></div>
         <div class="grid metric-grid">
@@ -151,6 +153,8 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     <button type="button" data-page="operations"><span class="nav-glyph">↗</span>Operations</button>
     <button type="button" data-page="settings"><span class="nav-glyph">⚙</span>Settings</button>
   </nav>
+  <button type="button" class="tour-launch" id="tourLaunch" hidden>Help · Take a tour</button>
+  <div class="tour-backdrop" id="tourBackdrop" hidden><section class="tour-card" role="dialog" aria-modal="true" aria-labelledby="tourTitle" aria-describedby="tourBody"><div class="tour-top"><span class="tour-step" id="tourStep">NERITH WALKTHROUGH</span><button type="button" class="tour-close" id="tourClose" aria-label="Close walkthrough">Close ×</button></div><div class="tour-progress"><span id="tourProgress"></span></div><h2 id="tourTitle">Understand your workspace</h2><p id="tourBody"></p><p class="tour-detail" id="tourDetail"></p><div class="tour-actions"><button type="button" id="tourSkip">Skip tour</button><div><button type="button" id="tourBack">Back</button><button type="button" class="primary" id="tourNext">Next</button></div></div></section></div>
 </div>
 <script>
 (() => {
@@ -351,6 +355,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
         return;
       }
       renderOverview();renderAgents();renderLiquidity();renderForecast();renderOperations();renderTelegram();renderSettings();
+      $("tourLaunch").hidden=false;let tourDone=false;try{tourDone=localStorage.getItem(tourKey())==="complete";}catch{}$("tourBanner").hidden=tourDone;
       if(failed.length)showError("Some dashboard data could not be refreshed: "+failed.map(item=>item.label).join(", ")+". Other sections remain available. Values from the last successful load are retained; an empty section is not proof that no records exist.");
       else clearError();
     } catch(error) {
@@ -395,11 +400,26 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     if(!state.nextCursor)return;
     try{await loadOperations(true);}catch(error){showError("Could not load more operations: "+String(error.message||error));}
   });
+  const tourSteps=[
+{page:"overview",title:"Your business at a glance",body:"The Overview brings together your registered agents, confirmed business liquidity, reserved amounts and upcoming funding needs.",detail:"A dash means data is unavailable or not yet confirmed. It does not mean your balance is zero."},
+{page:"agents",title:"Agents are the software doing the work",body:"Each agent has an identity and its own credential. Business treasury access must be explicitly permitted; registering an agent does not automatically give it access to every wallet.",detail:"Keep agent API keys private and only place them in the agent environment that needs them."},
+{page:"liquidity",title:"Understand your liquidity",body:"Operating wallets are used for business operating-liquidity calculations. The separate x402 payment reserve is intentionally excluded from those totals.",detail:"Fresh confirmed balance, internal reservations and available liquidity are different figures. A reservation is an allocation record, not a completed on-chain transfer."},
+{page:"forecasts",title:"Plan for upcoming obligations",body:"Forecasts group expected agent obligations over the next 30 days and compare them with eligible balances and wallet permissions.",detail:"A forecast is an estimate, not a quote or a guarantee. Stale or missing wallet snapshots can affect the assessment."},
+{page:"operations",title:"Follow each operation",body:"An operation can move through approval, execution and settlement. These are separate stages, so an approval does not mean funds have moved.",detail:"An agent-reported completion is not verified settlement. Look for transaction and settlement evidence before treating a transfer as complete."},
+{page:"telegram",title:"Bring your team into Telegram",body:"Telegram can provide a private business-linked interface for authorized team members. Bot setup and private invitations are managed in Business Setup.",detail:"Only invite the intended team member. This dashboard shows linked identities, not a recent-message feed."},
+{page:"settings",title:"Know what this dashboard can do",body:"Settings shows the current workspace record and access model. This is an operator-managed preview, not customer sign-in or a full team-membership system.",detail:"Customer accounts and per-business membership access are a separate implementation milestone."}
+];
+let tourIndex=0;const tourKey=()=>"nerith_dashboard_tour_v1_"+state.businessId;
+function renderTourStep(){const step=tourSteps[tourIndex];setPage(step.page);$("tourStep").textContent="WALKTHROUGH · "+(tourIndex+1)+" / "+tourSteps.length;$("tourTitle").textContent=step.title;$("tourBody").textContent=step.body;$("tourDetail").textContent=step.detail;$("tourProgress").style.width=((tourIndex+1)/tourSteps.length*100)+"%";$("tourBack").disabled=tourIndex===0;$("tourNext").textContent=tourIndex===tourSteps.length-1?"Finish":"Next";}
+function openTour(){if(!state.businessId)return;tourIndex=0;$("tourBackdrop").hidden=false;renderTourStep();$("tourNext").focus();}
+function closeTour(completed=false){$("tourBackdrop").hidden=true;if(completed){try{localStorage.setItem(tourKey(),"complete");}catch{}$("tourBanner").hidden=true;}$("tourLaunch").focus();}
+$("startTourBanner").addEventListener("click",openTour);$("tourLaunch").addEventListener("click",openTour);$("tourClose").addEventListener("click",()=>closeTour(false));$("tourSkip").addEventListener("click",()=>closeTour(true));$("tourBack").addEventListener("click",()=>{if(tourIndex>0){tourIndex--;renderTourStep();}});$("tourNext").addEventListener("click",()=>{if(tourIndex===tourSteps.length-1){closeTour(true);return;}tourIndex++;renderTourStep();});$("tourBackdrop").addEventListener("click",event=>{if(event.target===$("tourBackdrop"))closeTour(false);});document.addEventListener("keydown",event=>{if(event.key==="Escape"&&!$("tourBackdrop").hidden)closeTour(false);});
   if(window.NERITH_STATIC_DESIGN_PREVIEW===true){
     $("access").hidden=true;$("app").hidden=false;
     $("topBusiness").textContent="Design preview · no live workspace";
     $("sideBusiness").textContent="No business data loaded";
     renderOverview();renderAgents();renderLiquidity();renderForecast();renderOperations();renderTelegram();renderSettings();
+    $("tourBanner").hidden=true;$("tourLaunch").hidden=true;
     const notice=document.createElement("div");notice.className="note";notice.style.marginBottom="18px";notice.textContent="STATIC DESIGN PREVIEW · No business data, balances, agents or operations are connected."; $("globalError").after(notice);
     document.querySelectorAll("#refreshBtn,#overviewRefresh,#agentsRefresh,#liquidityRefresh,#forecastRefresh,#operationsRefresh,#telegramRefresh,#loadMoreOperations,#operationFilter").forEach(el=>{el.disabled=true;});
   }
