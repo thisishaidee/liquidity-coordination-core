@@ -527,7 +527,7 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      "Welcome to NERITH.\n\nGlad you're here.\n\nNERITH gives your team one place to keep track of liquidity requests and coordinate what happens next.\n\nTo get started, ask your business administrator for an invitation to connect your Telegram account. Once you're connected, you can check your workspace and use the tools available to your team.\n\nWhenever you're ready, I'm here to help.\n\nA quick note: NERITH records requests and business decisions. It doesn't hold your funds or sign or send transactions for you.",
+      "Welcome to NERITH.\n\nYour NERITH workspace is your team’s private operating space. It keeps your agents, registered business wallets, liquidity requests, permissions and operating limits together. It is not a wallet, and NERITH does not hold your funds.\n\nHere is how to get started:\n1. A workspace administrator creates the workspace at https://neritth.pages.dev/control and saves the first agent API key.\n2. The administrator registers the business’s public operating wallet and configures agent access and limits. Never share a seed phrase or private key.\n3. The administrator connects this Telegram bot and sends you a private invitation. Open that invitation from this private chat to link your account.\n\nOnce you are linked, use /guide for the setup and usage guide or /help for commands. This bot connects you to an existing workspace; it does not create one.\n\nNERITH records requests and business decisions. It does not sign or broadcast transactions or move funds.",
       telegramSupportMarkup(env)
     );
     return;
@@ -546,7 +546,7 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      "You're not connected to a NERITH workspace yet. Ask your business administrator to send you an invitation. Once you've connected, you can use this chat to check your workspace and manage the operations available to you.\n\nSend /help if you'd like to see what I can do."
+      "You’re not connected to a NERITH workspace yet. A workspace is your team’s private operating space for its agents, business wallets, liquidity requests, permissions and limits. It is created by an administrator on the NERITH website, not inside Telegram.\n\nIf your team already has a workspace, ask its administrator for a private invitation and open it from this chat. If your team is new to NERITH, the administrator can start at https://neritth.pages.dev/control.\n\nSend /guide for the setup steps or /help for available commands. NERITH does not hold funds or sign transactions."
     );
     return;
   }
@@ -718,11 +718,16 @@ async function handleTelegramCommand(
     return;
   }
 
+  if (command === "/guide") {
+    await sendTelegramMessage(env, chatId, "Your NERITH workspace · " + connection.business_name + "\n\nA workspace is your team’s private operating space. It brings your agents, registered business wallets, liquidity requests, permissions and operating limits together. It is not a wallet, and it does not hold funds.\n\nGetting started\n1. Your administrator creates and manages the workspace on the NERITH website.\n2. Your administrator registers the business’s public operating wallet and configures agent access and limits.\n3. Your administrator connects this Telegram bot and invites team members with private, one-use links.\n4. Each team member opens their invitation in a private chat to link their Telegram account.\n\nUsing NERITH here\n/status  See workspace activity and liquidity\n/agents  Check agent status\n/liquidity  Review available and reserved balances\n/newrequest  Create a liquidity request\n/review  Review prepared requests\n/help  See all commands\n\nA request is not a completed transfer. Telegram records requests and business decisions; it cannot sign or broadcast transactions or move funds.");
+    return;
+  }
+
   if (command === "/help" || command === "/commands") {
     await sendTelegramMessage(
       env,
       chatId,
-      `NERITH · ${connection.business_name}\n\n/businessid  Show linked Business ID(s)\n/workspace  Show linked workspace details\n/status  Business overview\n/liquidity  Available and reserved balances\n/forecast  Upcoming planned obligations\n/agents  Agent status\n/operations  Recent liquidity activity\n/newrequest  Create a liquidity request\n/review  Review prepared liquidity requests\n/setupauth  Set up Google Authenticator\n/verifyauth  Verify authenticator setup\n/confirmapproval  Confirm a self-approval\n/cancel  Cancel a request draft\n/disconnect  Disconnect this chat\n\nRequests are checked against authorised, fresh liquidity and reservations. Approvals record a business decision only. This bot cannot sign or broadcast transactions.`,
+      `NERITH · ${connection.business_name}\n\n/guide  Understand your workspace and setup\n/businessid  Show linked Business ID(s)\n/workspace  Show linked workspace details\n/status  Business overview\n/liquidity  Available and reserved balances\n/forecast  Upcoming planned obligations\n/agents  Agent status\n/operations  Recent liquidity activity\n/newrequest  Create a liquidity request\n/review  Review prepared liquidity requests\n/setupauth  Set up Google Authenticator\n/verifyauth  Verify authenticator setup\n/confirmapproval  Confirm a self-approval\n/cancel  Cancel a request draft\n/disconnect  Disconnect this chat\n\nRequests are checked against authorised, fresh liquidity and reservations. Approvals record a business decision only. This bot cannot sign or broadcast transactions.`,
       telegramSupportMarkup(env)
     );
     return;
