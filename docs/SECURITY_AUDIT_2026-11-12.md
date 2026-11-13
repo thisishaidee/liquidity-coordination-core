@@ -1,98 +1,64 @@
-# NERITH security audit — static review
+# NERITH security audit — updated static review
 
-**Review date:** 12 November 2026  
+**Review date:** 13 November 2026 (initial review 12 November; status reconciled after PRs #29, #30, #31 and #37)  
 **Scope:** current `main` source for the Worker, D1 schema/migrations, Telegram TOTP helper, and browser pages.  
 **Method:** source review and documented test/CI evidence. This is not a penetration test, independent smart-contract audit, live paid x402 test, or complete browser/device QA.
 
-## Executive assessment
+## Executive assessment — updated 13 November 2026
 
-NERITH has several sound security boundaries: agent API keys are stored as SHA-256 hashes; admin sessions are random, hashed, HttpOnly, Secure and SameSite=Strict; Telegram webhook requests are checked against Telegram's secret-token header; TOTP seeds are AES-GCM encrypted; the Swap.io upstream host is fixed; provider quotes are cached server-side; the Worker does not sign or broadcast transactions; and finalized conversion status is checked against Solana RPC.
+The initial 12 November review identified several controls that were subsequently implemented. The current main branch includes the rate-limit, Telegram replay and Hermes resource controls from PR #29; finalized SOL source-debit reconciliation from PR #30; challenge-bound x402 payment budgets and on-chain receipt verification from PR #31; and business-bound admin sessions from PR #37. PR #37 is merged, its CI passed, migration 0023 applied successfully to production D1, and the Worker deployment completed successfully.
 
-The system is **not ready to be represented as a fully secured multi-tenant production funds platform**. The most important gaps are business-level authorization, source-asset debit verification, rate limiting and x402 spending controls. The current product should be described as a controlled operator deployment and transaction-preparation/coordination layer.
+The current implementation is materially stronger, but it is not an independent penetration test or a complete proof of safe production funds execution. The remaining major limitations are the shared platform bootstrap credential, lack of individual admin identities and role-based membership, incomplete rate-limit coverage, no live paid x402 end-to-end test, and no full instruction-by-instruction policy audit of swap transactions.
 
-## Findings
+## Current findings
 
-### High — Admin authority is global, not business-member scoped
+### High — Individual admin identities and role-based membership are not implemented
 
-**Evidence:** `isAdmin` accepts the global `ADMIN_BOOTSTRAP_TOKEN` or any unexpired `nerith_admin_session`. The session is not bound to a business ID or a user identity. Business dashboard and setup endpoints then accept a caller-supplied business ID while relying on this global operator authorization.
+**Current evidence:** ordinary admin workspace endpoints now require an HttpOnly session bound to one business. The Worker checks the session's business ID against the requested business and resolves the owning business from D1 for agent, wallet, balance-snapshot and x402-reservation ID actions. Unknown admin routes fail closed. The platform-wide `ADMIN_BOOTSTRAP_TOKEN` is accepted only for workspace bootstrap, session establishment, shared Telegram bot setup/status and manual reservation expiry. Migration 0023 invalidated legacy unscoped sessions.
 
-**Impact:** anyone who obtains the bootstrap token or an admin session can access or mutate the administrative surface across businesses. There is no customer login, business membership model, or per-business role enforcement.
+**Residual limitation:** the platform bootstrap token remains a shared operator-level root credential. There is no individual human identity, business membership table or per-user role model. Anyone who obtains that root credential can establish a session for any business.
 
-**Current mitigation:** keep the bootstrap token private, restrict access to the operator, and do not onboard unrelated businesses into the same deployment.
+**Mitigation:** keep the token in Cloudflare Worker secrets, never place it in browser storage, restrict it to the operator, and use only business-bound sessions for normal workspace work. Cookie-authenticated mutations require a same-origin `Origin` header. Resource-ID routes compare the resource's D1 owner with the session business.
 
-**Required fix before multi-customer launch:** implement authenticated users, business membership, role-based access control, business-bound sessions and audit logging. Bind each session to its authorized business set and enforce it on every admin endpoint.
+**Required before open multi-customer SaaS:** add individual sign-in, business membership, role-based permissions and attributable admin audit events. Business-bound sessions are an important isolation boundary, not a substitute for user identity and RBAC.
 
-### High — Conversion settlement does not verify the source SOL debit
+### Medium — Rate limiting does not cover every surface
 
-**Evidence:** `getSwapStatus` verifies that the registered operating wallet signed the finalized transaction and calculates the increase in USDC owned by that wallet. It compares the USDC increase with the operation's shortfall. It does not currently verify the SOL debit against the reserved source amount or account for network fees/rent.
+**Current evidence:** PR #29 added persistent per-agent fixed-window limits for selected sensitive routes: quote, build, request creation, tracking and status polling. Request bodies are capped at 256 KB. Telegram update IDs are deduplicated, and Hermes requests have a 12-second timeout, redirect rejection and bounded quote/build responses.
 
-**Impact:** a transaction could deliver enough USDC while consuming more SOL than the amount NERITH reserved. The operation could be classified as settled without a complete check of the swap's input-side economics.
+**Residual limitation:** these limits do not amount to a universal per-IP, per-business, per-admin-login or per-Telegram-user abuse policy. Other routes and platform-wide authentication surfaces still need deliberate coverage.
 
-**Required fix:** verify the source asset movement from finalized transaction metadata, using the reserved amount and a carefully specified fee/rent policy. Reject or mark unverified any transaction whose source debit cannot be reconciled. Add tests for normal swaps, excess debit, missing metadata, wrapped-SOL account flows, fees, rent and failed transactions.
+**Recommended improvement:** expand and test route-specific limits, including bootstrap/session attempts, admin reads/writes, Telegram command and callback paths, and any additional paid endpoints. Keep monetary x402 budgets separate from request-count throttles.
 
-### High — No application-level rate limiting
+### Medium — Paid x402 operation has not passed a live end-to-end test
 
-**Evidence:** source review found no general per-agent, per-IP, per-business or per-Telegram-user rate limiter. The README also lists rate limiting as future work.
+**Current evidence:** PR #31 stores the exact Hermes V1 Solana-USDC payment challenge, binds it to the agent, business, operation, request body and registered API-payment wallet, and atomically reserves the challenged amount against per-agent and per-business daily budgets before forwarding payment. Defaults are 0.01 USDC per agent per day and 0.05 USDC per business per day. Finalized receipt verification checks the challenged payer, mint, amount, recipient and parsed USDC transfer; ambiguous payment states remain reserved.
 
-**Impact:** leaked agent keys can be used for request floods, resource exhaustion, and repeated paid quote/build attempts. Admin and Telegram endpoints also lack a consistent application-level throttle.
+**Residual limitation:** this has passed source review and automated tests, but no controlled low-value live paid Hermes request and full failure/retry exercise has been completed. The budgets cover paid Hermes calls routed through NERITH, not direct transfers made outside the service.
 
-**Required fix:** add Cloudflare edge rate limits and application-level quotas. Use different policies for authentication, read endpoints, request creation, conversion quote/build, Telegram commands and TOTP verification. Return 429 with retry guidance and log abuse without recording secrets.
+**Required verification:** use a funded, controlled x402 payment wallet to test quote, build, receipt verification, duplicate/replay rejection, timeout and reconciliation without exposing private keys.
 
-### High — x402 API reserve has a minimum balance gate but no spend budget
+### Medium — Settlement checks reconcile net asset movements, not every swap instruction
 
-**Evidence:** conversion validation requires a fresh `api_payment` USDC snapshot with at least 0.01 USDC available. No per-agent, per-business, per-day or per-operation x402 spend budget is enforced in the reviewed conversion flow.
+**Current evidence:** PR #30 verifies the registered operating wallet's finalized native SOL debit against the reserved source amount, applicable network fee and evidenced rent for newly created, still-open wallet-owned USDC/WSOL accounts. PR #31 independently checks the exact challenged USDC payment transfer for x402 charges.
 
-**Impact:** an authorized or compromised agent can repeatedly initiate paid Swap.io API operations, subject to the upstream payment wallet's available funds and the x402 client's signing policy.
+**Residual limitation:** the SOL check is net-debit reconciliation, not a full instruction-by-instruction audit of every possible upstream swap route. Live end-to-end swap execution and negative transaction cases remain outstanding.
 
-**Required fix:** define business-approved limits for total API spend, per-agent spend, quote/build frequency and operation-level retries. Reserve or account for API-payment costs separately, reconcile receipts, and require explicit business configuration for higher limits.
-
-### Medium — Telegram webhook update idempotency needs stronger coverage
-
-**Evidence:** the webhook validates Telegram's secret token and private-chat constraint, and task creation has a duplicate task guard. A general durable deduplication check for Telegram `update_id` is not evident in the reviewed webhook entry point.
-
-**Impact:** Telegram retries or duplicated updates could repeat command-side effects in paths that do not independently enforce idempotency.
-
-**Required fix:** persist processed update IDs with a unique constraint and make callback/command handlers idempotent. Add replay tests for message updates and approval callbacks.
-
-### Medium — Swap settlement relies on a narrow upstream receipt check
-
-**Evidence:** `proxyHermes` accepts a paid HTTP 200 response when the Hermes `X-PAYMENT-RESPONSE`/ `PAYMENT-RESPONSE` header decodes to JSON with `success: true`.
-
-**Impact:** the Worker trusts Hermes as the x402 verifier and does not independently validate every receipt claim such as network, asset, amount, recipient and transaction reference.
-
-**Current boundary:** the receipt is returned by the fixed HTTPS Hermes host, not accepted from the caller. This is a trust-in-upstream design, not a demonstrated bypass.
-
-**Recommended improvement:** validate the receipt schema and bind the receipt's payment identity/amount/network to the requested endpoint charge where the upstream protocol exposes those fields. Preserve raw receipt evidence in a safely redacted audit record.
-
-### Medium — No explicit x402 request timeout or upstream response-size ceiling
-
-**Evidence:** `proxyHermes` awaits the fixed upstream fetch and reads the full response body with `arrayBuffer()`. No explicit abort timeout or body-size cap is visible in that helper.
-
-**Impact:** a slow or unexpectedly large upstream response can consume Worker execution resources.
-
-**Required fix:** use an AbortController timeout, cap response bytes before buffering/parsing, and return a bounded 502/504 error.
+**Required verification:** complete a controlled test swap from quote through unsigned build, business-controlled signing, broadcast, finalization and settlement reconciliation. Exercise wrong signer, wrong mint, insufficient output, excess source debit, missing metadata, failed transaction and ambiguous RPC cases.
 
 ### Medium — Inline-script CSP weakens XSS containment
 
-**Evidence:** HTML responses use a Content Security Policy that permits `script-src 'unsafe-inline'` and `style-src 'unsafe-inline'`.
+**Evidence:** HTML responses still permit inline scripts and styles through the Content Security Policy.
 
-**Impact:** if a future HTML injection bug is introduced, the policy provides less protection than a nonce/hash-based CSP.
+**Impact:** a future HTML injection bug would have less containment than under a nonce- or hash-based policy.
 
-**Current mitigation:** dynamic UI strings in the reviewed agent/business dashboard templates are generally passed through HTML escaping before interpolation; control UI uses DOM text APIs for much of its dynamic content.
-
-**Recommended improvement:** move inline scripts/styles to versioned assets or adopt nonce/hash-based CSP, then add an automated check for unsafe HTML sinks and unescaped dynamic values.
+**Recommended improvement:** move inline scripts/styles to versioned assets or adopt nonce/hash-based CSP, then add automated checks for unsafe HTML sinks and unescaped dynamic values.
 
 ### Low — Production security headers can be strengthened
 
-**Evidence:** HTML responses set `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and a restrictive frame policy in CSP. HSTS and an explicit Permissions-Policy are not set in the reviewed Worker responses.
+**Evidence:** the reviewed Worker responses set `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and a restrictive frame policy in CSP. HSTS and an explicit Permissions-Policy were not present in the reviewed responses.
 
-**Recommended improvement:** set HSTS at the edge after confirming HTTPS-only routing, add a restrictive Permissions-Policy, and keep cache-control no-store on authenticated/private responses.
-
-### Low — Documentation has a stale statement about API-key rotation
-
-**Evidence:** the API route and implementation include agent key rotation, while the README's future-work list still says API-key rotation remains future work.
-
-**Fix:** update the documentation to state that rotation is implemented; user login, business-scoped authorization and rate limiting remain future work.
+**Recommended improvement:** set HSTS at the edge after confirming HTTPS-only routing, add a restrictive Permissions-Policy, and keep authenticated/private responses `no-store`.
 
 ## Positive controls observed
 
@@ -112,20 +78,18 @@ The system is **not ready to be represented as a fully secured multi-tenant prod
 
 ## Verification still required
 
-1. Live paid x402 quote and build using a controlled low-value test wallet.
-2. Full Solana test swap from quote through unsigned build, local signing, broadcast, finalization and reconciliation.
-3. Negative settlement tests for wrong signer, wrong output mint, insufficient output, excessive SOL debit, missing transaction metadata and failed transactions.
-4. Business-isolation tests using two distinct businesses and sessions.
-5. Rate-limit and abuse tests for agent API, admin login, Telegram commands and paid conversion routes.
-6. Telegram end-to-end tests for linking, permission changes, request creation, independent approval, TOTP self-approval, replayed updates and expired challenges.
-7. Actual Android/mobile and desktop visual QA. Source breakpoints exist, but rendered screenshots have not been verified in this audit.
+1. Live low-value x402 quote/build payment and a controlled failure/retry/reconciliation exercise.
+2. Full Solana test swap from quote through unsigned build, business-controlled signing, broadcast, finalization and settlement.
+3. Production smoke test using two distinct businesses to confirm session creation, cross-business denial and resource-ID ownership checks after migration 0023. Automated cross-business and resource-ID isolation tests pass in CI.
+4. Broader rate-limit and abuse tests for admin authentication, non-limited agent routes, Telegram commands and callbacks.
+5. Telegram end-to-end tests for linking, permission changes, request creation, independent approval, TOTP self-approval, replayed updates and expired challenges.
+6. Actual Android/mobile and desktop visual QA. Source breakpoints and page-script tests exist, but rendered screenshots and touch interactions have not been verified in this audit.
 
 ## Release recommendation
 
-Continue controlled internal testing. Do not claim audited, trustless, fully autonomous or production-ready funds execution. Close the two High findings around business authorization and source-debit settlement verification, implement rate limits and x402 spend budgets, then run the outstanding end-to-end tests before onboarding external businesses.
+The business-scoped authorization change is merged and deployed, and the production Worker health endpoint reports `ok` with D1 connected. Continue controlled internal testing. Do not describe NERITH as independently audited, trustless, fully autonomous or as a fully production-proven funds execution system. Before open multi-customer onboarding, add individual admin identities and role-based permissions, complete live x402 and swap tests, broaden abuse controls, and finish rendered mobile/desktop QA.
 
-
-## Follow-up hardening PR #29 (merged and deployed)
+## Follow-up hardening PR #29 (merged and deployed; current status updated above)
 
 The follow-up branch adds the following controls:
 
@@ -135,7 +99,7 @@ The follow-up branch adds the following controls:
 - Hermes upstream timeout of 12 seconds, redirects rejected, quote response cap of 1 MB, build response cap of 512 KB, and explicit handling of interrupted/oversized upstream responses.
 - Scheduled cleanup for old limiter and replay records.
 
-These are abuse and resource controls, not a complete x402 monetary budget. The current integration validates a successful settlement receipt but the receipt schema does not itself state the paid amount. The amount must be bound to the x402 challenge/payment authorization and independently reconciled with the settlement transaction before enforcing daily USDC budgets. Do not equate request-count limits with USDC spending limits.
+At the time PR #29 landed, these were abuse and resource controls rather than a complete x402 monetary budget. PR #31 subsequently implemented challenge-bound per-agent and per-business USDC budgets and finalized on-chain payment receipt verification, as described in the current findings above. Request-count limits and monetary spending budgets remain separate controls.
 
 The SOL settlement verifier now reconciles the finalized operating-wallet native SOL debit against the exact reserved input, any network fee paid by that wallet, and evidenced rent for newly-created, still-open USDC/WSOL token accounts owned by that wallet. It fails closed on unexplained or incomplete debits. This is net-debit reconciliation, not a full instruction-by-instruction swap policy audit; live end-to-end swap testing remains required.
 
@@ -156,3 +120,12 @@ The NERITH Worker now stores the exact Hermes V1 Solana-USDC payment challenge p
 A payment is counted as settled only after the X-PAYMENT-RESPONSE transaction is available at finalized commitment and its parsed transaction contains the exact challenged USDC TransferChecked from the configured payment wallet to the challenged recipient, with the advertised facilitator as fee payer. Payment payload hashes and challenge IDs are unique to prevent replay. Ambiguous timeouts, missing receipts and RPC uncertainty retain a pending budget reservation; they are not automatically released.
 
 These controls cover paid Hermes calls routed through NERITH, not independent transfers from the same wallet outside the service. Live low-value Hermes payment testing and a controlled failure/retry exercise remain required before treating the entire payment path as operationally proven.
+
+
+## Follow-up business-scoped admin authorization PR #37 (merged and deployed)
+
+PR #37 binds every new admin session to one validated business ID. Migration `0023_admin_session_business_scope.sql` adds the business foreign key and invalidates legacy unscoped sessions. The admin route allowlist distinguishes platform-wide routes from business-scoped routes; the bootstrap token cannot access ordinary business endpoints. Agent, wallet, manual balance and x402 reservation actions resolve resource ownership from D1 and compare it with the session's business. Unknown admin routes fail closed.
+
+The Control page now sends the selected business ID during session establishment, clears the platform token from browser memory and password fields after success, and prompts for the platform token again only for shared Telegram bot controls. CI passed typecheck, the full test suite and Wrangler dry-run. The main-branch deployment applied migration 0023 to production D1 and deployed the Worker successfully. The live health endpoint was checked after deployment and returned `status: ok` with `database: connected`.
+
+This closes the original cross-business admin-session gap for the current operator-managed workspace model. It does not implement individual user identities, business membership or role-based permissions.
