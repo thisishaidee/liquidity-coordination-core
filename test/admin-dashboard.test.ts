@@ -443,8 +443,8 @@ it("serves the redesigned landing page without hardcoded example balances", asyn
   expect(response.status).toBe(200);
   const html = await response.text();
   expect(html).toContain("Keep autonomous agents");
-  expect(html).toContain("Task amount and target asset");
-  expect(html).toContain("Fresh eligible balance assessment");
+  expect(html).toContain("Target asset, amount and purpose are identified.");
+  expect(html).toContain("Fresh balances and permissions are checked.");
   expect(html).not.toContain("10 USDC required");
   expect(html).not.toContain("2 USDC available");
 });
