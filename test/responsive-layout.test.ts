@@ -39,7 +39,7 @@ describe("responsive page source contracts", () => {
   it("uses the supplied NERITH mark across all product workspaces", () => {
     for (const entry of pages) {
       expect(entry.html).toContain('viewBox="0 0 652 524"');
-      expect(entry.html).toMatch(/fill="(?:#CFF86B|currentColor)"/);
+      expect(entry.html).toMatch(/fill="(?:#CFF86B|#DFFF00|currentColor)"/);
     }
   });
 
@@ -57,6 +57,12 @@ describe("responsive page source contracts", () => {
     expect(tables).toBeGreaterThan(0);
     expect(wrappers).toBe(tables);
     expect(dashboardHtml).toMatch(/\.table-wrap\s*\{[^}]*overflow-x\s*:\s*auto/s);
+  });
+
+  it("keeps workspace setup on the NERITH dark and lime brand system", () => {
+    expect(controlHtml).toContain('color-scheme:dark');
+    expect(controlHtml).toContain('--lime:#DFFF00');
+    expect(controlHtml).toContain('theme-color" content="#080808"');
   });
 
   it("allows long wallet keys and identifiers to wrap in narrow layouts", () => {
