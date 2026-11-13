@@ -96,7 +96,7 @@ async function isAdmin(request: Request, env: Env): Promise<boolean> {
     if (!origin || origin !== url.origin) return false;
   }
   const cookie = request.headers.get("cookie") ?? "";
-  const match = cookie.match(/(?:^|;\\s*)nerith_admin_session=([a-f0-9]{64})(?:;|$)/);
+  const match = cookie.match(/(?:^|;\s*)nerith_admin_session=([a-f0-9]{64})(?:;|$)/);
   if (!match) return false;
   const hash = await sha256(match[1]);
   const session = await env.DB.prepare(
