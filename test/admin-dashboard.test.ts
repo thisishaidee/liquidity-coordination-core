@@ -405,7 +405,7 @@ describe("business operations aggregation and dashboard route", () => {
     expect(response.headers.get("content-type")).toContain("text/html");
     expect(response.headers.get("content-security-policy")).toContain("default-src 'self'");
     const html = await response.text();
-    expect(html).toContain("Operator-managed preview");
+    expect(html).toContain("Secure team sign-in");
     expect(html).toContain("Forecasts");
     expect(html).toContain("x402 payment reserve");
     expect(html).toContain("@media(max-width:900px)");
