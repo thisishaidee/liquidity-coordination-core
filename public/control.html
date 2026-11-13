@@ -22,7 +22,7 @@ a{color:inherit}.shell{max-width:1020px;margin:0 auto;padding:28px 24px 44px}.to
 <h2>Create your workspace</h2>
 <p class="sub">This creates your business record and first agent. The agent API key is shown once, so save it somewhere secure.</p>
 <form id="bootstrapForm">
-<div class="field"><label for="adminToken">Business admin token</label><input id="adminToken" type="password" autocomplete="off" placeholder="Your ADMIN_BOOTSTRAP_TOKEN" required></div>
+<div class="field"><label for="adminToken">Platform admin token</label><input id="adminToken" type="password" autocomplete="off" placeholder="Your platform admin token" required></div>
 <div class="field"><label for="businessName">Business / workspace name</label><input id="businessName" minlength="2" maxlength="100" placeholder="e.g. Acme Operations" required></div>
 <div class="field"><label for="agentName">First agent name</label><input id="agentName" minlength="2" maxlength="100" placeholder="e.g. Payments Agent" required></div>
 <button class="btn" id="createBtn" type="submit">Create business workspace</button>
@@ -33,10 +33,10 @@ a{color:inherit}.shell{max-width:1020px;margin:0 auto;padding:28px 24px 44px}.to
 <section id="existingSection">
 <div class="divider"></div>
 <h2>Already have a workspace?</h2>
-<p class="sub">Reconnect to your existing workspace using the current ADMIN_BOOTSTRAP_TOKEN configured in Cloudflare Worker secrets. This is not your Cloudflare API token. The token is used once to establish a secure browser session and is not saved in browser storage.</p>
+<p class="sub">Reconnect to your existing workspace using the platform admin token configured as ADMIN_BOOTSTRAP_TOKEN in Cloudflare Worker secrets. This is not your Cloudflare API token. The token is used once to establish a secure browser session and is not saved in browser storage.</p>
 <form id="existingForm">
 <div class="field"><label for="existingBusinessId">Business ID</label><input id="existingBusinessId" autocomplete="off" placeholder="biz_..." required></div>
-<div class="field"><label for="existingAdminToken">Business admin token</label><input id="existingAdminToken" type="password" autocomplete="off" placeholder="Enter your existing admin token" required></div>
+<div class="field"><label for="existingAdminToken">Platform admin token</label><input id="existingAdminToken" type="password" autocomplete="off" placeholder="Enter the platform admin token" required></div>
 <button class="btn secondary" id="loadBusinessBtn" type="submit">Use existing workspace</button>
 </form>
 <div id="existingStatus" class="status"></div>
