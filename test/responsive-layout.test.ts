@@ -59,6 +59,12 @@ describe("responsive page source contracts", () => {
     expect(dashboardHtml).toMatch(/\.table-wrap\s*\{[^}]*overflow-x\s*:\s*auto/s);
   });
 
+  it("keeps workspace setup on the NERITH dark and lime brand system", () => {
+    expect(controlHtml).toContain('color-scheme:dark');
+    expect(controlHtml).toContain('--lime:#DFFF00');
+    expect(controlHtml).toContain('theme-color" content="#080808"');
+  });
+
   it("allows long wallet keys and identifiers to wrap in narrow layouts", () => {
     expect(controlHtml).toContain("overflow-wrap:anywhere");
     expect(businessDashboardHtml).toContain("overflow-wrap:anywhere");
