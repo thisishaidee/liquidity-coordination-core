@@ -59,6 +59,8 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       <button type="button" class="nav-item" data-page="operations"><span class="nav-glyph">↗</span>Operations</button>
       <button type="button" class="nav-item" data-page="telegram"><span class="nav-glyph">◎</span>Telegram</button>
       <button type="button" class="nav-item" data-page="settings"><span class="nav-glyph">⚙</span>Settings</button>
+      <div class="pixel" style="padding:18px 12px 8px">SIGNED IN AS <span id="sessionRoleMobile">—</span></div>
+      <button type="button" class="nav-item" id="dashboardLogoutMobile">Sign out</button>
     </nav>
     <div class="side-bottom">SECURE WORKSPACE<br><span id="sideBusiness">Business not selected</span><br><span id="sessionRole" class="muted">Not signed in</span><br><a href="/control">Business Setup ↗</a><br><button id="dashboardLogout" class="btn" type="button" style="margin-top:12px;min-height:36px">Sign out</button></div>
   </aside>
@@ -333,6 +335,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       $("topBusiness").textContent=(workspace.business?.name||"Business")+" · "+state.businessId;
       $("sideBusiness").textContent=state.businessId;
       $("sessionRole").textContent=(state.role||"member").toUpperCase();
+      $("sessionRoleMobile").textContent=(state.role||"member").toUpperCase();
       const requests=[
         ["Agents",api("/v1/admin/agents?businessId="+id),value=>{state.agents=requireArray(value,"agents","agents");}],
         ["Wallets",api("/v1/admin/wallets?businessId="+id),value=>{state.wallets=requireArray(value,"wallets","wallets");if(state.wallets.some(wallet=>!Array.isArray(wallet.balances)))throw new Error("invalid_wallet_balances_response");}],
@@ -366,12 +369,17 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       else showError("Could not refresh this workspace: "+message);
     } finally {$("refreshBtn").disabled=false;}
   }
-  $("dashboardLogout").addEventListener("click",async()=>{
+  async function signOutDashboard(){
     $("dashboardLogout").disabled=true;
+    $("dashboardLogoutMobile").disabled=true;
     try{await fetch("/v1/admin/session",{method:"DELETE",credentials:"same-origin"});}finally{
-      state.businessId="";state.role="";$("app").hidden=true;$("access").hidden=false;$("dashboardLogout").disabled=false;
+      state.businessId="";state.role="";$("app").hidden=true;$("access").hidden=false;
+      $("sessionRole").textContent="Not signed in";$("sessionRoleMobile").textContent="—";
+      $("dashboardLogout").disabled=false;$("dashboardLogoutMobile").disabled=false;
     }
-  });
+  }
+  $("dashboardLogout").addEventListener("click",signOutDashboard);
+  $("dashboardLogoutMobile").addEventListener("click",signOutDashboard);
   document.addEventListener("click",event=>{
     const button=event.target.closest("[data-page]");
     if(button)setPage(button.dataset.page);
