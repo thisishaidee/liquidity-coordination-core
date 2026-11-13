@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeAdminRoute, matchesBusinessScope } from "../src/admin-auth";
+import { describeAdminRoute, isAllowedAdminOrigin, matchesBusinessScope } from "../src/admin-auth";
 
 describe("business-scoped admin route classification", () => {
   it("requires a business id for query- and body-scoped routes", () => {
@@ -40,5 +40,24 @@ describe("admin session tenant isolation", () => {
     expect(matchesBusinessScope("biz_b", "biz_a")).toBe(false);
     expect(matchesBusinessScope(null, "biz_a")).toBe(false);
     expect(matchesBusinessScope("biz_a", null)).toBe(false);
+  });
+});
+
+
+describe("admin request origin validation", () => {
+  it("accepts the API origin and the explicitly configured Pages frontend origin", () => {
+    expect(isAllowedAdminOrigin("https://api.example.workers.dev", "https://api.example.workers.dev")).toBe(true);
+    expect(isAllowedAdminOrigin("https://neritth.pages.dev", "https://api.example.workers.dev", "https://neritth.pages.dev")).toBe(true);
+  });
+
+  it("rejects unconfigured, missing, and malformed origins", () => {
+    expect(isAllowedAdminOrigin("https://attacker.example", "https://api.example.workers.dev", "https://neritth.pages.dev")).toBe(false);
+    expect(isAllowedAdminOrigin(null, "https://api.example.workers.dev", "https://neritth.pages.dev")).toBe(false);
+    expect(isAllowedAdminOrigin("not-a-url", "https://api.example.workers.dev", "https://neritth.pages.dev")).toBe(false);
+  });
+
+  it("normalizes configured origins but does not accept a different host", () => {
+    expect(isAllowedAdminOrigin("https://neritth.pages.dev", "https://api.example.workers.dev", " https://neritth.pages.dev/ ")).toBe(true);
+    expect(isAllowedAdminOrigin("https://neritth.pages.dev.evil.example", "https://api.example.workers.dev", "https://neritth.pages.dev")).toBe(false);
   });
 });
