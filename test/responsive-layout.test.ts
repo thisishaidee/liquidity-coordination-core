@@ -108,6 +108,7 @@ describe("Telegram dashboard sign-in experience", () => {
     expect(businessDashboardHtml).toContain("dashboardLogout");
     expect(businessDashboardHtml).toContain("dashboardLogoutMobile");
     expect(businessDashboardHtml).toContain("sessionRoleMobile");
+    expect(businessDashboardHtml.indexOf('id="dashboardLogoutMobile"')).toBeGreaterThan(businessDashboardHtml.indexOf('id="mobileDrawer"'));
     expect(businessDashboardHtml).toContain("Telegram-linked business access");
     expect(businessDashboardHtml).toContain("analysts have read-only access");
     expect(businessDashboardHtml).not.toContain("operator-managed preview, not customer sign-in");
