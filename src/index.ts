@@ -543,11 +543,10 @@ async function handleTelegramCommand(
   `).bind(chatId, userId).first<{ business_id: string; business_name: string; permission: string }>();
 
   if (!connection) {
-    await sendTelegramMessage(
-      env,
-      chatId,
-      "You’re not connected to a NERITH workspace yet. A workspace is your team’s private operating space for its agents, business wallets, liquidity requests, permissions and limits. It is created by an administrator on the NERITH website, not inside Telegram.\n\nIf your team already has a workspace, ask its administrator for a private invitation and open it from this chat. If your team is new to NERITH, the administrator can start at https://neritth.pages.dev/control.\n\nSend /guide for the setup steps or /help for available commands. NERITH does not hold funds or sign transactions."
-    );
+    const unlinkedMessage = command === "/guide"
+      ? "NERITH workspace setup\n\nA workspace is your team’s private operating space. It brings your agents, registered business wallets, liquidity requests, permissions and operating limits together. It is not a wallet, and NERITH does not hold funds.\n\n1. A workspace administrator creates the workspace at https://neritth.pages.dev/control and saves the first agent API key.\n2. The administrator registers the public operating wallet and configures agent access and limits. Never share a seed phrase or private key.\n3. The administrator connects this Telegram bot and creates a private, one-use invitation for each team member.\n4. Each team member opens their invitation from this private chat. Once linked, use /status, /agents, /newrequest and /help.\n\nThis bot connects you to an existing workspace; it cannot create one or sign or broadcast transactions."
+      : "You’re not connected to a NERITH workspace yet. A workspace is your team’s private operating space for its agents, business wallets, liquidity requests, permissions and limits. It is created by an administrator on the NERITH website, not inside Telegram.\n\nIf your team already has a workspace, ask its administrator for a private invitation and open it from this chat. If your team is new to NERITH, the administrator can start at https://neritth.pages.dev/control.\n\nSend /guide for the setup steps or /help for available commands. NERITH does not hold funds or sign transactions.";
+    await sendTelegramMessage(env, chatId, unlinkedMessage);
     return;
   }
 
