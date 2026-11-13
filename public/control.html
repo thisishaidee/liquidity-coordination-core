@@ -45,7 +45,7 @@ a{color:inherit}.shell{max-width:1020px;margin:0 auto;padding:28px 24px 44px}.to
 <section id="workspaceReview" class="hidden"><div class="divider"></div><h2>Workspace overview</h2><div id="workspaceSummary" class="keybox"></div><div class="btnrow"><button class="btn secondary" id="refreshWorkspace" type="button">Refresh workspace details</button><button class="btn secondary" id="logoutWorkspace" type="button">Sign out</button></div><div id="workspaceStatus" class="status"></div></section>
 <section id="telegramSection" class="hidden">
 <div class="divider"></div>
-<h2>Connect your team on Telegram</h2>
+<h2>4. Connect your team on Telegram (optional)</h2>
 <p class="sub">Telegram is an optional way for your team to check the workspace and manage supported liquidity requests. It connects to this workspace; it does not create a separate one. Your administrator configures the bot, then creates a private, one-use invitation for each team member.</p>
 <div class="workspace" id="selectedWorkspace"></div>
 <div class="btnrow"><button class="btn" id="configureBot" type="button">Configure Telegram bot</button><button class="btn secondary" id="checkTelegramStatus" type="button">Check webhook status</button><button class="btn secondary" id="makeInvite" type="button" disabled>Create private invitation</button><button class="btn secondary" id="testTelegram" type="button">Send test alert</button></div>
@@ -64,7 +64,7 @@ a{color:inherit}.shell{max-width:1020px;margin:0 auto;padding:28px 24px 44px}.to
 
 <section id="walletSection" class="hidden">
 <div class="divider"></div>
-<h2>Business wallets</h2>
+<h2>2. Register business wallets</h2>
 <p class="sub">Register public Solana addresses only. NERITH reads confirmed SOL and USDC balances; it never asks for a seed phrase or private key.</p>
 <div class="divider"></div>
 <h3 style="font-size:14px;margin:0 0 7px">Operating wallet</h3>
@@ -88,7 +88,7 @@ a{color:inherit}.shell{max-width:1020px;margin:0 auto;padding:28px 24px 44px}.to
 
 <section id="x402Section" class="hidden">
 <div class="divider"></div>
-<h2>Swap.io API payment limits</h2>
+<h2>3. Set Swap.io API payment limits (optional)</h2>
 <p class="sub">Set daily USDC limits for paid quote and transaction-build requests. Each payment counts against both its agent limit and the shared business limit. A limit of 0 disables paid requests at that scope.</p>
 <div class="btnrow"><button class="btn secondary" id="refreshX402" type="button">Refresh payment usage</button></div>
 <div id="x402BudgetList" class="keybox">Connect a workspace to load payment limits.</div>
