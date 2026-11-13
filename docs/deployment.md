@@ -4,7 +4,7 @@
 
 - Cloudflare D1 database: `liquidity-coordination`
 - Database ID is configured in `wrangler.toml`.
-- Migrations `0001` through `0012` have been applied to the dedicated database and recorded in `d1_migrations`.
+- Migrations `0001` through `0023` are tracked in `migrations/`; the main-branch deployment workflow applies pending migrations to the dedicated database before deploying the Worker. Verify the applied list in `d1_migrations`.
 - The Worker name is `liquidity-coordination-api`.
 - The read-only dashboard is embedded into the Worker module from `public/index.html` during build.
 - A one-minute Cron Trigger is configured for reservation expiry.
@@ -51,7 +51,7 @@ After the Worker is deployed, verify:
 2. `GET /` serves the responsive read-only dashboard.
 3. D1 reads and writes use the dedicated liquidity database.
 4. The one-minute Cron Trigger is active.
-5. Agent and admin endpoints reject missing or invalid credentials.
+5. Agent endpoints reject missing or invalid API keys. Admin workspace endpoints require a business-bound session; test that a session for Business A cannot access Business B, including agent, wallet, balance-snapshot and x402 reservation ID routes. The platform bootstrap token must not authorize ordinary business routes.
 6. Telegram linking works only through a private chat and a one-time invitation.
 7. Conversion quotes are cached and minimum output is checked before transaction building.
 8. Finalized swaps are independently verified from Solana transaction metadata.
