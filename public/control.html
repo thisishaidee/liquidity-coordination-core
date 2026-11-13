@@ -197,7 +197,7 @@ async function loadTelegramAccess(){
       title.textContent="Telegram user "+connection.telegramUserId;
       const meta=document.createElement("p");
       meta.className="workspace";
-      meta.textContent="Chat "+connection.chatId+" · "+connection.status+" · linked "+connection.linkedAt;
+      meta.textContent="Chat "+connection.chatId+" · "+connection.status+" · dashboard "+(connection.dashboardRole||"analyst")+" · linked "+connection.linkedAt;
       details.append(title,meta);
       const controls=document.createElement("div");
       controls.style.cssText="display:flex;gap:7px;align-items:center;flex-wrap:wrap";
