@@ -130,10 +130,10 @@ A business has an agent responsible for paying a contributor 100 USDC.
 - Reservations are internal accounting holds, not transfers or escrow.
 - The Worker does not hold private keys, sign swaps, or broadcast transactions.
 - Forecasts are advisory and are not reservations.
-- The admin session is currently operator-wide, not business-member scoped. This is suitable only for a controlled operator deployment, not an open multi-customer SaaS launch.
-- Application-level rate limiting and per-agent x402 spending caps are not yet implemented.
+- Admin sessions are bound to one business, and resource-ID admin actions verify the owning business in D1. The shared platform bootstrap token remains an operator-level root credential; individual human identities and role-based membership are not implemented.
+- Per-agent rate limits cover selected sensitive API routes, not every route or abuse surface. Per-agent and per-business x402 daily USDC budgets are implemented for paid Hermes calls routed through NERITH.
 - The paid Swap.io/x402 path has not yet passed a live end-to-end paid transaction test.
-- Settlement verification must additionally validate the source SOL debit before its result can be treated as a complete proof of swap economics.
+- Settlement verification reconciles the finalized source SOL net debit and challenged USDC transfer, but it is not a full instruction-by-instruction policy audit of every swap route.
 
 ## Deployment and code map
 
