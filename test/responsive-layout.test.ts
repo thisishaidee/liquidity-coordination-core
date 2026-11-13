@@ -104,6 +104,7 @@ describe("Telegram dashboard sign-in experience", () => {
     expect(businessDashboardHtml).toContain("send <strong>/login</strong>");
     expect(businessDashboardHtml).toContain("/v1/auth/telegram/consume");
     expect(businessDashboardHtml).toContain("login_ticket");
+    expect(businessDashboardHtml).toContain('location.hash.replace(/^#/,"")');
     expect(businessDashboardHtml).toContain("dashboardLogout");
     expect(businessDashboardHtml).toContain("dashboardLogoutMobile");
     expect(businessDashboardHtml).toContain("sessionRoleMobile");
