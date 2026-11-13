@@ -85,6 +85,26 @@ a{color:inherit}.shell{max-width:1020px;margin:0 auto;padding:28px 24px 44px}.to
 <div id="walletList" class="keybox hidden"></div>
 </section>
 
+<section id="x402Section" class="hidden">
+<div class="divider"></div>
+<h2>Swap.io API payment limits</h2>
+<p class="sub">Set daily USDC limits for paid quote and transaction-build requests. Each payment counts against both its agent limit and the shared business limit. A limit of 0 disables paid requests at that scope.</p>
+<div class="btnrow"><button class="btn secondary" id="refreshX402" type="button">Refresh payment usage</button></div>
+<div id="x402BudgetList" class="keybox">Connect a workspace to load payment limits.</div>
+<div class="divider"></div>
+<h3 style="font-size:14px;margin:0 0 7px">Adjust a daily limit</h3>
+<form id="x402BudgetForm">
+<div class="field"><label for="x402AgentScope">Budget scope</label><select id="x402AgentScope"><option value="">Entire business</option></select></div>
+<div class="field"><label for="x402DailyLimit">Daily limit (USDC)</label><input id="x402DailyLimit" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" pattern="[0-9]{1,9}(\.[0-9]{1,6})?" placeholder="e.g. 0.02" required></div>
+<button class="btn" id="saveX402Budget" type="submit">Save daily limit</button>
+</form>
+<div id="x402Status" class="status"></div>
+<div class="divider"></div>
+<h3 style="font-size:14px;margin:0 0 7px">Pending API payments</h3>
+<p class="sub">Ambiguous payments remain reserved until their receipt is verified. Reconciliation is available only after Hermes has supplied a transaction signature.</p>
+<div id="x402PendingList" class="keybox">No pending payments loaded.</div>
+</section>
+
 </main>
 <aside class="panel">
 <h2>Before you begin</h2><p class="sub">A few account-owned steps are required before the bot can go live.</p>
@@ -112,8 +132,8 @@ function showStatus(id,message,type){const el=byId(id);el.textContent=message;el
 function hideStatus(id){const el=byId(id);el.textContent="";el.className="status";}
 async function call(path,body){const headers={"content-type":"application/json"};if(adminToken)headers.authorization="Bearer "+adminToken;const response=await fetch(path,{method:"POST",credentials:"same-origin",headers,body:JSON.stringify(body||{})});let data={};try{data=await response.json();}catch{}if(!response.ok){const firstError=Array.isArray(data.errors)&&data.errors.length?data.errors[0].error:null;throw new Error(data.message||firstError||data.error||("Request failed ("+response.status+")"));}return data;}
 async function establishSession(){const response=await fetch("/v1/admin/session",{method:"POST",headers:{"authorization":"Bearer "+adminToken}});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.message||data.error||"Could not establish a secure workspace session.");return data;}
-async function loadWorkspaceReview(id){const response=await fetch("/v1/admin/workspace?businessId="+encodeURIComponent(id));const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.message||data.error||"Workspace details could not be loaded.");businessName=data.business.name;byId("workspaceReview").classList.remove("hidden");byId("workspaceSummary").replaceChildren();const add=(label,value)=>{const p=document.createElement("p");p.className="workspace";p.textContent=label+": "+value;byId("workspaceSummary").appendChild(p);};add("Business",data.business.name);add("Business ID",data.business.id);add("Created",data.business.created_at);add("Agents",data.agents.length+" total · "+data.agents.filter(a=>a.status==="active").length+" active");for(const agent of data.agents)add("Agent",agent.name+" · "+agent.status);add("Operating wallets",data.wallets.active+" active · "+data.wallets.total+" total");add("Telegram connections",data.telegramConnections+" active");byId("bootstrapSection").classList.add("hidden");byId("existingSection").classList.add("hidden");byId("selectedWorkspace").textContent="Connected workspace: "+businessName+" · "+businessId;return data;}
-function activateWorkspace(id,name){businessId=id;businessName=name||"Business workspace";try{localStorage.setItem("nerith_business_id",id);}catch{}byId("workspaceReview").classList.remove("hidden");loadWorkspaceReview(id).catch(error=>showStatus("workspaceStatus",error.message,"err"));byId("telegramSection").classList.remove("hidden");byId("walletSection").classList.remove("hidden");byId("selectedWorkspace").textContent="Connected workspace: "+businessName+" · "+businessId;byId("makeInvite").disabled=!botUsername;hideStatus("telegramStatus");loadBusinessWallets();loadTelegramAccess();}
+async function loadWorkspaceReview(id){const response=await fetch("/v1/admin/workspace?businessId="+encodeURIComponent(id));const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.message||data.error||"Workspace details could not be loaded.");businessName=data.business.name;const agentScope=byId("x402AgentScope");if(agentScope){const selectedScope=agentScope.value;agentScope.replaceChildren();const businessOption=document.createElement("option");businessOption.value="";businessOption.textContent="Entire business";agentScope.appendChild(businessOption);for(const agent of data.agents||[]){const option=document.createElement("option");option.value=agent.id;option.textContent=agent.name+" · "+agent.id;agentScope.appendChild(option);}agentScope.value=[...agentScope.options].some(option=>option.value===selectedScope)?selectedScope:"";}byId("workspaceReview").classList.remove("hidden");byId("workspaceSummary").replaceChildren();const add=(label,value)=>{const p=document.createElement("p");p.className="workspace";p.textContent=label+": "+value;byId("workspaceSummary").appendChild(p);};add("Business",data.business.name);add("Business ID",data.business.id);add("Created",data.business.created_at);add("Agents",data.agents.length+" total · "+data.agents.filter(a=>a.status==="active").length+" active");for(const agent of data.agents)add("Agent",agent.name+" · "+agent.status);add("Operating wallets",data.wallets.active+" active · "+data.wallets.total+" total");add("Telegram connections",data.telegramConnections+" active");byId("bootstrapSection").classList.add("hidden");byId("existingSection").classList.add("hidden");byId("selectedWorkspace").textContent="Connected workspace: "+businessName+" · "+businessId;return data;}
+function activateWorkspace(id,name){businessId=id;businessName=name||"Business workspace";try{localStorage.setItem("nerith_business_id",id);}catch{}byId("workspaceReview").classList.remove("hidden");loadWorkspaceReview(id).catch(error=>showStatus("workspaceStatus",error.message,"err"));byId("telegramSection").classList.remove("hidden");byId("walletSection").classList.remove("hidden");byId("x402Section").classList.remove("hidden");byId("selectedWorkspace").textContent="Connected workspace: "+businessName+" · "+businessId;byId("makeInvite").disabled=!botUsername;hideStatus("telegramStatus");loadBusinessWallets();loadTelegramAccess();}
 async function loadTelegramAccess(){
   if(!businessId)return;
   byId("telegramAccessSection").classList.remove("hidden");
@@ -171,6 +191,66 @@ async function loadTelegramAccess(){
 
 
 async function loadBusinessWallets(){try{const response=await fetch("/v1/admin/wallets?businessId="+encodeURIComponent(businessId));const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.message||data.error||"Wallet list could not be loaded.");const list=byId("walletList");list.replaceChildren();const active=(data.wallets||[]).filter(wallet=>wallet.scope==="business"&&wallet.status==="active"&&(wallet.purpose==="operating"||wallet.purpose==="api_payment"));businessWalletIds=active.map(wallet=>wallet.walletId);byId("syncWalletBtn").disabled=businessWalletIds.length===0;byId("registerWalletBtn").disabled=false;byId("registerPaymentWalletBtn").disabled=false;if(!active.length){list.classList.add("hidden");return;}list.classList.remove("hidden");const title=document.createElement("strong");title.textContent=active.length+" active business wallet"+(active.length===1?"":"s");list.appendChild(title);for(const wallet of active){const card=document.createElement("div");card.className="wallet-card";const heading=document.createElement("p");heading.className="workspace";heading.textContent=(wallet.purpose==="api_payment"?"X402 PAYMENT WALLET":"OPERATING WALLET")+" · "+wallet.network.toUpperCase();card.appendChild(heading);const address=document.createElement("p");address.className="workspace";address.textContent=wallet.address;card.appendChild(address);if(!(wallet.balances||[]).length){const pending=document.createElement("p");pending.className="workspace";pending.textContent="No balance snapshot yet. Sync to read confirmed SOL and USDC.";card.appendChild(pending);}for(const balance of wallet.balances||[]){const row=document.createElement("p");row.className="wallet-balance";row.textContent=balance.token+" · "+balance.available+" available · "+balance.confirmed+" confirmed · "+balance.reserved+" reserved · "+(balance.fresh?"Fresh":"Out of date");card.appendChild(row);}list.appendChild(card);}}catch(error){showStatus("walletStatus",error.message,"err");}}
+async function loadX402Budgets(){
+  if(!businessId)return;
+  const budgetList=byId("x402BudgetList");
+  const pendingList=byId("x402PendingList");
+  budgetList.textContent="Loading payment limits…";
+  pendingList.textContent="Loading pending payments…";
+  try{
+    const response=await fetch("/v1/admin/x402/budgets?businessId="+encodeURIComponent(businessId),{credentials:"same-origin"});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(data.message||data.error||("Request failed ("+response.status+")"));
+    budgetList.replaceChildren();
+    const budgets=data.budgets||[];
+    if(!budgets.length){budgetList.textContent="No payment limits are configured yet."; } 
+    for(const budget of budgets){
+      const row=document.createElement("div");
+      row.style.cssText="display:flex;gap:12px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;padding:11px 0;border-bottom:1px solid var(--line)";
+      const detail=document.createElement("div");detail.style.cssText="min-width:0;flex:1";
+      const title=document.createElement("strong");title.style.cssText="display:block;font-size:12px";title.textContent=budget.scope==="business"?"Business-wide limit":"Agent limit · "+(budget.agentName||budget.agentId);
+      const usage=document.createElement("p");usage.className="workspace";usage.textContent="Daily cap: "+budget.dailyLimitUSDC+" USDC · Used today: "+budget.usedTodayUSDC+" USDC";
+      detail.append(title,usage);row.appendChild(detail);budgetList.appendChild(row);
+    }
+    pendingList.replaceChildren();
+    const pending=data.pendingPayments||[];
+    if(!pending.length){pendingList.textContent="No pending API payments."; }
+    for(const payment of pending){
+      const card=document.createElement("div");
+      card.style.cssText="padding:11px 0;border-bottom:1px solid var(--line);min-width:0";
+      const title=document.createElement("strong");title.style.cssText="display:block;font-size:12px";title.textContent=payment.amountUSDC+" USDC · "+(payment.canReconcile?"Receipt available":"Awaiting receipt");
+      const meta=document.createElement("p");meta.className="workspace";meta.textContent="Agent "+payment.agentId+" · "+payment.createdAt;
+      card.append(title,meta);
+      if(payment.receiptTransaction){const tx=document.createElement("p");tx.className="workspace";tx.textContent="Receipt transaction: "+payment.receiptTransaction;card.appendChild(tx);}
+      const reconcile=document.createElement("button");reconcile.className="btn secondary";reconcile.type="button";reconcile.textContent="Reconcile payment";reconcile.disabled=!payment.canReconcile;
+      reconcile.addEventListener("click",async function(){
+        reconcile.disabled=true;reconcile.textContent="Verifying on Solana…";hideStatus("x402Status");
+        try{
+          const result=await call("/v1/admin/x402/reconcile",{reservationId:payment.reservationId});
+          showStatus("x402Status",result.status==="settled"?"Payment verified and marked settled.":"Payment remains pending: "+(result.message||"The receipt is not yet verifiable."),result.status==="settled"?"ok":"err");
+          await loadX402Budgets();
+        }catch(error){showStatus("x402Status",error.message,"err");reconcile.disabled=false;reconcile.textContent="Retry reconciliation";}
+      });
+      card.appendChild(reconcile);pendingList.appendChild(card);
+    }
+  }catch(error){
+    budgetList.textContent="Payment limits could not be loaded.";
+    pendingList.textContent="Pending payments could not be loaded.";
+    showStatus("x402Status",error.message,"err");
+  }
+}
+byId("refreshX402").addEventListener("click",async function(){hideStatus("x402Status");const button=byId("refreshX402");button.disabled=true;button.textContent="Refreshing…";await loadX402Budgets();button.disabled=false;button.textContent="Refresh payment usage";});
+byId("x402BudgetForm").addEventListener("submit",async function(event){
+  event.preventDefault();hideStatus("x402Status");
+  const limit=byId("x402DailyLimit").value.trim();
+  if(!/^[0-9]{1,9}(?:\.[0-9]{1,6})?$/.test(limit)){showStatus("x402Status","Enter a USDC limit with up to six decimal places.","err");return;}
+  const body={businessId:businessId,dailyLimitUSDC:limit};
+  const agentId=byId("x402AgentScope").value;if(agentId)body.agentId=agentId;
+  const button=byId("saveX402Budget");button.disabled=true;button.textContent="Saving limit…";
+  try{await call("/v1/admin/x402/budgets",body);byId("x402DailyLimit").value="";showStatus("x402Status","Daily payment limit saved. Refreshing usage…","ok");await loadX402Budgets();}
+  catch(error){showStatus("x402Status",error.message,"err");}
+  finally{button.disabled=false;button.textContent="Save daily limit";}
+});
 byId("walletForm").addEventListener("submit",async function(event){event.preventDefault();hideStatus("walletStatus");const address=byId("walletAddress").value.trim();const button=byId("registerWalletBtn");button.disabled=true;button.textContent="Registering wallet…";try{await call("/v1/admin/wallets",{businessId:businessId,network:"solana",address:address,scope:"business",purpose:"operating"});byId("walletAddress").value="";showStatus("walletStatus","Operating wallet registered. Sync balances to verify its on-chain assets.","ok");await loadBusinessWallets();}catch(error){showStatus("walletStatus",error.message==="wallet_not_registered"?"This address may already be registered. Check the wallet list or address.":error.message,"err");}finally{button.disabled=false;button.textContent="Register operating wallet";}});
 byId("paymentWalletForm").addEventListener("submit",async function(event){event.preventDefault();hideStatus("walletStatus");const address=byId("paymentWalletAddress").value.trim();const button=byId("registerPaymentWalletBtn");button.disabled=true;button.textContent="Registering payment wallet…";try{await call("/v1/admin/wallets",{businessId:businessId,network:"solana",address:address,scope:"business",purpose:"api_payment"});byId("paymentWalletAddress").value="";showStatus("walletStatus","Dedicated x402 payment wallet registered. Fund it with USDC, then sync all wallet balances.","ok");await loadBusinessWallets();}catch(error){showStatus("walletStatus",error.message==="wallet_not_registered"?"This address may already be registered. Each wallet address can only be registered once.":error.message,"err");}finally{button.disabled=false;button.textContent="Register x402 payment wallet";}});
 byId("syncWalletBtn").addEventListener("click",async function(){hideStatus("walletStatus");const button=byId("syncWalletBtn");button.disabled=true;button.textContent="Checking Solana balances…";try{const data=await call("/v1/admin/balances/sync",{businessId:businessId});const synced=(data.synced||[]).filter(item=>businessWalletIds.includes(item.walletId));const failed=(data.errors||[]).filter(item=>businessWalletIds.includes(item.walletId));await loadBusinessWallets();if(failed.length){showStatus("walletStatus",synced.length+" wallet(s) synced. "+failed.length+" wallet(s) failed. First error: "+failed[0].error,"err");}else if(!synced.length){showStatus("walletStatus","No active business wallets were synced. Check wallet registration and try again.","err");}else{showStatus("walletStatus",synced.length+" business wallet(s) synced from Solana RPC. Operating and x402 payment balances have been refreshed.","ok");}}catch(error){showStatus("walletStatus",error.message,"err");}finally{button.disabled=businessWalletIds.length===0;button.textContent="Sync all wallet balances";}});
