@@ -1,6 +1,6 @@
-# NERITH security audit — static review
+# NERITH security audit — updated static review
 
-**Review date:** 12 November 2026  
+**Review date:** 13 November 2026 (initial review 12 November; status reconciled after PRs #29, #30, #31 and #37)  
 **Scope:** current `main` source for the Worker, D1 schema/migrations, Telegram TOTP helper, and browser pages.  
 **Method:** source review and documented test/CI evidence. This is not a penetration test, independent smart-contract audit, live paid x402 test, or complete browser/device QA.
 
