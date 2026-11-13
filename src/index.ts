@@ -602,6 +602,14 @@ async function handleTelegramCommand(
       await sendTelegramMessage(env, chatId, "No active NERITH workspace is linked to this Telegram account. Ask a workspace administrator for a private invitation first.");
       return;
     }
+    await env.DB.prepare("DELETE FROM telegram_login_tickets WHERE julianday(expires_at) <= julianday('now') AND created_at < datetime('now', '-1 day')").run();
+    const recentTickets = await env.DB.prepare(
+      "SELECT COUNT(*) AS total FROM telegram_login_tickets WHERE chat_id = ? AND telegram_user_id = ? AND created_at >= datetime('now', '-10 minutes')"
+    ).bind(chatId, userId).first<{ total: number }>();
+    if ((recentTickets?.total ?? 0) >= 30) {
+      await sendTelegramMessage(env, chatId, "Too many sign-in links were requested recently. Wait a few minutes and try /login again.");
+      return;
+    }
     const baseUrl = (env.NERITH_PUBLIC_URL || "https://neritth.pages.dev").replace(/\/$/, "");
     const keyboard: Array<Array<{ text: string; url: string }>> = [];
     for (const workspace of workspaces) {
