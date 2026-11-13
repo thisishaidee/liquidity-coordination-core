@@ -91,6 +91,27 @@ describe("admin dashboard read endpoints", () => {
     expect(queries.some(query => query.sql.includes("FROM businesses"))).toBe(false);
   });
 
+  it("creates a new session only after validating the selected business", async () => {
+    const { env, queries } = makeEnv();
+    const businessId = "biz_" + "a".repeat(32);
+    const response = await worker.fetch(new Request("https://nerith.test/v1/admin/session", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer " + token,
+        origin: "https://nerith.test",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ businessId })
+    }), { ...env, ADMIN_BOOTSTRAP_TOKEN: token } as TestEnv);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ authenticated: true, businessId });
+    expect(response.headers.get("set-cookie")).toContain("HttpOnly");
+    expect(response.headers.get("set-cookie")).toContain("SameSite=Strict");
+    const insert = queries.find(query => query.sql.includes("INSERT INTO admin_sessions"));
+    expect(insert?.sql).toContain("business_id");
+    expect(insert?.values[1]).toBe(businessId);
+  });
+
   it("rejects cross-business resource-id actions before any mutation", async () => {
     const queries: QueryRecord[] = [];
     const db = {
@@ -128,9 +149,10 @@ describe("admin dashboard read endpoints", () => {
   });
 
   it("accepts the existing HttpOnly admin session cookie", async () => {
-    const { env } = makeEnv({ cookieSessionValid: true });
+    const { env, queries } = makeEnv({ cookieSessionValid: true });
     const response = await call("/v1/admin/operations?businessId=biz_1", env, { cookie: sessionCookie });
     expect(response.status).toBe(200);
+    expect(queries.find(query => query.sql.includes("FROM admin_sessions"))?.sql).toContain("julianday(expires_at) > julianday(" + "'now'" + ")");
   });
 
   it("fails closed when a business-scoped route omits its business id", async () => {
