@@ -492,7 +492,7 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      "Welcome to NERITH.\n\nA calmer way to coordinate liquidity for your autonomous agents.\n\nI'm here to help you stay on top of your workspace, manage requests, and keep your operations moving.\n\nTo get started, ask your business administrator for a one-time linking invitation. Once connected, I'll help you access your workspace and supported operations.\n\nWhenever you're ready, let's get started.\n\nNERITH records business decisions and request activity. It does not sign or broadcast blockchain transactions or move funds.",
+      "Welcome to NERITH.\n\nGlad you're here.\n\nNERITH gives your team one place to keep track of liquidity requests and coordinate what happens next.\n\nTo get started, ask your business administrator for an invitation to connect your Telegram account. Once you're connected, you can check your workspace and use the tools available to your team.\n\nWhenever you're ready, I'm here to help.\n\nA quick note: NERITH records requests and business decisions. It doesn't hold your funds or sign or send transactions for you.",
       telegramSupportMarkup(env)
     );
     return;
@@ -511,7 +511,7 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      "This private chat is not linked to a NERITH workspace yet. Ask your business administrator for a one-time linking invitation. Use /help to explore the bot's capabilities."
+      "You're not connected to a NERITH workspace yet. Ask your business administrator to send you an invitation. Once you've connected, you can use this chat to check your workspace and manage the operations available to you.\n\nSend /help if you'd like to see what I can do."
     );
     return;
   }
@@ -677,7 +677,7 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      `Welcome back to NERITH, ${connection.business_name}.\n\nA calmer way to coordinate liquidity for your autonomous agents.\n\nI'm here to help you stay on top of your workspace, manage requests, and keep your operations moving.\n\nSend /status for a quick workspace overview, or /help whenever you need a hand.`,
+      `Welcome back, ${connection.business_name}.\n\nGood to have you back. You can check what's happening in your workspace, keep an eye on liquidity, and manage requests right here.\n\nSend /status for a quick overview, or /help if you need the command list.`,
       telegramSupportMarkup(env)
     );
     return;
