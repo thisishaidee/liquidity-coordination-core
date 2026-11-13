@@ -696,12 +696,17 @@ it("returns approval, execution and verified settlement as separate operation st
 describe("browser page script syntax", () => {
   it("parses the inline scripts served for the landing page and business dashboard", async () => {
     const { env } = makeEnv();
-    for (const path of ["/", "/dashboard"]) {
+    for (const path of ["/", "/dashboard", "/control"]) {
       const response = await worker.fetch(new Request("https://nerith.test" + path), env);
       const html = await response.text();
       const match = html.match(/<script>([\s\S]*?)<\/script>/);
       expect(match).not.toBeNull();
       expect(() => new Function(match![1])).not.toThrow();
+      if (path === "/control") {
+        expect(html).toContain("async function establishSession(id)");
+        expect(html).toContain("callPlatformAdmin");
+        expect(html).toContain("Platform admin token");
+      }
       if (path === "/dashboard") {
         for (const breakpoint of [1100, 900, 560, 360]) {
           expect(html).toContain("@media(max-width:" + breakpoint + "px)");
