@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeAdminRoute } from "../src/admin-auth";
+import { describeAdminRoute, matchesBusinessScope } from "../src/admin-auth";
 
 describe("business-scoped admin route classification", () => {
   it("requires a business id for query- and body-scoped routes", () => {
@@ -30,5 +30,15 @@ describe("business-scoped admin route classification", () => {
   it("fails closed for unknown admin routes and unsupported methods", () => {
     expect(describeAdminRoute("GET", "/v1/admin/secrets", new URLSearchParams("businessId=biz_a"), null)).toEqual({ kind: "invalid" });
     expect(describeAdminRoute("DELETE", "/v1/admin/workspace", new URLSearchParams("businessId=biz_a"), null)).toEqual({ kind: "invalid" });
+  });
+});
+
+describe("admin session tenant isolation", () => {
+  it("allows access only when the session and resolved resource belong to the same business", () => {
+    expect(matchesBusinessScope("biz_a", "biz_a")).toBe(true);
+    expect(matchesBusinessScope("biz_a", "biz_b")).toBe(false);
+    expect(matchesBusinessScope("biz_b", "biz_a")).toBe(false);
+    expect(matchesBusinessScope(null, "biz_a")).toBe(false);
+    expect(matchesBusinessScope("biz_a", null)).toBe(false);
   });
 });
