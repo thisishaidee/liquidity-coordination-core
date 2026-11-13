@@ -55,3 +55,10 @@ export function describeAdminRoute(
 
   return { kind: "invalid" };
 }
+
+export function matchesBusinessScope(
+  sessionBusinessId: string | null | undefined,
+  targetBusinessId: string | null | undefined
+): boolean {
+  return Boolean(sessionBusinessId && targetBusinessId && sessionBusinessId === targetBusinessId);
+}
