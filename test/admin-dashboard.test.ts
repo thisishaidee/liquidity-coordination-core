@@ -8,6 +8,7 @@ function makeEnv(options: {
   businessExists?: boolean;
   throwOn?: string;
   cookieSessionValid?: boolean;
+  sessionBusinessId?: string;
 } = {}) {
   const queries: QueryRecord[] = [];
   const db = {
@@ -22,7 +23,7 @@ function makeEnv(options: {
           queries.push({ sql, values });
           if (options.throwOn && sql.includes(options.throwOn)) throw new Error("database internals must not escape");
           if (sql.includes("FROM admin_sessions")) {
-            return (options.cookieSessionValid ? { token_hash: "session" } : null) as T | null;
+            return (options.cookieSessionValid ? { business_id: options.sessionBusinessId ?? "biz_1" } : null) as T | null;
           }
           if (sql.includes("FROM businesses")) {
             return (options.businessExists === false ? null : { id: values[0] }) as T | null;
@@ -48,6 +49,7 @@ function makeEnv(options: {
 const token = "dashboard-test-bootstrap-token";
 const bearer = { authorization: `Bearer ${token}` };
 const sessionCookie = "nerith_admin_session=" + "a".repeat(64);
+const sessionHeaders = { cookie: sessionCookie };
 
 async function call(path: string, env: TestEnv, headers: HeadersInit = {}) {
   const request = new Request("https://nerith.test" + path, { headers });
@@ -76,29 +78,42 @@ describe("admin dashboard read endpoints", () => {
     expect(expiredResponse.status).toBe(401);
   });
 
+  it("does not let the platform bootstrap token access a business workspace directly", async () => {
+    const { env } = makeEnv({ cookieSessionValid: false });
+    const response = await call("/v1/admin/operations?businessId=biz_1", env, bearer);
+    expect(response.status).toBe(401);
+  });
+
+  it("prevents a session for one business from accessing another business", async () => {
+    const { env, queries } = makeEnv({ cookieSessionValid: true, sessionBusinessId: "biz_a" });
+    const response = await call("/v1/admin/workspace?businessId=biz_b", env, sessionHeaders);
+    expect(response.status).toBe(401);
+    expect(queries.some(query => query.sql.includes("FROM businesses"))).toBe(false);
+  });
+
   it("accepts the existing HttpOnly admin session cookie", async () => {
     const { env } = makeEnv({ cookieSessionValid: true });
     const response = await call("/v1/admin/operations?businessId=biz_1", env, { cookie: sessionCookie });
     expect(response.status).toBe(200);
   });
 
-  it("requires businessId after authorization", async () => {
-    const { env } = makeEnv();
-    const response = await call("/v1/admin/operations", env, bearer);
-    expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ error: "business_id_required" });
+  it("fails closed when a business-scoped route omits its business id", async () => {
+    const { env } = makeEnv({ cookieSessionValid: true });
+    const response = await call("/v1/admin/operations", env, sessionHeaders);
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "unauthorized" });
   });
 
   it("returns 404 for an unknown business", async () => {
-    const { env } = makeEnv({ businessExists: false });
-    const response = await call("/v1/admin/forecast?businessId=missing", env, bearer);
+    const { env } = makeEnv({ businessExists: false, cookieSessionValid: true, sessionBusinessId: "missing" });
+    const response = await call("/v1/admin/forecast?businessId=missing", env, sessionHeaders);
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: "business_not_found" });
   });
 
   it("returns an empty, honest business forecast and excludes api-payment wallets", async () => {
-    const { env, queries } = makeEnv();
-    const response = await call("/v1/admin/forecast?businessId=biz_1", env, bearer);
+    const { env, queries } = makeEnv({ cookieSessionValid: true, sessionBusinessId: "biz_1" });
+    const response = await call("/v1/admin/forecast?businessId=biz_1", env, sessionHeaders);
     expect(response.status).toBe(200);
     const body = await response.json() as Record<string, any>;
     expect(body.wallets).toEqual([]);
@@ -119,8 +134,8 @@ describe("admin dashboard read endpoints", () => {
   });
 
   it("scopes operations and counts to the requested business", async () => {
-    const { env, queries } = makeEnv();
-    const response = await call("/v1/admin/operations?businessId=biz_alpha", env, bearer);
+    const { env, queries } = makeEnv({ cookieSessionValid: true, sessionBusinessId: "biz_alpha" });
+    const response = await call("/v1/admin/operations?businessId=biz_alpha", env, sessionHeaders);
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ operations: [], statusCounts: {}, nextCursor: null, limit: 50 });
     const countQuery = queries.find(query => query.sql.includes("COUNT(*) AS count FROM operations"));
@@ -132,16 +147,16 @@ describe("admin dashboard read endpoints", () => {
   });
 
   it("validates limit, status and cursor parameters", async () => {
-    const { env } = makeEnv();
+    const { env } = makeEnv({ cookieSessionValid: true, sessionBusinessId: "biz_1" });
     for (const suffix of ["&limit=0", "&limit=101", "&limit=abc", "&status=made-up", "&cursor=not-base64"]) {
-      const response = await call("/v1/admin/operations?businessId=biz_1" + suffix, env, bearer);
+      const response = await call("/v1/admin/operations?businessId=biz_1" + suffix, env, sessionHeaders);
       expect(response.status).toBe(400);
     }
   });
 
   it("does not expose database error details", async () => {
-    const { env } = makeEnv({ throwOn: "FROM operations" });
-    const response = await call("/v1/admin/operations?businessId=biz_1", env, bearer);
+    const { env } = makeEnv({ throwOn: "FROM operations", cookieSessionValid: true, sessionBusinessId: "biz_1" });
+    const response = await call("/v1/admin/operations?businessId=biz_1", env, sessionHeaders);
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ error: "internal_error" });
   });
@@ -290,7 +305,10 @@ describe("business operations aggregation and dashboard route", () => {
           bind(...args: unknown[]) { values = args; return statement; },
           async first<T>() {
             queries.push({ sql, values });
-            if (sql.includes("FROM businesses")) return { id: values[0] } as T;
+            if (sql.includes("FROM admin_sessions")) return { business_id: "biz_shared" } as T;
+            if (sql.includes("FROM admin_sessions")) return { business_id: "biz_stale" } as T;
+          if (sql.includes("FROM admin_sessions")) return { business_id: "biz_multi" } as T;
+          if (sql.includes("FROM businesses")) return { id: values[0] } as T;
             return null;
           },
           async all<T>() {
@@ -307,7 +325,7 @@ describe("business operations aggregation and dashboard route", () => {
       }
     };
     const env = { DB: db as unknown as D1Database, ADMIN_BOOTSTRAP_TOKEN: token } as TestEnv;
-    const response = await worker.fetch(new Request("https://nerith.test/v1/admin/operations?businessId=biz_shared&limit=1", { headers: bearer }), env);
+    const response = await worker.fetch(new Request("https://nerith.test/v1/admin/operations?businessId=biz_shared&limit=1", { headers: sessionHeaders }), env);
     expect(response.status).toBe(200);
     const body = await response.json() as Record<string, any>;
     expect(body.operations).toHaveLength(1);
@@ -497,7 +515,7 @@ it("marks stale forecast balances and resulting shortfalls as indicative", async
     }
   };
   const env = { DB: db as unknown as D1Database, ADMIN_BOOTSTRAP_TOKEN: token } as TestEnv;
-  const response = await worker.fetch(new Request("https://nerith.test/v1/admin/forecast?businessId=biz_stale", { headers: bearer }), env);
+  const response = await worker.fetch(new Request("https://nerith.test/v1/admin/forecast?businessId=biz_stale", { headers: sessionHeaders }), env);
   expect(response.status).toBe(200);
   const body = await response.json() as Record<string, any>;
   expect(body.businessBalanceDataFresh).toBe(false);
@@ -559,7 +577,7 @@ it("returns all active agents' obligations in the business forecast", async () =
     }
   };
   const env = { DB: db as unknown as D1Database, ADMIN_BOOTSTRAP_TOKEN: token } as TestEnv;
-  const response = await worker.fetch(new Request("https://nerith.test/v1/admin/forecast?businessId=biz_multi", { headers: bearer }), env);
+  const response = await worker.fetch(new Request("https://nerith.test/v1/admin/forecast?businessId=biz_multi", { headers: sessionHeaders }), env);
   expect(response.status).toBe(200);
   const body = await response.json() as Record<string, any>;
   expect(body.obligations).toHaveLength(2);
@@ -594,7 +612,7 @@ it("returns approval, execution and verified settlement as separate operation st
       let values: unknown[] = [];
       const statement = {
         bind(...args: unknown[]) { values = args; return statement; },
-        async first<T>() { return sql.includes("FROM businesses") ? { id: values[0] } as T : null; },
+        async first<T>() { if (sql.includes("FROM admin_sessions")) return { business_id: "biz_settled" } as T; return sql.includes("FROM businesses") ? { id: values[0] } as T : null; },
         async all<T>() {
           if (sql.includes("COUNT(*) AS count FROM operations")) return { results: [{ status: "conversion_settled", count: 1 }] as T[] };
           if (sql.includes("FROM operations o")) return { results: [row] as unknown as T[] };
@@ -606,7 +624,7 @@ it("returns approval, execution and verified settlement as separate operation st
     }
   };
   const env = { DB: db as unknown as D1Database, ADMIN_BOOTSTRAP_TOKEN: token } as TestEnv;
-  const response = await worker.fetch(new Request("https://nerith.test/v1/admin/operations?businessId=biz_settled", { headers: bearer }), env);
+  const response = await worker.fetch(new Request("https://nerith.test/v1/admin/operations?businessId=biz_settled", { headers: sessionHeaders }), env);
   expect(response.status).toBe(200);
   const body = await response.json() as Record<string, any>;
   expect(body.operations[0]).toMatchObject({
