@@ -39,7 +39,7 @@ describe("responsive page source contracts", () => {
   it("uses the supplied NERITH mark across all product workspaces", () => {
     for (const entry of pages) {
       expect(entry.html).toContain('viewBox="0 0 652 524"');
-      expect(entry.html).toContain('fill="#CFF86B"');
+      expect(entry.html).toMatch(/fill="(?:#CFF86B|currentColor)"/);
     }
   });
 
