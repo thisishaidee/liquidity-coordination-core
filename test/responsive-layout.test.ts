@@ -47,6 +47,21 @@ describe("responsive page source contracts", () => {
     expect(businessDashboardHtml).not.toMatch(/<button\b(?![^>]*\btype\s*=)[^>]*>/i);
   });
 
+  it("provides a persistent dashboard walkthrough and mobile layout", () => {
+    expect(businessDashboardHtml).toContain('id="tourLaunch"');
+    expect(businessDashboardHtml).toContain('role="dialog" aria-modal="true"');
+    expect(businessDashboardHtml).toContain('nerith_dashboard_tour_v1_');
+    expect(businessDashboardHtml).toContain('id="tourBanner"');
+    expect(businessDashboardHtml).toContain('@media(max-width:560px)');
+  });
+  it("explains workspace setup and business-controlled custody", () => {
+    expect(controlHtml).toContain('id="quickStartTitle"');
+    expect(controlHtml).toContain("Register a wallet");
+    expect(controlHtml).toContain("Copy the first agent API key");
+    expect(controlHtml).toContain("Your business retains control of its wallets and transaction signing.");
+    expect(controlHtml).toContain('@media(max-width:420px)');
+  });
+
   it("sets dark browser chrome for the agent console", () => {
     expect(dashboardHtml).toContain('<meta name="color-scheme" content="dark">');
     expect(dashboardHtml).toContain('<meta name="theme-color" content="#0B0B0B">');
