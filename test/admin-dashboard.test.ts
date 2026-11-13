@@ -306,9 +306,7 @@ describe("business operations aggregation and dashboard route", () => {
           async first<T>() {
             queries.push({ sql, values });
             if (sql.includes("FROM admin_sessions")) return { business_id: "biz_shared" } as T;
-            if (sql.includes("FROM admin_sessions")) return { business_id: "biz_stale" } as T;
-          if (sql.includes("FROM admin_sessions")) return { business_id: "biz_multi" } as T;
-          if (sql.includes("FROM businesses")) return { id: values[0] } as T;
+            if (sql.includes("FROM businesses")) return { id: values[0] } as T;
             return null;
           },
           async all<T>() {
@@ -488,6 +486,7 @@ it("marks stale forecast balances and resulting shortfalls as indicative", async
         bind(...args: unknown[]) { values = args; return statement; },
         async first<T>() {
           queries.push({ sql, values });
+          if (sql.includes("FROM admin_sessions")) return { business_id: "biz_stale" } as T;
           if (sql.includes("FROM businesses")) return { id: values[0] } as T;
           return null;
         },
@@ -552,6 +551,7 @@ it("returns all active agents' obligations in the business forecast", async () =
         bind(...args: unknown[]) { values = args; return statement; },
         async first<T>() {
           queries.push({ sql, values });
+          if (sql.includes("FROM admin_sessions")) return { business_id: "biz_multi" } as T;
           if (sql.includes("FROM businesses")) return { id: values[0] } as T;
           return null;
         },
