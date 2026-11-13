@@ -425,12 +425,10 @@ function closeTour(completed=false){$("tourBackdrop").hidden=true;if(completed){
 $("startTourBanner").addEventListener("click",openTour);$("tourLaunch").addEventListener("click",openTour);$("tourClose").addEventListener("click",()=>closeTour(false));$("tourSkip").addEventListener("click",()=>closeTour(true));$("tourBack").addEventListener("click",()=>{if(tourIndex>0){tourIndex--;renderTourStep();}});$("tourNext").addEventListener("click",()=>{if(tourIndex===tourSteps.length-1){closeTour(true);return;}tourIndex++;renderTourStep();});$("tourBackdrop").addEventListener("click",event=>{if(event.target===$("tourBackdrop"))closeTour(false);});document.addEventListener("keydown",event=>{if(event.key==="Escape"&&!$("tourBackdrop").hidden)closeTour(false);});
   async function initializeDashboardSession(){
     clearError("accessError");
-    const params=new URLSearchParams(location.search);
+    const params=new URLSearchParams(location.hash.replace(/^#/,""));
     const ticket=params.get("login_ticket");
     if(ticket){
-      params.delete("login_ticket");
-      const cleanUrl=location.pathname+(params.toString()?"?"+params.toString():"")+location.hash;
-      history.replaceState(null,"",cleanUrl);
+      history.replaceState(null,"",location.pathname+location.search);
       try{
         const response=await fetch("/v1/auth/telegram/consume",{method:"POST",credentials:"same-origin",cache:"no-store",headers:{"content-type":"application/json",accept:"application/json"},body:JSON.stringify({ticket})});
         const result=await response.json().catch(()=>({}));
