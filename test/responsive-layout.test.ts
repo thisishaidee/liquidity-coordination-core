@@ -43,6 +43,11 @@ describe("responsive page source contracts", () => {
     }
   });
 
+  it("sets dark browser chrome for the agent console", () => {
+    expect(dashboardHtml).toContain('<meta name="color-scheme" content="dark">');
+    expect(dashboardHtml).toContain('<meta name="theme-color" content="#0B0B0B">');
+  });
+
   it("keeps wide business-dashboard tables inside horizontal scroll containers", () => {
     const tables = (businessDashboardHtml.match(/<table\b/g) ?? []).length;
     const wrappers = (businessDashboardHtml.match(/class=["']table-wrap["']/g) ?? []).length;
