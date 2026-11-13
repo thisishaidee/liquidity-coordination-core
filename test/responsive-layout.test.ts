@@ -22,19 +22,19 @@ describe("responsive page source contracts", () => {
   }
 
   it("keeps wide business-dashboard tables inside horizontal scroll containers", () => {
-    const tables = (businessDashboardHtml.match(/<table\\b/g) ?? []).length;
+    const tables = (businessDashboardHtml.match(/<table\b/g) ?? []).length;
     const wrappers = (businessDashboardHtml.match(/class=["']table-wrap["']/g) ?? []).length;
     expect(tables).toBeGreaterThan(0);
     expect(wrappers).toBe(tables);
-    expect(businessDashboardHtml).toMatch(/\\.table-wrap\\s*\\{[^}]*overflow-x\\s*:\\s*auto/s);
+    expect(businessDashboardHtml).toMatch(/\.table-wrap\s*\{[^}]*overflow-x\s*:\s*auto/s);
   });
 
   it("keeps wide agent-console tables inside horizontal scroll containers", () => {
-    const tables = (dashboardHtml.match(/<table\\b/g) ?? []).length;
+    const tables = (dashboardHtml.match(/<table\b/g) ?? []).length;
     const wrappers = (dashboardHtml.match(/class=["']table-wrap["']/g) ?? []).length;
     expect(tables).toBeGreaterThan(0);
     expect(wrappers).toBe(tables);
-    expect(dashboardHtml).toMatch(/\\.table-wrap\\s*\\{[^}]*overflow-x\\s*:\\s*auto/s);
+    expect(dashboardHtml).toMatch(/\.table-wrap\s*\{[^}]*overflow-x\s*:\s*auto/s);
   });
 
   it("allows long wallet keys and identifiers to wrap in narrow layouts", () => {
