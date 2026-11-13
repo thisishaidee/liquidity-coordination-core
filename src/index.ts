@@ -151,7 +151,7 @@ async function createAdminSession(request: Request, env: Env): Promise<Response>
 }
 async function getCurrentAdminSession(request: Request, env: Env): Promise<Response> {
   const cookie = request.headers.get("cookie") ?? "";
-  const match = cookie.match(/(?:^|;\\s*)nerith_admin_session=([a-f0-9]{64})(?:;|$)/);
+  const match = cookie.match(/(?:^|;\s*)nerith_admin_session=([a-f0-9]{64})(?:;|$)/);
   if (!match) return json({ authenticated: false });
   const session = await env.DB.prepare(
     "SELECT business_id, role, telegram_user_id, expires_at FROM admin_sessions WHERE token_hash = ? AND julianday(expires_at) > julianday('now') LIMIT 1"
@@ -407,7 +407,7 @@ async function createTelegramLinkCode(request: Request, env: Env): Promise<Respo
   if (dashboardRole !== "admin" && dashboardRole !== "analyst") return json({ error: "invalid_dashboard_role" }, 400);
   if (dashboardRole === "admin") {
     const cookie = request.headers.get("cookie") ?? "";
-    const match = cookie.match(/(?:^|;\\s*)nerith_admin_session=([a-f0-9]{64})(?:;|$)/);
+    const match = cookie.match(/(?:^|;\s*)nerith_admin_session=([a-f0-9]{64})(?:;|$)/);
     if (!match) return json({ error: "owner_required_for_admin_invitation" }, 403);
     const session = await env.DB.prepare("SELECT role FROM admin_sessions WHERE token_hash = ? AND julianday(expires_at) > julianday('now') LIMIT 1")
       .bind(await sha256(match[1])).first<{ role: string }>();
@@ -820,7 +820,7 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      `NERITH · ${connection.business_name}\n\n/guide  Understand your workspace and setup\n/businessid  Show linked Business ID(s)\n/workspace  Show linked workspace details\n/status  Business overview\n/liquidity  Available and reserved balances\n/forecast  Upcoming planned obligations\n/agents  Agent status\n/operations  Recent liquidity activity\n/newrequest  Create a liquidity request\n/review  Review prepared liquidity requests\n/setupauth  Set up Google Authenticator\n/verifyauth  Verify authenticator setup\n/confirmapproval  Confirm a self-approval\n/cancel  Cancel a request draft\n/disconnect  Disconnect this chat\n\nRequests are checked against authorised, fresh liquidity and reservations. Approvals record a business decision only. This bot cannot sign or broadcast transactions.`,
+      `NERITH · ${connection.business_name}\n\n/guide  Understand your workspace and setup\n/login  Open the secure business dashboard\n/businessid  Show linked Business ID(s)\n/workspace  Show linked workspace details\n/status  Business overview\n/liquidity  Available and reserved balances\n/forecast  Upcoming planned obligations\n/agents  Agent status\n/operations  Recent liquidity activity\n/newrequest  Create a liquidity request\n/review  Review prepared liquidity requests\n/setupauth  Set up Google Authenticator\n/verifyauth  Verify authenticator setup\n/confirmapproval  Confirm a self-approval\n/cancel  Cancel a request draft\n/disconnect  Disconnect this chat\n\nRequests are checked against authorised, fresh liquidity and reservations. Approvals record a business decision only. This bot cannot sign or broadcast transactions.`,
       telegramSupportMarkup(env)
     );
     return;
