@@ -62,3 +62,33 @@ export function matchesBusinessScope(
 ): boolean {
   return Boolean(sessionBusinessId && targetBusinessId && sessionBusinessId === targetBusinessId);
 }
+
+
+/**
+ * Validate browser origins for admin writes. The Pages frontend proxies /v1
+ * requests to the API Worker, so the browser Origin is the Pages origin while
+ * the Worker request URL has the workers.dev origin. Only explicitly
+ * configured frontend origins may cross that boundary.
+ */
+export function isAllowedAdminOrigin(
+  origin: string | null,
+  requestOrigin: string,
+  configuredOrigins = ""
+): boolean {
+  if (!origin) return false;
+  const allowed = [requestOrigin, ...configuredOrigins.split(",")]
+    .map((value) => value.trim())
+    .filter(Boolean);
+  try {
+    const suppliedOrigin = new URL(origin).origin;
+    return allowed.some((candidate) => {
+      try {
+        return new URL(candidate).origin === suppliedOrigin;
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
+}
