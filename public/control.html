@@ -22,9 +22,9 @@ a{color:inherit}.shell{max-width:1020px;margin:0 auto;padding:28px 24px 44px}.to
 <h2>1. Create a new workspace</h2>
 <p class="sub">Use this if you are setting up NERITH for a new business or team. Your workspace name is simply how your team is identified here; this form does not ask for company registration documents. We will also create your first agent and show its API key once, so save it securely.</p>
 <form id="bootstrapForm">
-<div class="field"><label for="adminToken">Platform admin token</label><input id="adminToken" type="password" autocomplete="off" placeholder="Your platform admin token" required></div>
+<div class="field"><label for="adminToken">Platform admin token</label><input id="adminToken" type="password" autocomplete="off" placeholder="Enter the NERITH setup token" required><p class="sub">This token is provided by the person who manages the NERITH deployment. It is the ADMIN_BOOTSTRAP_TOKEN Worker secret, not your Cloudflare API token.</p></div>
 <div class="field"><label for="businessName">Workspace name</label><input id="businessName" minlength="2" maxlength="100" placeholder="e.g. Treasury Operations" required></div>
-<div class="field"><label for="agentName">First agent name</label><input id="agentName" minlength="2" maxlength="100" placeholder="e.g. Payments Agent" required></div>
+<div class="field"><label for="agentName">First agent name</label><input id="agentName" minlength="2" maxlength="100" placeholder="e.g. Payments Agent" required><p class="sub">An agent is the software workflow that will call NERITH, not a person on your team. Give it a name your team will recognise.</p></div>
 <button class="btn" id="createBtn" type="submit">Create workspace</button>
 </form>
 <div class="notice">Creating a workspace only sets up your NERITH business space and first agent. It does not connect a wallet, deposit funds, approve a request, or authorise a transaction. Only use this form if you are the person setting up a new workspace.</div>
