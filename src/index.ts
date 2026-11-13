@@ -492,7 +492,8 @@ async function handleTelegramCommand(
     await sendTelegramMessage(
       env,
       chatId,
-      "Welcome to NERITH | Liquidity Coordinator.\n\nMonitor business liquidity, connected agents, upcoming obligations and recent operations from a private Telegram chat.\n\nTo get started, ask your business administrator for a one-time linking invitation. Once connected, use /status or /help.\n\nNERITH records business decisions and request activity. It does not sign or broadcast blockchain transactions or move funds."
+      "Welcome to NERITH.\n\nA calmer way to coordinate liquidity for your autonomous agents.\n\nI'm here to help you stay on top of your workspace, manage requests, and keep your operations moving.\n\nTo get started, ask your business administrator for a one-time linking invitation. Once connected, I'll help you access your workspace and supported operations.\n\nWhenever you're ready, let's get started.\n\nNERITH records business decisions and request activity. It does not sign or broadcast blockchain transactions or move funds.",
+      telegramSupportMarkup(env)
     );
     return;
   }
@@ -672,7 +673,17 @@ async function handleTelegramCommand(
     return;
   }
   if (!command.startsWith("/") && await continueTelegramLiquidityRequest(env, chatId, userId, businessId, rawText)) return;
-  if (command === "/help" || command === "/commands" || command === "/start") {
+  if (command === "/start") {
+    await sendTelegramMessage(
+      env,
+      chatId,
+      `Welcome back to NERITH, ${connection.business_name}.\n\nA calmer way to coordinate liquidity for your autonomous agents.\n\nI'm here to help you stay on top of your workspace, manage requests, and keep your operations moving.\n\nSend /status for a quick workspace overview, or /help whenever you need a hand.`,
+      telegramSupportMarkup(env)
+    );
+    return;
+  }
+
+  if (command === "/help" || command === "/commands") {
     await sendTelegramMessage(
       env,
       chatId,
