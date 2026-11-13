@@ -1238,6 +1238,7 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
         commands: [
           { command: "start", description: "Open your NERITH workspace" },
           { command: "help", description: "Explore commands and safety" },
+          { command: "guide", description: "Understand your workspace and setup" },
           { command: "businessid", description: "Show linked business IDs" },
           { command: "workspace", description: "View linked workspace details" },
           { command: "status", description: "Business and agent overview" },
@@ -1276,7 +1277,7 @@ async function configureTelegramWebhook(request: Request, env: Env): Promise<Res
       configured: true,
       botUsername: identity.result.username,
       webhookUrl,
-      commands: ["start", "help", "businessid", "workspace", "status", "liquidity", "forecast", "agents", "operations", "newrequest", "review", "setupauth", "verifyauth", "confirmapproval", "cancel", "disconnect"],
+      commands: ["start", "help", "guide", "businessid", "workspace", "status", "liquidity", "forecast", "agents", "operations", "newrequest", "review", "setupauth", "verifyauth", "confirmapproval", "cancel", "disconnect"],
       supportLinkConfigured: Boolean(telegramSupportMarkup(env))
     });
   } catch {
