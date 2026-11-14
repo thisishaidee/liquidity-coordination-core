@@ -718,7 +718,7 @@ describe("browser page script syntax", () => {
     expect(jupiterJs).toContain("NERITHJUPITER");
     expect(jupiterJs).toContain("13a7a3c0065f86dab70a544edc8ed07d");
     expect(jupiterJs).toContain("createX402PaymentHeader");
-    expect(jupiterJs).toContain("createTransferCheckedInstruction");
+    expect(jupiterJs).toContain("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
     expect(jupiterJs).toContain("The active Jupiter Mobile session does not match the registered x402 payment wallet.");
     expect(jupiterJs).toContain("The x402 payment wallet must be distinct from Swap.io recipient and facilitator fee payer.");
     expect(jupiterJs).not.toContain("createAssociatedTokenAccountIdempotentInstruction");
