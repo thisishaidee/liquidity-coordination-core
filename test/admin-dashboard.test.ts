@@ -749,6 +749,10 @@ describe("browser page script syntax", () => {
         expect(html).toContain('src="/assets/jupiter-mobile-connector.js"');
         expect(html).toContain("window.NERITHJUPITER?.connect");
         expect(html).toContain("window.NERITHJUPITER.signMessage");
+        expect(html).toContain("prepareWalletOwnershipChallenge");
+        expect(html).toContain("walletOwnershipChallenges.get(walletId)");
+        expect(html).toContain('button.textContent="Preparing verification…"');
+        expect(html).toContain("The signing request is not ready yet.");
         expect(html).toContain("phantom.app/ul/browse/");
         expect(html).toContain("solflare.com/ul/v1/browse/");
         expect(html).toContain("backpack.app/ul/v1/browse/");
