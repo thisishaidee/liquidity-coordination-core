@@ -3301,12 +3301,13 @@ async function releaseOperation(request: Request, env: Env, operationId: string)
   }
 
   const reservations = await env.DB.prepare(
-    "SELECT id, wallet_balance_id, amount_atoms, token FROM reservations WHERE operation_id = ? AND status = 'active'"
+    "SELECT id, wallet_balance_id, amount_atoms, token, reservation_source FROM reservations WHERE operation_id = ? AND status = 'active'"
   ).bind(operationId).all<{
     id: string;
     wallet_balance_id: string;
     amount_atoms: string;
     token: string;
+    reservation_source: string;
   }>();
 
   const processed: Array<{ id: string; wallet_balance_id: string; amount_atoms: string; token: string; debited: boolean }> = [];
@@ -3316,13 +3317,14 @@ async function releaseOperation(request: Request, env: Env, operationId: string)
     ).bind(reservation.id).run();
     if ((claim.meta?.changes ?? 0) !== 1) continue;
 
-    const debit = await env.DB.prepare(`
-      UPDATE wallet_balances
-      SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?
-      WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
-    `).bind(reservation.amount_atoms, reservation.wallet_balance_id, reservation.amount_atoms).run();
+    if (reservation.reservation_source !== "managed") {
+      const debit = await env.DB.prepare(`
+        UPDATE wallet_balances
+        SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?
+        WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
+      `).bind(reservation.amount_atoms, reservation.wallet_balance_id, reservation.amount_atoms).run();
 
-    if ((debit.meta?.changes ?? 0) !== 1) {
+      if ((debit.meta?.changes ?? 0) !== 1) {
       await env.DB.prepare(
         "UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = 'released'"
       ).bind(reservation.id).run();
@@ -3341,6 +3343,7 @@ async function releaseOperation(request: Request, env: Env, operationId: string)
         "UPDATE operations SET status = ? WHERE id = ? AND status = 'released'"
       ).bind(operation.status, operationId).run();
       return json({ error: "reservation_ledger_mismatch", message: "No reservations were released." }, 409);
+      }
     }
 
     processed.push({ ...reservation, debited: true });
@@ -3378,12 +3381,13 @@ async function completeOperation(request: Request, env: Env, operationId: string
   if ((claimOperation.meta?.changes ?? 0) !== 1) return json({ error: "operation_state_changed" }, 409);
 
   const reservations = await env.DB.prepare(
-    "SELECT id, wallet_balance_id, amount_atoms, token FROM reservations WHERE operation_id = ? AND status = 'active'"
+    "SELECT id, wallet_balance_id, amount_atoms, token, reservation_source FROM reservations WHERE operation_id = ? AND status = 'active'"
   ).bind(operationId).all<{
     id: string;
     wallet_balance_id: string;
     amount_atoms: string;
     token: string;
+    reservation_source: string;
   }>();
 
   const processed: Array<{ id: string; wallet_balance_id: string; amount_atoms: string }> = [];
@@ -3393,13 +3397,14 @@ async function completeOperation(request: Request, env: Env, operationId: string
     ).bind(reservation.id).run();
     if ((claim.meta?.changes ?? 0) !== 1) continue;
 
-    const debit = await env.DB.prepare(`
-      UPDATE wallet_balances
-      SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?, observed_at = datetime('now', '-10 minutes')
-      WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
-    `).bind(reservation.amount_atoms, reservation.wallet_balance_id, reservation.amount_atoms).run();
+    if (reservation.reservation_source !== "managed") {
+      const debit = await env.DB.prepare(`
+        UPDATE wallet_balances
+        SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?, observed_at = datetime('now', '-10 minutes')
+        WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
+      `).bind(reservation.amount_atoms, reservation.wallet_balance_id, reservation.amount_atoms).run();
 
-    if ((debit.meta?.changes ?? 0) !== 1) {
+      if ((debit.meta?.changes ?? 0) !== 1) {
       await env.DB.prepare(
         "UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = 'consumed'"
       ).bind(reservation.id).run();
@@ -3415,6 +3420,7 @@ async function completeOperation(request: Request, env: Env, operationId: string
         "UPDATE operations SET status = ? WHERE id = ? AND status = 'completed'"
       ).bind(operation.status, operationId).run();
       return json({ error: "reservation_ledger_mismatch" }, 409);
+      }
     }
     processed.push({ id: reservation.id, wallet_balance_id: reservation.wallet_balance_id, amount_atoms: reservation.amount_atoms });
   }
