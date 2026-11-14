@@ -3221,6 +3221,72 @@ async function reconcileFundingLegTransaction(
   });
 }
 
+async function listAdminBusinessPaymentIntents(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const businessId = new URL(request.url).searchParams.get("businessId") ?? "";
+  if (!businessId) return json({ error: "business_id_required" }, 400);
+  const rows = await env.DB.prepare(`
+    SELECT i.id, i.operation_id, i.destination, i.mint, i.requested_atoms, i.payment_atoms,
+           i.fee_payer_wallet_id, i.network_fee_lamports, i.network_fee_budget_lamports,
+           i.action, i.status, i.expires_at, i.created_at, i.updated_at
+    FROM business_payment_intents i
+    WHERE i.business_id = ?
+    ORDER BY i.created_at DESC
+    LIMIT 50
+  `).bind(businessId).all<{
+    id: string; operation_id: string; destination: string; mint: string;
+    requested_atoms: string; payment_atoms: string; fee_payer_wallet_id: string;
+    network_fee_lamports: string; network_fee_budget_lamports: string;
+    action: string; status: string; expires_at: string; created_at: string; updated_at: string;
+  }>();
+  const intents = rows.results ?? [];
+  if (!intents.length) return json({ businessId, intents: [] });
+  const placeholders = intents.map(() => "?").join(",");
+  const legs = await env.DB.prepare(`
+    SELECT l.id, l.operation_id, l.leg_index, l.kind, l.source_wallet_id,
+           source_wallet.address AS source_address, l.destination_wallet_id,
+           destination_wallet.address AS destination_wallet_address, l.destination_address,
+           l.asset_mint, l.amount_atoms, l.status, l.transaction_hash,
+           fee.status AS fee_status, fee.actual_fee_lamports, fee.maximum_fee_lamports
+    FROM operation_funding_legs l
+    LEFT JOIN wallets source_wallet ON source_wallet.id = l.source_wallet_id
+    LEFT JOIN wallets destination_wallet ON destination_wallet.id = l.destination_wallet_id
+    LEFT JOIN operation_funding_leg_fees fee ON fee.funding_leg_id = l.id
+    WHERE l.operation_id IN (${placeholders})
+    ORDER BY l.operation_id ASC, l.leg_index ASC
+  `).bind(...intents.map(item => item.operation_id)).all<{
+    id: string; operation_id: string; leg_index: number; kind: string; source_wallet_id: string | null;
+    source_address: string | null; destination_wallet_id: string | null; destination_wallet_address: string | null;
+    destination_address: string | null; asset_mint: string; amount_atoms: string; status: string;
+    transaction_hash: string | null; fee_status: string | null; actual_fee_lamports: string | null;
+    maximum_fee_lamports: string | null;
+  }>();
+  const byOperation = new Map<string, NonNullable<typeof legs.results>>();
+  for (const leg of legs.results ?? []) {
+    const current = byOperation.get(leg.operation_id) ?? [];
+    current.push(leg);
+    byOperation.set(leg.operation_id, current);
+  }
+  return json({
+    businessId,
+    intents: intents.map(item => ({
+      intentId: item.id, operationId: item.operation_id, destination: item.destination,
+      mint: item.mint, requestedAtoms: item.requested_atoms, paymentAtoms: item.payment_atoms,
+      feePayerWalletId: item.fee_payer_wallet_id, networkFeeLamports: item.network_fee_lamports,
+      networkFeeBudgetLamports: item.network_fee_budget_lamports, action: item.action,
+      status: item.status, expiresAt: item.expires_at, createdAt: item.created_at, updatedAt: item.updated_at,
+      fundingLegs: (byOperation.get(item.operation_id) ?? []).map(leg => ({
+        id: leg.id, index: leg.leg_index, kind: leg.kind, sourceWalletId: leg.source_wallet_id,
+        sourceAddress: leg.source_address, destinationWalletId: leg.destination_wallet_id,
+        destinationWalletAddress: leg.destination_wallet_address, destinationAddress: leg.destination_address,
+        assetMint: leg.asset_mint, amountAtoms: leg.amount_atoms, status: leg.status,
+        transactionHash: leg.transaction_hash,
+        networkFee: { status: leg.fee_status, actualLamports: leg.actual_fee_lamports, maximumLamports: leg.maximum_fee_lamports }
+      }))
+    }))
+  });
+}
+
 async function getBusinessPaymentIntent(request: Request, env: Env, intentId: string): Promise<Response> {
   const agent = await authenticate(request, env.DB);
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
@@ -6320,6 +6386,7 @@ export default {
     if (request.method === "POST" && fundingLegRoute && fundingLegRoute[3] === "reconcile") {
       return reconcileFundingLegTransaction(request, env, fundingLegRoute[1], fundingLegRoute[2]);
     }
+    if (request.method === "GET" && url.pathname === "/v1/admin/payment-intents") return listAdminBusinessPaymentIntents(request, env);
     const paymentIntentMatch = url.pathname.match(/^\/v1\/payments\/([a-zA-Z0-9_-]+)$/);
     if (request.method === "GET" && paymentIntentMatch) return getBusinessPaymentIntent(request, env, paymentIntentMatch[1]);
     if (request.method === "POST" && url.pathname === "/v1/admin/wallet-roles") return setBusinessWalletRole(request, env);
