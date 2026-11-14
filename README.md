@@ -15,6 +15,7 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 ## Product and security documentation
 
 - [Product and architecture overview](docs/PRODUCT_OVERVIEW.md)
+- [Autonomous multi-wallet liquidity architecture](docs/AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md) (implementation specification; not yet live)
 - [Static security audit (12 November 2026)](docs/SECURITY_AUDIT_2026-11-12.md)
 
 ## Current API
