@@ -52,6 +52,16 @@ describe("responsive page source contracts", () => {
     expect(businessDashboardHtml).toContain('/v1/admin/wallet-roles?businessId=');
   });
 
+  it("requires an owner-signed, domain-bound wallet challenge before role assignment", () => {
+    expect(businessDashboardHtml).toContain('data-verify-wallet');
+    expect(businessDashboardHtml).toContain('/v1/admin/wallet-ownership/challenge');
+    expect(businessDashboardHtml).toContain('/v1/admin/wallet-ownership/verify');
+    expect(businessDashboardHtml).toContain('window.okxwallet?.solana');
+    expect(businessDashboardHtml).toContain('window.phantom?.solana');
+    expect(businessDashboardHtml).toContain('A workspace admin must sign a short-lived message');
+    expect(businessDashboardHtml).toContain('Verify address control before assigning or enabling a business role.');
+  });
+
   it("declares business-dashboard action buttons as non-submit controls", () => {
     expect(businessDashboardHtml).not.toMatch(/<button\b(?![^>]*\btype\s*=)[^>]*>/i);
   });
