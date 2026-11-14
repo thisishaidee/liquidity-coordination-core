@@ -109,6 +109,9 @@ try {
   const activeFundingReservationIndex = queryD1("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_active_managed_reservation_per_funding_leg'", "inspectActiveFundingReservationIndex");
   const paymentIntentTables = queryD1("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('business_payment_policies', 'business_payment_intents')", "inspectBusinessPaymentTables");
   const paymentIntentTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_business_payment_intent_identity_immutable', 'trg_business_payment_intent_state_transition', 'trg_business_payment_intent_scope_insert', 'trg_business_payment_intent_policy_guard')", "inspectBusinessPaymentTriggers");
+  const feeLedgerTable = queryD1("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'operation_funding_leg_fees'", "inspectFundingLegFeeLedger");
+  const feeLedgerTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_funding_leg_fee_identity_immutable', 'trg_funding_leg_fee_transaction_immutable', 'trg_funding_leg_fee_state_transition', 'trg_funding_leg_fee_submitted_requires_signature', 'trg_funding_leg_fee_reconciled_requires_finalized_fee')", "inspectFundingLegFeeTriggers");
+  const paymentIntentColumns = queryD1("PRAGMA table_info(business_payment_intents)", "inspectPaymentIntentFeeBudgetColumn");
   const schemaChecks = {
     ownershipVerifiedAtColumn: walletColumns.some(row => row.name === "ownership_verified_at"),
     ownershipVerifiedOriginColumn: walletColumns.some(row => row.name === "ownership_verified_origin"),
@@ -125,7 +128,10 @@ try {
     finalPaymentFundingGates: finalPaymentTriggers.length === 4,
     uniqueActiveFundingReservation: activeFundingReservationIndex.length === 1 && activeFundingReservationIndex[0].sql.includes("CREATE UNIQUE INDEX"),
     businessPaymentTables: paymentIntentTables.length === 2,
-    businessPaymentTriggers: paymentIntentTriggers.length === 4
+    businessPaymentTriggers: paymentIntentTriggers.length === 4,
+    aggregateFeeBudgetColumn: paymentIntentColumns.some(row => row.name === "network_fee_budget_lamports"),
+    fundingLegFeeLedger: feeLedgerTable.length === 1,
+    fundingLegFeeSafetyTriggers: feeLedgerTriggers.length === 5
   };
   output.steps.walletOwnershipSchema = { checks: schemaChecks };
   if (Object.values(schemaChecks).some(value => value !== true)) {
@@ -674,7 +680,10 @@ const businessPaymentIntentCount = queryD1(`SELECT COUNT(*) AS count FROM busine
   if (paymentIntentDetailResponse.status !== 200 || paymentIntentDetail.status !== "replenishing" ||
       paymentIntentDetail.fundingLegs?.filter(leg => leg.kind === "reserve_replenishment").length !== 2 ||
       paymentIntentDetail.fundingLegs?.find(leg => leg.kind === "final_payment")?.status !== "planned" ||
-      !paymentIntentDetail.reservations?.some(reservation => reservation.source === "managed_fee" && reservation.token === "SOL")) {
+      paymentIntentDetail.networkFeeLamports !== "5000" ||
+      paymentIntentDetail.networkFeeBudgetLamports !== "15000" ||
+      paymentIntentDetail.fundingLegs?.some(leg => leg.networkFee?.status !== "reserved" || leg.networkFee?.maximumLamports !== "5000") ||
+      !paymentIntentDetail.reservations?.some(reservation => reservation.source === "managed_fee" && reservation.token === "SOL" && reservation.amountAtoms === "15000")) {
     throw new Error("Agent payment detail endpoint did not return the scoped funding and fee reservation state.");
   }
   const prepositionHold = queryD1(`SELECT r.amount_atoms, r.funding_leg_id, r.reservation_source, b.reserved_atoms
