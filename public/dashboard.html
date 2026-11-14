@@ -198,6 +198,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   if(window.NERITHOKX?.initialize)window.NERITHOKX.initialize().catch(()=>{});
   const state = { businessId: "", role: "", workspace: null, agents: [], wallets: [], walletRoles: [], telegram: [], forecast: null, operations: [], paymentIntents: [], nextCursor: null, operationStatus: "", loadErrors: {} };
   let pendingWalletVerification=null;
+  let pendingX402Demo=null;
   const walletOwnershipChallenges=new Map();
   const parseDecimalAtoms = (value, decimals=6) => {
     const text=String(value??"0");
