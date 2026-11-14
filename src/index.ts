@@ -2278,6 +2278,10 @@ async function prepareFinalPaymentAfterReplenishment(
   const reservationId = "res_" + crypto.randomUUID().replaceAll("-", "");
   const statements: D1PreparedStatement[] = [
     env.DB.prepare(`
+      UPDATE business_payment_intents SET status = 'awaiting_signature', updated_at = datetime('now')
+      WHERE id = ? AND business_id = ? AND status = 'replenishing'
+    `).bind(intentId, businessId),
+    env.DB.prepare(`
       UPDATE wallet_balances
       SET confirmed_atoms = ?, observed_at = datetime('now'), source = 'solana_rpc_finalized'
       WHERE id = ? AND wallet_id = ? AND token = 'USDC'
@@ -2296,15 +2300,11 @@ async function prepareFinalPaymentAfterReplenishment(
         (id, operation_id, wallet_balance_id, amount_atoms, token, status,
          expires_at, funding_leg_id, reservation_source)
       VALUES (?, ?, ?, ?, 'USDC', 'active', ?, ?, 'managed')
-    `).bind(reservationId, row.operation_id, row.balance_id, row.payment_atoms, row.expires_at, row.final_leg_id),
-    env.DB.prepare(`
-      UPDATE business_payment_intents SET status = 'awaiting_signature', updated_at = datetime('now')
-      WHERE id = ? AND business_id = ? AND status = 'replenishing'
-    `).bind(intentId, businessId)
+    `).bind(reservationId, row.operation_id, row.balance_id, row.payment_atoms, row.expires_at, row.final_leg_id)
   ];
   try {
     const results = await env.DB.batch(statements);
-    for (const index of [0, 2, 3, 4]) {
+    for (const index of [0, 1, 3, 4]) {
       if ((results[index]?.meta?.changes ?? 0) !== 1) {
         return json({ error: "final_payment_preparation_conflict" }, 409);
       }
