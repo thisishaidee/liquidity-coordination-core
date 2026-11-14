@@ -283,10 +283,15 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   // Wallet Standard discovery supports injected desktop and mobile wallet providers
   // without binding the dashboard to a single wallet brand.
   const standardSolanaWallets=new Set();
+  const supportedSolanaMainnetChains=new Set([
+    "solana:mainnet",
+    "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
+  ]);
+  const supportsSolanaMainnet=chains=>Array.isArray(chains)&&chains.some(chain=>supportedSolanaMainnetChains.has(chain));
   const standardWalletApi=Object.freeze({
     register:(...wallets)=>{
-      const accepted=wallets.filter(wallet=>wallet&&Array.isArray(wallet.chains)&&
-        wallet.chains.some(chain=>chain==="solana:mainnet")&&wallet.features&&!standardSolanaWallets.has(wallet));
+      const accepted=wallets.filter(wallet=>wallet&&supportsSolanaMainnet(wallet.chains)&&
+        wallet.features&&!standardSolanaWallets.has(wallet));
       accepted.forEach(wallet=>standardSolanaWallets.add(wallet));
       return ()=>accepted.forEach(wallet=>standardSolanaWallets.delete(wallet));
     }
@@ -313,7 +318,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       if(typeof connectFeature?.connect!=="function"||typeof signMessageFeature?.signMessage!=="function")continue;
       const connected=await connectFeature.connect();
       const account=(connected?.accounts||[]).find(item=>item.address===address&&
-        Array.isArray(item.chains)&&item.chains.includes("solana:mainnet"));
+        supportsSolanaMainnet(item.chains));
       if(!account)continue;
       const signed=await signMessageFeature.signMessage({account,message:new TextEncoder().encode(message)});
       const signature=signed?.[0]?.signature;
