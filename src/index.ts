@@ -1900,7 +1900,7 @@ async function verifyWalletOwnership(request: Request, env: Env): Promise<Respon
   const origin = request.headers.get("origin");
   if (!origin || !isAllowedAdminOrigin(origin, new URL(request.url).origin, env.ADMIN_ALLOWED_ORIGINS)) return json({ error: "origin_not_allowed" }, 403);
 
-  const challenge = await env.DB.prepare("SELECT c.id, c.address, c.origin, c.network, c.message, c.nonce_hash, c.expires_at, w.address AS current_address FROM wallet_ownership_challenges c JOIN wallets w ON w.id = c.wallet_id AND w.business_id = c.business_id WHERE c.id = ? AND c.business_id = ? AND c.wallet_id = ? AND c.consumed_at IS NULL AND julianday(c.expires_at) > julianday('now') AND w.scope = 'business' AND w.status = 'active' LIMIT 1")
+  const challenge = await env.DB.prepare("SELECT c.id, c.address, c.origin, c.network, c.message, c.nonce_hash, c.expires_at, w.address AS current_address FROM wallet_ownership_challenges c JOIN wallets w ON w.id = c.wallet_id AND w.business_id = c.business_id WHERE c.id = ? AND c.business_id = ? AND c.wallet_id = ? AND c.consumed_at IS NULL AND julianday(c.expires_at) > julianday('now') AND w.scope = 'business' AND w.status = 'active' AND w.network = 'solana' LIMIT 1")
     .bind(body.challengeId, body.businessId, body.walletId).first<{ id: string; address: string; origin: string; network: string; message: string; nonce_hash: string; expires_at: string; current_address: string }>();
   if (!challenge) return json({ error: "challenge_expired_or_consumed" }, 409);
   if (challenge.origin !== origin) return json({ error: "challenge_origin_mismatch" }, 403);
@@ -1914,7 +1914,7 @@ async function verifyWalletOwnership(request: Request, env: Env): Promise<Respon
   const results = await env.DB.batch([
     env.DB.prepare("UPDATE wallet_ownership_challenges SET consumed_at = ?, verified_at = ?, signature_hash = ? WHERE id = ? AND business_id = ? AND wallet_id = ? AND consumed_at IS NULL AND julianday(expires_at) > julianday('now')")
       .bind(verifiedAt, verifiedAt, signatureHash, challenge.id, body.businessId, body.walletId),
-    env.DB.prepare("UPDATE wallets SET ownership_verified_at = ?, ownership_verified_origin = ? WHERE id = ? AND business_id = ? AND address = ? AND EXISTS (SELECT 1 FROM wallet_ownership_challenges c WHERE c.id = ? AND c.verified_at = ? AND c.consumed_at = ?)")
+    env.DB.prepare("UPDATE wallets SET ownership_verified_at = ?, ownership_verified_origin = ? WHERE id = ? AND business_id = ? AND address = ? AND scope = 'business' AND status = 'active' AND network = 'solana' AND EXISTS (SELECT 1 FROM wallet_ownership_challenges c WHERE c.id = ? AND c.verified_at = ? AND c.consumed_at = ?)")
       .bind(verifiedAt, origin, body.walletId, body.businessId, challenge.address, challenge.id, verifiedAt, verifiedAt)
   ]);
   if (Number(results[0]?.meta?.changes ?? 0) !== 1 || Number(results[1]?.meta?.changes ?? 0) !== 1) return json({ error: "challenge_already_used_or_expired" }, 409);
