@@ -82,8 +82,8 @@ try {
   const migrationFiles = (await readdir("migrations"))
     .filter(file => /^\d{4}_[a-z0-9_-]+\.sql$/i.test(file))
     .sort();
-  if (migrationFiles.length !== 30) {
-    throw new Error("Expected 30 ordered D1 migration files; found " + migrationFiles.length);
+  if (migrationFiles.length !== 31) {
+    throw new Error("Expected 31 ordered D1 migration files; found " + migrationFiles.length);
   }
   const migrationSql = (await Promise.all(
     migrationFiles.map(async file => "-- " + file + "\n" + await readFile(join("migrations", file), "utf8"))
@@ -105,7 +105,7 @@ try {
   const managedReservationTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_managed_reservation_reserve_balance', 'trg_managed_reservation_release_balance', 'trg_managed_reservation_identity_immutable', 'trg_managed_reservation_active_delete_block', 'trg_managed_fee_reservation_reserve_balance', 'trg_managed_payment_wallet_preposition_reserve')", "inspectManagedReservationTriggers");
   const fundingLegTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_funding_leg_identity_immutable', 'trg_funding_leg_transaction_hash_immutable', 'trg_funding_leg_state_transition', 'trg_funding_leg_submitted_requires_hash', 'trg_funding_leg_confirmed_requires_hash')", "inspectFundingLegTriggers");
   const fundingLegTransactionHashIndex = queryD1("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_funding_legs_transaction_hash'", "inspectFundingLegTransactionHashIndex");
-  const finalPaymentTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_final_payment_leg_requires_confirmed_funding', 'trg_final_payment_reservation_requires_confirmed_funding')", "inspectFinalPaymentFundingTriggers");
+  const finalPaymentTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_final_payment_leg_requires_confirmed_funding', 'trg_final_payment_reservation_requires_confirmed_funding', 'trg_replenished_final_leg_requires_ready_intent', 'trg_replenished_final_reservation_requires_ready_intent')", "inspectFinalPaymentFundingTriggers");
   const paymentIntentTables = queryD1("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('business_payment_policies', 'business_payment_intents')", "inspectBusinessPaymentTables");
   const paymentIntentTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_business_payment_intent_identity_immutable', 'trg_business_payment_intent_state_transition', 'trg_business_payment_intent_scope_insert', 'trg_business_payment_intent_policy_guard')", "inspectBusinessPaymentTriggers");
   const schemaChecks = {
@@ -121,7 +121,7 @@ try {
     managedReservationTriggers: managedReservationTriggers.length === 6,
     fundingLegSafetyTriggers: fundingLegTriggers.length === 5,
     uniqueFundingLegTransactionHash: fundingLegTransactionHashIndex.length === 1 && fundingLegTransactionHashIndex[0].sql.includes("CREATE UNIQUE INDEX"),
-    finalPaymentFundingGates: finalPaymentTriggers.length === 2,
+    finalPaymentFundingGates: finalPaymentTriggers.length === 4,
     businessPaymentTables: paymentIntentTables.length === 2,
     businessPaymentTriggers: paymentIntentTriggers.length === 4
   };
@@ -361,6 +361,14 @@ try {
   queryD1(`INSERT INTO operations
     (id, business_id, agent_id, task_id, network, token, amount_atoms, purpose, status, action, available_atoms, shortfall_atoms)
     VALUES ('${managedGateOperationId}', '${businessId}', '${agentId}', 'managed-final-payment-gate', 'solana', 'USDC', '4000000', 'payment', 'reserved', 'replenish_then_pay', '0', '4000000')`, "insertFinalPaymentGateOperation");
+  queryD1(`INSERT INTO business_payment_intents
+    (id, business_id, operation_id, idempotency_key, destination, mint, requested_atoms, payment_atoms,
+     fee_payer_wallet_id, network_fee_lamports, action, status, policy_version, policy_snapshot, expires_at)
+    VALUES ('bpi_${suffix}', '${businessId}', '${managedGateOperationId}', 'gate-intent-${suffix}',
+      '7dN4k3Jm2pQx8sW6vR1aT5uH9cF2eG4iL7oP6bK8mZq',
+      'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '1000000', '1000000',
+      '${managedPaymentWalletId}', '0', 'replenish_then_pay', 'replenishing', 1, '{}', datetime('now', '+15 minutes'))`,
+    "insertReplenishmentGateIntent");
   queryD1(`INSERT INTO operation_funding_legs
     (id, operation_id, leg_index, kind, source_wallet_id, destination_wallet_id, destination_address, asset_mint, amount_atoms)
     VALUES
@@ -403,6 +411,15 @@ try {
     if (!finalPaymentReservationRequiresReservedState) throw error;
   }
   if (!finalPaymentReservationRequiresReservedState) throw new Error("Final payment reservation was allowed before its funding leg entered reserved state.");
+  let finalPaymentIntentGateRejected = false;
+  try {
+    queryD1(`UPDATE operation_funding_legs SET status = 'reserved' WHERE id = '${managedFinalPaymentLegId}'`, "rejectFinalPaymentBeforeIntentReady");
+  } catch (error) {
+    finalPaymentIntentGateRejected = String(error).includes("final_payment_intent_not_ready");
+    if (!finalPaymentIntentGateRejected) throw error;
+  }
+  if (!finalPaymentIntentGateRejected) throw new Error("Final payment leg advanced before its business payment intent was ready.");
+  queryD1(`UPDATE business_payment_intents SET status = 'awaiting_signature' WHERE id = 'bpi_${suffix}'`, "markReplenishmentIntentReady");
   queryD1(`UPDATE operation_funding_legs SET status = 'reserved' WHERE id = '${managedFinalPaymentLegId}'`, "allowFinalPaymentAfterFundingConfirmed");
   const finalPaymentLegState = queryD1(`SELECT status FROM operation_funding_legs WHERE id = '${managedFinalPaymentLegId}'`, "verifyFinalPaymentGate");
   if (finalPaymentLegState[0]?.status !== "reserved") throw new Error("Final payment did not become reservable after all funding legs confirmed.");
