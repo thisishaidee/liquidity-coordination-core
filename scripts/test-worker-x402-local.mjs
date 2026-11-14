@@ -474,7 +474,7 @@ try {
     queryD1(`INSERT INTO reservations (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
       VALUES ('${limitedReservationIds[1]}', '${managedOperationId}', '${managedSecondReserveBalanceId}', '600000', 'USDC', 'active', datetime('now', '+15 minutes'), '${limitedLegIds[1]}', 'managed')`, "rejectReserveFloorBreach");
   } catch (error) {
-    reserveFloorRejected = String(error).includes("managed_reservation_wallet_not_authorized");
+    reserveFloorRejected = String(error).includes("managed_reservation_insufficient_balance");
     if (!reserveFloorRejected) throw error;
   }
   queryD1(`INSERT INTO reservations (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
@@ -545,6 +545,12 @@ try {
     feePayerWalletId: managedPaymentWalletId,
     networkFeeLamports: "5000"
   };
+  const invalidDestinationResponse = await fetch(baseUrl + "/v1/payments/prepare", {
+    method: "POST", headers: paymentAuthHeaders,
+    body: JSON.stringify({ ...directPaymentPayload, taskId: "invalid-destination-" + suffix,
+      idempotencyKey: "invalid-destination-" + suffix, destination: "not-a-solana-address" })
+  });
+  if (invalidDestinationResponse.status !== 400) throw new Error("Invalid Solana destination was not rejected before payment preparation.");
   const directPaymentResponse = await fetch(baseUrl + "/v1/payments/prepare", {
     method: "POST", headers: paymentAuthHeaders, body: JSON.stringify(directPaymentPayload)
   });
