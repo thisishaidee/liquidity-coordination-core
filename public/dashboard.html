@@ -175,6 +175,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
+  if(window.NERITHOKX?.initialize)window.NERITHOKX.initialize().catch(()=>{});
   const state = { businessId: "", role: "", workspace: null, agents: [], wallets: [], walletRoles: [], telegram: [], forecast: null, operations: [], paymentIntents: [], nextCursor: null, operationStatus: "", loadErrors: {} };
   const parseDecimalAtoms = (value, decimals=6) => {
     const text=String(value??"0");
