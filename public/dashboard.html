@@ -961,7 +961,8 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       }
       const providers = result.data.quotes.slice(0, 3).map((quote, index) => {
         const provider = typeof quote.provider === "string" ? quote.provider : quote.provider?.key || "Route " + (index + 1);
-        const amount = quote.output?.amount ? formatAtoms(BigInt(quote.output.amount), 6, 2) + " USDC" : "Quote returned";
+        const rawAmount = String(quote.output?.amount ?? "");
+        const amount = /^\d+$/.test(rawAmount) ? formatAtoms(BigInt(rawAmount), 6, 2) + " USDC" : "Quote returned";
         return '<div class="balance-row"><strong>' + escapeHtml(provider) + '</strong><span>' + escapeHtml(amount) + '</span></div>';
       }).join("");
       $("x402DemoResult").innerHTML = '<div class="note"><strong>Paid call verified</strong><p>' +
