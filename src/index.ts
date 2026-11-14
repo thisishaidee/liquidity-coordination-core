@@ -2661,6 +2661,43 @@ async function reconcileFundingLegTransaction(
     return json({ intentId, fundingLegId: legId, status: "submitted", confirmed: false,
       pending: true, reason: lookup.reason }, 202);
   }
+  if (!row.fee_ledger_id || row.fee_ledger_status !== "submitted" ||
+      !row.fee_reservation_id || row.fee_payer_wallet_status !== "active" ||
+      row.fee_payer_scope !== "business" || !row.fee_payer_verified_at ||
+      row.fee_payer_role_authorized !== 1 || row.fee_maximum_fee_lamports !== row.network_fee_lamports) {
+    return json({ error: "funding_leg_fee_ledger_or_reservation_invalid" }, 409);
+  }
+  const feeVerification = verifySolanaNetworkFee(
+    lookup.transaction,
+    row.fee_payer_address ?? "",
+    row.fee_maximum_fee_lamports
+  );
+  if (!feeVerification.verified) {
+    const reason = feeVerification.reason;
+    try {
+      await env.DB.batch([
+        env.DB.prepare(`
+          UPDATE operation_funding_legs SET status = 'ambiguous', failure_reason = ?,
+            confirmed_slot = ?, updated_at = datetime('now')
+          WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
+        `).bind(reason, lookup.slot, legId, row.transaction_hash),
+        env.DB.prepare(`
+          UPDATE operation_funding_leg_fees SET status = 'ambiguous', failure_reason = ?,
+            finalized_slot = ?, updated_at = datetime('now')
+          WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
+        `).bind(reason, lookup.slot, row.fee_ledger_id, row.transaction_hash),
+        env.DB.prepare(`
+          UPDATE business_payment_intents SET status = 'ambiguous', updated_at = datetime('now')
+          WHERE id = ? AND status IN ('submitted', 'replenishing')
+        `).bind(intentId)
+      ]);
+    } catch {
+      return json({ error: "funding_leg_fee_ambiguity_record_failed" }, 409);
+    }
+    return json({ intentId, fundingLegId: legId, status: "ambiguous", confirmed: false, reason }, 409);
+  }
+  const actualNetworkFee = feeVerification.actualFeeLamports;
+
   if (lookup.state === "failed") {
     try {
       await env.DB.batch([
@@ -2668,56 +2705,58 @@ async function reconcileFundingLegTransaction(
           UPDATE operation_funding_legs SET status = 'failed', failure_reason = ?, confirmed_slot = ?,
             updated_at = datetime('now')
           WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
-        `).bind(lookup.reason, lookup.slot ?? null, legId, row.transaction_hash),
+        `).bind(lookup.reason, lookup.slot, legId, row.transaction_hash),
+        env.DB.prepare(`
+          UPDATE operation_funding_leg_fees
+          SET actual_fee_lamports = ?, finalized_slot = ?, status = 'reconciled',
+              failure_reason = ?, updated_at = datetime('now')
+          WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
+        `).bind(actualNetworkFee, lookup.slot, lookup.reason, row.fee_ledger_id, row.transaction_hash),
         env.DB.prepare(`
           UPDATE reservations SET status = 'released', released_at = datetime('now')
           WHERE funding_leg_id = ? AND status = 'active'
         `).bind(legId),
         env.DB.prepare(`
-          UPDATE business_payment_intents SET status = 'failed', updated_at = datetime('now')
+          UPDATE operation_funding_leg_fees SET status = 'not_required', updated_at = datetime('now')
+          WHERE operation_id = ? AND status = 'reserved'
+        `).bind(row.operation_id),
+        env.DB.prepare(`
+          UPDATE operation_funding_legs SET status = 'cancelled', failure_reason = 'Another funding leg failed.',
+            updated_at = datetime('now')
+          WHERE operation_id = ? AND status IN ('planned', 'reserved')
+        `).bind(row.operation_id),
+        env.DB.prepare(`
+          UPDATE reservations SET status = 'released', released_at = datetime('now')
+          WHERE operation_id = ? AND status = 'active' AND reservation_source = 'managed'
+            AND funding_leg_id IN (
+              SELECT id FROM operation_funding_legs WHERE operation_id = ? AND status = 'cancelled'
+            )
+        `).bind(row.operation_id, row.operation_id),
+        env.DB.prepare(`
+          UPDATE business_payment_intents
+          SET status = CASE WHEN EXISTS (
+            SELECT 1 FROM operation_funding_leg_fees
+            WHERE operation_id = ? AND status IN ('submitted', 'ambiguous')
+          ) THEN 'ambiguous' ELSE 'failed' END,
+          updated_at = datetime('now')
           WHERE id = ? AND status IN ('submitted', 'replenishing', 'reserved')
-        `).bind(intentId)
+        `).bind(row.operation_id, intentId),
+        env.DB.prepare(`
+          UPDATE reservations SET status = 'consumed', released_at = datetime('now')
+          WHERE operation_id = ? AND reservation_source = 'managed_fee' AND status = 'active'
+            AND NOT EXISTS (
+              SELECT 1 FROM operation_funding_leg_fees
+              WHERE operation_id = ? AND status IN ('reserved', 'submitted', 'ambiguous')
+            )
+        `).bind(row.operation_id, row.operation_id)
       ]);
     } catch {
       return json({ error: "funding_leg_failure_reconciliation_conflict" }, 409);
     }
-    return json({ intentId, fundingLegId: legId, status: "failed", confirmed: false, reason: lookup.reason }, 409);
+    return json({ intentId, fundingLegId: legId, status: "failed", confirmed: false,
+      actualNetworkFeeLamports: actualNetworkFee, reason: lookup.reason }, 409);
   }
 
-  let actualNetworkFee: string | null = null;
-  if (row.leg_kind === "final_payment") {
-    const feeVerification = verifySolanaNetworkFee(
-      lookup.transaction,
-      row.fee_payer_address ?? "",
-      row.network_fee_lamports
-    );
-    const feeInvalid = !feeVerification.verified ||
-      row.fee_payer_wallet_status !== "active" || row.fee_payer_scope !== "business" ||
-      !row.fee_payer_verified_at || row.fee_payer_role_authorized !== 1 ||
-      (BigInt(row.network_fee_lamports) > 0n && !row.fee_reservation_id);
-    if (feeInvalid) {
-      const reason = feeVerification.verified
-        ? "Registered fee wallet is no longer active, verified, correctly scoped or assigned, or its fee reservation is missing."
-        : feeVerification.reason;
-      try {
-        await env.DB.batch([
-          env.DB.prepare(`
-            UPDATE operation_funding_legs SET status = 'ambiguous', failure_reason = ?,
-              confirmed_slot = ?, updated_at = datetime('now')
-            WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
-          `).bind(reason, lookup.slot, legId, row.transaction_hash),
-          env.DB.prepare(`
-            UPDATE business_payment_intents SET status = 'ambiguous', updated_at = datetime('now')
-            WHERE id = ? AND status = 'submitted'
-          `).bind(intentId)
-        ]);
-      } catch {
-        return json({ error: "funding_leg_ambiguity_record_failed" }, 409);
-      }
-      return json({ intentId, fundingLegId: legId, status: "ambiguous", confirmed: false, reason }, 409);
-    }
-    actualNetworkFee = feeVerification.actualFeeLamports;
-  }
   const verification = verifySolanaTokenTransfer(
     lookup.transaction as SolanaPaymentTransaction,
     {
