@@ -44,8 +44,11 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 | POST | `/v1/admin/balances` | Record a controlled manual balance snapshot |
 | POST | `/v1/admin/balances/sync` | Refresh registered wallet balances from Solana RPC |
 | GET | `/v1/admin/payment-policy?businessId=...` | Read business payment policy |
+| GET | `/v1/admin/payment-intents?businessId=...` | List recent business payment requests and their funding legs for owner review |
 | POST | `/v1/admin/payment-policy` | Update business payment policy |
 | POST | `/v1/payments/prepare` | Agent-authenticated, idempotent payment-intent preparation and guarded funding reservations |
+| POST | `/v1/admin/payment-intents/:intentId/funding-legs/:legId/prepare?businessId=...` | Build an unsigned, exact checked-USDC transfer for wallet review |
+| POST | `/v1/admin/payment-intents/:intentId/funding-legs/:legId/submit-signed?businessId=...` | Verify fully signed transaction bytes and broadcast from the Worker |
 | POST | `/v1/admin/payment-intents/:intentId/funding-legs/:legId/submit?businessId=...` | Record a business-owner-signed transaction signature |
 | POST | `/v1/admin/payment-intents/:intentId/funding-legs/:legId/reconcile?businessId=...` | Verify finalized SPL-token settlement from Solana RPC |
 | POST | `/v1/admin/payment-intents/:intentId/prepare-final-payment?businessId=...` | Refresh finalized payment-wallet USDC and reserve final payment after all replenishment legs confirm |
@@ -119,7 +122,7 @@ The Worker stores the actual Hermes V1 Solana challenge for the exact operation/
 
 The draft includes a pure evaluator in `src/transaction-policy.ts`. It checks business scope, idempotency, intent expiry, asset and destination allowlists, per-transaction and daily limits, fresh verified payment/reserve wallets, reserve floors, transfer caps, SOL network-fee payer allowlists and balances, and conversion-source/slippage policy. It can return a direct-payment, reserve-replenishment, conversion-required or explicitly permitted partial-payment plan.
 
-The evaluator is planning and policy logic only. The payment-preparation API now persists intents, funding legs and bounded internal reservations; owner/admin settlement routes accept externally signed transaction signatures and verify finalized on-chain transfers. NERITH still does not build, sign or broadcast these transfers. Replenishment can unlock a final-payment reservation only after a separate finalized balance refresh. Conversion remains out of scope for this funding-leg verifier.
+The evaluator is planning and policy logic only. The payment-preparation API persists intents, funding legs and bounded internal reservations. The business dashboard now lists payment intents, builds unsigned checked-USDC transfers, requests sequential Wallet Standard signatures from each required business wallet, and submits the fully signed bytes to an owner/admin-only Worker relay. The Worker verifies the message digest, signer set, signatures, exact transfer accounts, amount, decimals, blockhash and fee cap before broadcast. Finalized RPC reconciliation remains the settlement source of truth. Replenishment unlocks final payment only after a separate finalized balance refresh. Conversion remains out of scope for this funding-leg verifier.
 
 ## Important safety boundaries
 
