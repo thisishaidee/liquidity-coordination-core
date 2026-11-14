@@ -355,7 +355,8 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     for(const wallet of standardSolanaWallets) {
       const account=(wallet.accounts||[]).find(item=>item.address===address&&supportsSolanaMainnet(item.chains));
       const signFeature=wallet.features?.["solana:signTransaction"];
-      if(account&&typeof signFeature?.signTransaction==="function") {
+      const versions=signFeature?.supportedTransactionVersions||[];
+      if(account&&typeof signFeature?.signTransaction==="function"&&versions.includes("legacy")) {
         return {kind:"standard",label:wallet.name||"Solana wallet",wallet,account};
       }
     }
