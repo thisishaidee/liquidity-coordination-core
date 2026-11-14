@@ -116,7 +116,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       <section class="page" id="page-liquidity">
         <div class="page-head"><div><div class="pixel">Capital visibility / 03</div><h1>Liquidity</h1><p>Fresh wallet snapshots, internal reservations and eligible balances. x402 payment reserves remain isolated from operating liquidity.</p></div><div class="actions"><button type="button" class="btn" id="liquidityRefresh">Refresh ↻</button></div></div>
         <div class="grid metric-grid" id="liquidityMetrics"></div>
-        <div class="panel"><div class="panel-head"><div><div class="panel-title">Operating wallets</div><div class="panel-subtitle">Only purpose=operating contributes to the operating totals</div></div></div><div id="walletConnectPanel" class="wallet-onboard" hidden><div><strong>Connect a Solana wallet</strong><p class="wallet-role-help">Connect from your wallet app or browser. NERITH registers the public address, then asks you to sign a short ownership message. No transaction or network fee is involved.</p></div><div class="wallet-onboard-controls"><label class="wallet-purpose-label" for="walletPurpose">Wallet purpose<select id="walletPurpose" class="input"><option value="operating">Operating liquidity</option><option value="api_payment">x402 API fee reserve</option></select></label><button type="button" class="btn primary" id="connectBusinessWallet" aria-expanded="false" aria-controls="walletChooser">Choose wallet</button></div><div id="walletChooser" class="wallet-chooser" hidden role="group" aria-label="Choose a Solana wallet"><div class="wallet-chooser-head"><strong>Choose your Solana wallet</strong><span>Opens the selected wallet app</span></div><div class="wallet-choice-grid"><button type="button" class="wallet-choice" data-wallet-choice="okx"><strong>OKX Wallet</strong><span>Open NERITH in OKX Wallet’s DApp browser</span></button><button type="button" class="wallet-choice" data-wallet-choice="phantom"><strong>Phantom</strong><span>Open this page in Phantom</span></button><button type="button" class="wallet-choice" data-wallet-choice="solflare"><strong>Solflare</strong><span>Open this page in Solflare</span></button><button type="button" class="wallet-choice" data-wallet-choice="backpack"><strong>Backpack</strong><span>Open this page in Backpack</span></button><button type="button" class="wallet-choice" data-wallet-choice="browser"><strong>Wallet in this browser</strong><span>Connect an already detected browser wallet</span></button></div><p id="walletChooserHelp" class="wallet-role-help" aria-live="polite">Choose a wallet. NERITH will only request your public address and a message signature to prove ownership.</p></div><div id="walletConnectStatus" class="wallet-role-help" role="status" aria-live="polite"></div></div><div id="operatingWallets" class="grid wallet-grid"><div class="empty">Loading wallets…</div></div></div>
+        <div class="panel"><div class="panel-head"><div><div class="panel-title">Operating wallets</div><div class="panel-subtitle">Only purpose=operating contributes to the operating totals</div></div></div><div id="walletConnectPanel" class="wallet-onboard" hidden><div><strong>Connect a Solana wallet</strong><p class="wallet-role-help">Connect from your wallet app or browser. NERITH registers the public address, then asks you to sign a short ownership message. No transaction or network fee is involved.</p></div><div class="wallet-onboard-controls"><label class="wallet-purpose-label" for="walletPurpose">Wallet purpose<select id="walletPurpose" class="input"><option value="operating">Operating liquidity</option><option value="api_payment">x402 API fee reserve</option></select></label><button type="button" class="btn primary" id="connectBusinessWallet" aria-expanded="false" aria-controls="walletChooser">Choose wallet</button></div><div id="walletChooser" class="wallet-chooser" hidden role="group" aria-label="Choose a Solana wallet"><div class="wallet-chooser-head"><strong>Choose your Solana wallet</strong><span>Opens the selected wallet app</span></div><div class="wallet-choice-grid"><button type="button" class="wallet-choice" data-wallet-choice="okx"><strong>OKX Wallet</strong><span>Open NERITH in OKX Wallet’s DApp browser</span></button><button type="button" class="wallet-choice" data-wallet-choice="phantom"><strong>Phantom</strong><span>Open this page in Phantom</span></button><button type="button" class="wallet-choice" data-wallet-choice="solflare"><strong>Solflare</strong><span>Open this page in Solflare</span></button><button type="button" class="wallet-choice" data-wallet-choice="backpack"><strong>Backpack</strong><span>Open this page in Backpack</span></button><button type="button" class="wallet-choice" data-wallet-choice="jupiter"><strong>Jupiter Wallet</strong><span>Connect Jupiter Wallet when available, or open its official wallet page</span></button><button type="button" class="wallet-choice" data-wallet-choice="browser"><strong>Wallet in this browser</strong><span>Connect an already detected browser wallet</span></button></div><p id="walletChooserHelp" class="wallet-role-help" aria-live="polite">Choose a wallet. NERITH will only request your public address and a message signature to prove ownership.</p></div><div id="walletConnectStatus" class="wallet-role-help" role="status" aria-live="polite"></div></div><div id="operatingWallets" class="grid wallet-grid"><div class="empty">Loading wallets…</div></div></div>
         <div class="panel" style="margin-top:14px"><div class="panel-head"><div><div class="panel-title">x402 payment reserve</div><div class="panel-subtitle">purpose=api_payment · never included in operating totals or forecasts</div></div></div><div id="paymentWallets" class="grid wallet-grid"><div class="empty">Loading payment reserve…</div></div></div>
         <section class="panel" style="margin-top:16px" aria-labelledby="walletRolesTitle">
           <div class="panel-head"><div><div class="panel-title" id="walletRolesTitle">Business wallet roles</div><div class="panel-subtitle">Set how each registered business wallet may be used. A wallet role does not grant signing authority.</div></div></div>
@@ -324,6 +324,14 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     return candidates.find(provider=>provider&&typeof provider.connect==="function"&&typeof provider.signMessage==="function")||null;
   }
   async function connectSolanaWallet(preferredWallet="") {
+    if(preferredWallet==="jupiter"){
+      const wallet=standardSolanaWallets.find(item=>/jupiter/i.test(item.name||""));
+      if(!wallet)throw new Error("Jupiter Wallet is not available in this browser yet. Open the official Jupiter Wallet page, install or open Jupiter Wallet, then return to NERITH and choose Wallet in this browser.");
+      const connected=await wallet.features["standard:connect"].connect();
+      const account=(connected?.accounts||[]).find(item=>supportsSolanaMainnet(item.chains));
+      if(!account?.address)throw new Error("Jupiter Wallet connected but did not return a Solana mainnet account.");
+      return account.address;
+    }
     if(preferredWallet==="okx"){
       const injected=window.okxwallet?.solana;
       if(injected&&typeof injected.connect==="function"&&typeof injected.signMessage==="function"){
@@ -342,7 +350,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       if(account?.address)return account.address;
     }
     const provider=getInjectedSolanaProvider();
-    if(!provider)throw new Error("No compatible Solana wallet was detected. Open NERITH inside your OKX, Phantom, Solflare or Backpack wallet browser, or use a Wallet Standard wallet.");
+    if(!provider)throw new Error("No compatible Solana wallet was detected. Open NERITH inside your OKX, Phantom, Solflare or Backpack wallet browser, or use an available Wallet Standard wallet such as Jupiter Wallet.");
     const connected=await provider.connect();
     const address=connected?.publicKey?.toString?.()||provider.publicKey?.toString?.()||"";
     if(!address)throw new Error("The wallet connected but did not return a public address.");
@@ -367,7 +375,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       throw new Error("The selected Wallet Standard provider returned an unsupported message-signature format.");
     }
     const provider=getInjectedSolanaProvider();
-    if(!provider)throw new Error("No compatible Solana wallet was detected. Use a Wallet Standard wallet or open NERITH in your OKX, Phantom, Solflare or Backpack wallet browser.");
+    if(!provider)throw new Error("No compatible Solana wallet was detected. Use a Wallet Standard wallet such as Jupiter Wallet or open NERITH in your OKX, Phantom, Solflare or Backpack wallet browser.");
     const connected=await provider.connect();
     const connectedKey=connected?.publicKey?.toString?.()||provider.publicKey?.toString?.()||"";
     if(connectedKey!==address)throw new Error("The connected wallet address does not match this registered wallet. Switch to the matching wallet and try again.");
@@ -799,6 +807,18 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       };
       $("walletChooserHelp").textContent="Opening "+wallet.charAt(0).toUpperCase()+wallet.slice(1)+". Once NERITH opens inside that wallet, tap Choose wallet and select Wallet in this browser.";
       window.location.assign(links[wallet]);
+      return;
+    }
+    if(wallet==="jupiter"){
+      const detected=standardSolanaWallets.some(item=>/jupiter/i.test(item.name||""));
+      if(detected){
+        $("walletChooser").hidden=true;
+        $("connectBusinessWallet").setAttribute("aria-expanded","false");
+        await beginBusinessWalletConnection($("connectBusinessWallet"),"jupiter");
+      }else{
+        $("walletChooserHelp").textContent="Jupiter Wallet was not detected in this browser. Opening Jupiter’s official wallet page. After installing or opening the wallet, return here and choose Wallet in this browser.";
+        window.location.assign("https://jup.ag/wallet");
+      }
       return;
     }
     if(wallet==="okx"){
