@@ -29,13 +29,16 @@ export type PaymentIntent = {
   expiresAt: string;
   allowPartialPayment: boolean;
   slippageBps?: number | null;
+  networkFeeLamports: string;
 };
 
 export type PaymentPolicy = {
   businessId: string;
   allowedMints: string[];
   allowedDestinations: string[];
+  allowedConversionMints: string[];
   maxTransactionAtoms: string;
+  maxNetworkFeeLamports: string;
   maxDailyAtoms: string;
   committedTodayAtoms: string;
   maxBalanceAgeSeconds: number;
@@ -64,6 +67,7 @@ export type PaymentPolicyDecision =
       paymentWalletAvailableAtoms: bigint;
       replenishmentPlan: ReplenishmentPlan;
       conversionShortfallAtoms: bigint;
+      conversionSourceWallets: Array<{ walletId: string; mint: string; availableAtoms: bigint }>;
       requiresSignerAuthorization: true;
       ownerApprovalRequired: true;
     }
@@ -152,11 +156,15 @@ export function evaluatePaymentIntentPolicy(
   let maxTransactionAtoms: bigint;
   let maxDailyAtoms: bigint;
   let committedTodayAtoms: bigint;
+  let maxNetworkFeeLamports: bigint;
+  let networkFeeLamports: bigint;
   try {
     requestedAtoms = parseAtoms(intent.amountAtoms, "amount_atoms");
     maxTransactionAtoms = parseAtoms(policy.maxTransactionAtoms, "max_transaction_atoms");
     maxDailyAtoms = parseAtoms(policy.maxDailyAtoms, "max_daily_atoms");
     committedTodayAtoms = parseAtoms(policy.committedTodayAtoms, "committed_today_atoms");
+    maxNetworkFeeLamports = parseAtoms(policy.maxNetworkFeeLamports, "max_network_fee_lamports");
+    networkFeeLamports = parseAtoms(intent.networkFeeLamports, "network_fee_lamports");
   } catch (error) {
     return reject("invalid_amount_policy", error instanceof Error ? error.message : String(error));
   }
@@ -188,6 +196,7 @@ export function evaluatePaymentIntentPolicy(
        intent.slippageBps > policy.maxSlippageBps)) {
     return reject("slippage_limit_exceeded", "The requested slippage exceeds the business policy.");
   }
+  if (networkFeeLamports > maxNetworkFeeLamports) return reject("network_fee_limit_exceeded", "The estimated network fee exceeds the business policy.");
 
   const dailyRemaining = maxDailyAtoms > committedTodayAtoms ? maxDailyAtoms - committedTodayAtoms : 0n;
   if (dailyRemaining <= 0n) return reject("daily_limit_exceeded", "The business daily payment limit has been reached.");
@@ -294,6 +303,44 @@ export function evaluatePaymentIntentPolicy(
   }
 
   if (policy.allowConversion) {
+    if (!Array.isArray(policy.allowedConversionMints)) return reject("invalid_conversion_allowlist", "An explicit conversion-source mint allowlist is required.");
+    if (intent.slippageBps === undefined || intent.slippageBps === null) {
+      return reject("conversion_slippage_required", "A business-approved slippage limit is required before conversion can be considered.");
+    }
+    const conversionByWallet = new Map<string, { walletId: string; mint: string; availableAtoms: bigint }>();
+    for (const source of wallets) {
+      if (source.businessId !== policy.businessId || source.scope !== "business" ||
+          source.status !== "active" || !source.enabled ||
+          (source.role !== "reserve" && source.role !== "operating") ||
+          !source.ownershipVerifiedAt || source.mint === intent.mint ||
+          !policy.allowedConversionMints.includes(source.mint) ||
+          !isFresh(source.observedAt, nowMs, policy.maxBalanceAgeSeconds)) continue;
+      try {
+        const spendable = spendableAtoms(source);
+        const floor = source.role === "reserve"
+          ? parseAtoms(source.minimumRemainingAtoms ?? "0", "minimum_remaining_atoms")
+          : 0n;
+        const aboveFloor = spendable > floor ? spendable - floor : 0n;
+        const cap = source.maximumTransferAtoms
+          ? parseAtoms(source.maximumTransferAtoms, "maximum_transfer_atoms")
+          : aboveFloor;
+        const availableAtoms = minBigInt(aboveFloor, cap);
+        if (availableAtoms > 0n) {
+          const previous = conversionByWallet.get(source.walletId);
+          if (!previous || source.role === "reserve") conversionByWallet.set(source.walletId, {
+            walletId: source.walletId, mint: source.mint, availableAtoms
+          });
+        }
+      } catch {
+        // Invalid or inconsistent conversion sources are never authorised.
+      }
+    }
+    const conversionSourceWallets = [...conversionByWallet.values()].sort((a, b) =>
+      a.walletId.localeCompare(b.walletId) || a.mint.localeCompare(b.mint)
+    );
+    if (conversionSourceWallets.length === 0) {
+      return reject("no_authorized_conversion_source", "No fresh, verified reserve or operating wallet holds an explicitly approved conversion asset.");
+    }
     return {
       eligible: true,
       action: "conversion_required",
@@ -302,6 +349,7 @@ export function evaluatePaymentIntentPolicy(
       paymentWalletAvailableAtoms: paymentAvailable,
       replenishmentPlan,
       conversionShortfallAtoms: replenishmentPlan.shortfallAtoms - replenishmentPlan.totalPlannedAtoms,
+      conversionSourceWallets,
       requiresSignerAuthorization: true,
       ownerApprovalRequired: true
     };
