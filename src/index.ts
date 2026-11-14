@@ -2886,27 +2886,11 @@ async function submitSignedFundingLegTransaction(
   }
 
   const connection = new Connection(env.SOLANA_RPC_URL, "finalized");
-  let blockhashValid: boolean;
-  let estimatedFee: bigint | null;
-  try {
-    const validity = await connection.isBlockhashValid(verified.recentBlockhash as Blockhash, { commitment: "finalized" });
-    blockhashValid = validity.value;
-    estimatedFee = await verified.transaction.getEstimatedFee(connection);
-  } catch {
-    return json({ error: "solana_rpc_unavailable_before_broadcast" }, 503);
-  }
-  if (!blockhashValid) {
-    return json({ error: "signed_transaction_blockhash_expired",
-      note: "No transaction was broadcast. The existing reservation remains held; prepare a fresh transaction through the owner recovery flow." }, 409);
-  }
-  if (estimatedFee === null || estimatedFee < 0n ||
-      estimatedFee > BigInt(row.fee_maximum_fee_lamports)) {
-    return json({ error: "signed_transaction_fee_exceeds_approved_cap" }, 409);
-  }
-
+  // On retries, inspect the recorded signature before checking blockhash lifetime.
+  // A transaction may have finalized even after its recent blockhash expires.
   if (isRetry) {
     try {
-      const status = await connection.getSignatureStatuses([verified.signature]);
+      const status = await connection.getSignatureStatuses([verified.signature], { searchTransactionHistory: true });
       const observed = status.value[0];
       if (observed?.confirmationStatus === "finalized") {
         return reconcileFundingLegTransaction(request, env, intentId, legId);
@@ -2921,7 +2905,27 @@ async function submitSignedFundingLegTransaction(
         transactionSignature: verified.signature,
         note: "Signature lookup failed. The existing transaction remains recorded; retry this same signed payload." }, 503);
     }
-  } else {
+  }
+
+  let blockhashValid: boolean;
+  let estimatedFee: bigint | null;
+  try {
+    const validity = await connection.isBlockhashValid(verified.recentBlockhash as Blockhash, { commitment: "finalized" });
+    blockhashValid = validity.value;
+    estimatedFee = await verified.transaction.getEstimatedFee(connection);
+  } catch {
+    return json({ error: "solana_rpc_unavailable_before_broadcast" }, 503);
+  }
+  if (!blockhashValid) {
+    return json({ error: "signed_transaction_blockhash_expired",
+      note: "The recorded transaction was not found in signature history and its blockhash has expired. No new transaction was broadcast; the existing reservation remains held for owner recovery." }, 409);
+  }
+  if (estimatedFee === null || estimatedFee < 0n ||
+      estimatedFee > BigInt(row.fee_maximum_fee_lamports)) {
+    return json({ error: "signed_transaction_fee_exceeds_approved_cap" }, 409);
+  }
+
+  if (!isRetry) {
     const headers = new Headers(request.headers);
     headers.delete("content-length");
     headers.set("content-type", "application/json");
