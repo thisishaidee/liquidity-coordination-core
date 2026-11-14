@@ -937,6 +937,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     const pending = pendingX402Demo;
     if (!pending) return;
     button.disabled = true;
+    let paymentSigned = false;
     try {
       const paymentAddress = pending.body.paymentWalletAddress;
       const connector = window.NERITHJUPITER;
@@ -948,8 +949,15 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       }
       $("x402DemoStatus").textContent = "Opening Jupiter Mobile to approve the exact USDC API fee…";
       const paymentHeader = await connector.createX402PaymentHeader(pending.requirement, paymentAddress);
+      paymentSigned = true;
+      pendingX402Demo = null;
+      $("x402DemoPayment").hidden = true;
       $("x402DemoStatus").textContent = "Payment signed. Sending the paid request to Swap.io through NERITH…";
       const result = await requestX402Demo(pending.body, paymentHeader);
+      if (result.status === 402) {
+        $("x402DemoStatus").textContent = "Swap.io rejected the payment request and NERITH released the unpaid reservation. No settlement receipt was returned; request a fresh challenge before trying again.";
+        return;
+      }
       if (result.status === 202 || result.data?.error === "x402_settlement_pending") {
         pendingX402Demo = null;
         $("x402DemoPayment").hidden = true;
@@ -988,7 +996,13 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       pendingX402Demo = null;
       await loadAll();
     } catch (error) {
-      $("x402DemoStatus").textContent = "Paid quote did not complete: " + String(error.message || error);
+      if (paymentSigned) {
+        pendingX402Demo = null;
+        $("x402DemoPayment").hidden = true;
+        $("x402DemoStatus").textContent = "The signed payment request may have reached Swap.io, but the result could not be confirmed. Do not retry until the x402 reservation is checked. " + String(error.message || error);
+      } else {
+        $("x402DemoStatus").textContent = "Payment signing did not complete: " + String(error.message || error);
+      }
     } finally {
       button.disabled = false;
     }
