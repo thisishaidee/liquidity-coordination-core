@@ -12,6 +12,17 @@ describe("business-scoped admin route classification", () => {
     expect(describeAdminRoute("POST", "/v1/admin/telegram/permissions", new URLSearchParams("businessId=biz_a"), { businessId: "biz_b" })).toEqual({ kind: "invalid" });
   });
 
+  it("requires a business-scoped owner session for the Swap.io x402 demo quote", () => {
+    expect(describeAdminRoute("POST", "/v1/admin/x402/demo/quote", new URLSearchParams(), {
+      operatingWalletAddress: "wallet"
+    })).toEqual({ kind: "invalid" });
+    expect(describeAdminRoute("POST", "/v1/admin/x402/demo/quote", new URLSearchParams(), {
+      businessId: "biz_a", operatingWalletAddress: "wallet", paymentWalletAddress: "wallet"
+    })).toEqual({ kind: "business", businessId: "biz_a" });
+    expect(describeAdminRoute("GET", "/v1/admin/x402/demo/quote", new URLSearchParams("businessId=biz_a"), null))
+      .toEqual({ kind: "invalid" });
+  });
+
   it("requires an explicit business scope for funding-leg settlement writes", () => {
     const path = "/v1/admin/payment-intents/bpi_123/funding-legs/leg_456/submit-signed";
     expect(describeAdminRoute("POST", path, new URLSearchParams(), { signature: "untrusted" }))
