@@ -20,6 +20,7 @@ import { evaluatePaymentIntentPolicy, type PaymentIntent, type PaymentPolicy, ty
 import { fetchFinalizedSolanaTransaction } from "./solana-finalized-transaction";
 import { verifySolanaTokenTransfer, type SolanaPaymentTransaction } from "./payment-settlement";
 import { verifySolanaNetworkFee } from "./solana-network-fee";
+import { FINALIZED_TRANSACTION_READ_OPTIONS } from "./solana-rpc-options";
 import { fetchFinalizedSplTokenBalance } from "./solana-finalized-balance";
 
 interface Env {
@@ -5011,11 +5012,7 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
       transaction = await solanaRpc<TransactionResult | null>(
         env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com",
         "getTransaction",
-        [operation.transaction_hash, {
-          commitment: "finalized",
-          encoding: "jsonParsed",
-          maxSupportedTransactionVersion: 1
-        }]
+        [operation.transaction_hash, FINALIZED_TRANSACTION_READ_OPTIONS]
       );
     } catch {
       return json({ error: "transaction_verification_unavailable" }, 502);
