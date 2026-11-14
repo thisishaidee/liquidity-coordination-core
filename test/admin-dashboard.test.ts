@@ -754,6 +754,11 @@ describe("browser page script syntax", () => {
         expect(html).toContain("invalid_operations_response");
         expect(html).toContain("catch(error) { state.loadErrors[label]=true;failed.push({label,error}); }");
         expect(html).toContain('id="walletChooser"');
+        expect(html).toContain('id="connectX402Reserve"');
+        expect(html).toContain('purpose.value="api_payment"');
+        expect(html).toContain("A closed AppKit/Wallet Standard adapter must not block injected wallet fallbacks.");
+        expect(html).toContain("Retry ownership check");
+        expect(html).toContain("Connect the wallet that owns this exact address");
         for (const wallet of ["okx", "phantom", "solflare", "backpack", "jupiter", "browser"]) expect(html).toContain('data-wallet-choice="' + wallet + '"');
         expect(html).not.toContain("jup.ag/wallet");
         expect(html).toContain('id="jupiterWalletMount"');
