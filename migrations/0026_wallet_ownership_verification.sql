@@ -50,3 +50,27 @@ BEGIN
   WHERE wallet_id = NEW.id AND role <> 'api_payment';
   DELETE FROM wallet_ownership_challenges WHERE wallet_id = NEW.id;
 END;
+
+-- The database independently prevents enabling liquidity roles for an
+-- unverified wallet, even if a future API route forgets the application check.
+CREATE TRIGGER IF NOT EXISTS trg_wallet_role_requires_verified_owner_insert
+BEFORE INSERT ON wallet_role_assignments
+WHEN NEW.enabled = 1 AND NEW.role <> 'api_payment'
+  AND NOT EXISTS (
+    SELECT 1 FROM wallets w
+    WHERE w.id = NEW.wallet_id AND w.ownership_verified_at IS NOT NULL
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'wallet_ownership_not_verified');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_wallet_role_requires_verified_owner_update
+BEFORE UPDATE OF enabled, role, wallet_id ON wallet_role_assignments
+WHEN NEW.enabled = 1 AND NEW.role <> 'api_payment'
+  AND NOT EXISTS (
+    SELECT 1 FROM wallets w
+    WHERE w.id = NEW.wallet_id AND w.ownership_verified_at IS NOT NULL
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'wallet_ownership_not_verified');
+END;
