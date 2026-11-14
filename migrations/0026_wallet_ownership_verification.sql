@@ -32,3 +32,21 @@ UPDATE wallet_role_assignments
 SET enabled = 0, updated_at = datetime('now')
 WHERE role <> 'api_payment'
   AND wallet_id IN (SELECT id FROM wallets WHERE ownership_verified_at IS NULL);
+
+-- A changed address, network, business association or wallet scope invalidates
+-- the proof and disables liquidity roles until the new identity is verified.
+CREATE TRIGGER IF NOT EXISTS trg_wallet_ownership_reset_on_identity_change
+AFTER UPDATE OF address, network, business_id, scope ON wallets
+WHEN NEW.address <> OLD.address
+  OR NEW.network <> OLD.network
+  OR NEW.business_id <> OLD.business_id
+  OR NEW.scope <> OLD.scope
+BEGIN
+  UPDATE wallets
+  SET ownership_verified_at = NULL, ownership_verified_origin = NULL
+  WHERE id = NEW.id;
+  UPDATE wallet_role_assignments
+  SET enabled = 0, updated_at = datetime('now')
+  WHERE wallet_id = NEW.id AND role <> 'api_payment';
+  DELETE FROM wallet_ownership_challenges WHERE wallet_id = NEW.id;
+END;
