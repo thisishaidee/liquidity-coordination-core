@@ -10,6 +10,12 @@ NERITH is not a wallet, a custody service, a trading terminal, or an autonomous 
 
 The next milestone is documented in [AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md](AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md). Draft PR #51 adds the additive multi-wallet role schema, business-scoped role APIs, a responsive dashboard role-management surface, and deterministic USDC replenishment planning. These changes are branch-only and are not current production functionality until reviewed, merged and deployed with the D1 migration. The planner does not reserve balances or execute inter-wallet replenishment. The Worker still does not autonomously sign or broadcast transactions.
 
+## Wallet ownership verification status
+
+The draft ownership-proof increment adds a five-minute, single-use Solana message challenge bound to the allowed NERITH web origin, business, registered wallet address and mainnet network. The Worker verifies the Ed25519 signature against the public key decoded from the registered base58 address. It stores a hash of the signature, not the signature itself.
+
+This proof establishes address control only. It does not establish beneficial ownership, grant wallet roles automatically, authorize spending, or prove that a wallet is safe to use for every purpose. Business membership, role assignment and execution authority remain separate controls. Existing unverified liquidity roles are disabled by the draft migration until address control is verified. The implementation remains branch-only and is not live production functionality.
+
 ## The problem
 
 An autonomous agent can complete its reasoning and still fail because it does not have the right asset in the right wallet at the right time. A business may have enough value overall but have it split across wallets, held in the wrong token, or already committed to other work. A normal balance check does not answer whether a specific task can safely proceed.
