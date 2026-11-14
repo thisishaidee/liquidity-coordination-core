@@ -451,8 +451,15 @@ try {
     businessPaymentIntentIdentityImmutable = String(error).includes("business_payment_intent_identity_immutable");
     if (!businessPaymentIntentIdentityImmutable) throw error;
   }
-  const businessPaymentIntentCount = queryD1(`SELECT COUNT(*) AS count FROM business_payment_intents WHERE business_id = '${businessId}' AND idempotency_key = 'business-idem-12345678'`, "verifyBusinessPaymentIdempotency");
-  if (!duplicateBusinessIdempotencyRejected || !invalidPaymentIntentTransitionRejected || !businessPaymentIntentIdentityImmutable || Number(businessPaymentIntentCount[0]?.count) !== 1) {
+    let businessPaymentIntentExpiryImmutable = false;
+  try {
+    queryD1(`UPDATE business_payment_intents SET expires_at = datetime('now', '+2 days') WHERE id = '${businessPaymentIntentId}'`, "rejectBusinessPaymentIntentExpiryMutation");
+  } catch (error) {
+    businessPaymentIntentExpiryImmutable = String(error).includes("business_payment_intent_identity_immutable");
+    if (!businessPaymentIntentExpiryImmutable) throw error;
+  }
+const businessPaymentIntentCount = queryD1(`SELECT COUNT(*) AS count FROM business_payment_intents WHERE business_id = '${businessId}' AND idempotency_key = 'business-idem-12345678'`, "verifyBusinessPaymentIdempotency");
+  if (!duplicateBusinessIdempotencyRejected || !invalidPaymentIntentTransitionRejected || !businessPaymentIntentIdentityImmutable || !businessPaymentIntentExpiryImmutable || Number(businessPaymentIntentCount[0]?.count) !== 1) {
     throw new Error("Business payment intent uniqueness or immutable state guards failed.");
   }
   queryD1(`UPDATE wallet_role_assignments SET minimum_remaining_atoms = '500000', maximum_transfer_atoms = '600000' WHERE wallet_id = '${managedSecondReserveWalletId}' AND role = 'reserve'`, "applyManagedReserveLimits");
