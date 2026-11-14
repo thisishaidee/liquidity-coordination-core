@@ -42,7 +42,8 @@ describe("Solana wallet message verification", () => {
   it("verifies a valid Ed25519 message signature against the registered address", async () => {
     const generateEd25519KeyPair = crypto.subtle.generateKey as unknown as (algorithm: { name: string }, extractable: boolean, usages: string[]) => Promise<CryptoKeyPair>;
     const keyPair = await generateEd25519KeyPair({ name: "Ed25519" }, true, ["sign", "verify"]);
-    const publicKey = new Uint8Array(await crypto.subtle.exportKey("raw", keyPair.publicKey));
+    const exportedPublicKey = await crypto.subtle.exportKey("raw", keyPair.publicKey);
+    const publicKey = new Uint8Array(exportedPublicKey as ArrayBuffer);
     const address = encodeBase58(publicKey);
     const message = "NERITH wallet ownership challenge";
     const signature = new Uint8Array(await crypto.subtle.sign("Ed25519", keyPair.privateKey, new TextEncoder().encode(message)));
