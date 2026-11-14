@@ -15,6 +15,7 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 ## Product and security documentation
 
 - [Product and architecture overview](docs/PRODUCT_OVERVIEW.md)
+- [Autonomous multi-wallet liquidity architecture](docs/AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md) (implementation specification; not yet live)
 - [Static security audit (12 November 2026)](docs/SECURITY_AUDIT_2026-11-12.md)
 
 ## Current API
@@ -35,6 +36,8 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 | POST | `/v1/admin/agents/:id/disable` | Disable an agent credential |
 | POST | `/v1/admin/wallets/:id/disable` | Revoke a wallet after its active reservations clear |
 | POST | `/v1/admin/wallets` | Register an authorized Solana wallet |
+| GET | `/v1/admin/wallet-roles?businessId=...` | List business-scoped wallet roles |
+| POST | `/v1/admin/wallet-roles` | Assign or update a business wallet role and its reserve limits |
 | POST | `/v1/admin/balances` | Record a controlled manual balance snapshot |
 | POST | `/v1/admin/balances/sync` | Refresh registered wallet balances from Solana RPC |
 | POST | `/v1/admin/reservations/expire` | Platform-token-only manual sweep of expired reservations |
@@ -127,7 +130,7 @@ npm run typecheck
 npm test
 ```
 
-Use the dedicated Cloudflare D1 database already provisioned for this repository. Its ID is configured in `wrangler.toml`; migrations 0001 through 0023 are tracked in `migrations/`; apply all pending migrations and verify them in `d1_migrations`. For a fresh environment, create a D1 database and apply migrations:
+Use the dedicated Cloudflare D1 database already provisioned for this repository. Its ID is configured in `wrangler.toml`; migrations 0001 through 0025 are tracked in `migrations/`; apply all pending migrations and verify them in `d1_migrations`. For a fresh environment, create a D1 database and apply migrations:
 
 ```bash
 npx wrangler d1 create liquidity-coordination

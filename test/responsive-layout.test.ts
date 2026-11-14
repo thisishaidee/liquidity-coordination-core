@@ -43,6 +43,15 @@ describe("responsive page source contracts", () => {
     }
   });
 
+  it("provides responsive business wallet role controls without implying signing authority", () => {
+    expect(businessDashboardHtml).toContain('id="walletRolesList"');
+    expect(businessDashboardHtml).toContain('data-wallet-role-form');
+    expect(businessDashboardHtml).toContain('wallet-role-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));');
+    expect(businessDashboardHtml).toContain('@media(max-width:560px){.wallet-role-form{grid-template-columns:1fr}');
+    expect(businessDashboardHtml).toContain("A wallet role does not grant signing authority.");
+    expect(businessDashboardHtml).toContain('/v1/admin/wallet-roles?businessId=');
+  });
+
   it("declares business-dashboard action buttons as non-submit controls", () => {
     expect(businessDashboardHtml).not.toMatch(/<button\b(?![^>]*\btype\s*=)[^>]*>/i);
   });

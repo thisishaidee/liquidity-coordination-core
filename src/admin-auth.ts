@@ -27,7 +27,7 @@ export function describeAdminRoute(
   ) return { kind: "global" };
 
   if (
-    (method === "GET" && ["/v1/admin/workspace", "/v1/admin/operations", "/v1/admin/forecast", "/v1/admin/agents", "/v1/admin/wallets"].includes(pathname)) ||
+    (method === "GET" && ["/v1/admin/workspace", "/v1/admin/operations", "/v1/admin/forecast", "/v1/admin/agents", "/v1/admin/wallets", "/v1/admin/wallet-roles"].includes(pathname)) ||
     (method === "POST" && ["/v1/admin/agents", "/v1/admin/wallets", "/v1/admin/balances/sync", "/v1/admin/telegram/test", "/v1/admin/telegram/permissions", "/v1/admin/telegram/link-codes"].includes(pathname)) ||
     ((method === "GET" || method === "POST") && pathname === "/v1/admin/x402/budgets") ||
     (method === "GET" && pathname === "/v1/admin/telegram/connections")
@@ -38,6 +38,10 @@ export function describeAdminRoute(
   const agentMatch = pathname.match(/^\/v1\/admin\/agents\/([a-zA-Z0-9_-]+)\/(?:rotate-key|disable)$/);
   if (method === "POST" && agentMatch) {
     return { kind: "business", businessId, resource: { table: "agents", id: agentMatch[1] } };
+  }
+
+  if (method === "POST" && pathname === "/v1/admin/wallet-roles" && typeof body?.walletId === "string") {
+    return { kind: "business", businessId, resource: { table: "wallets", id: body.walletId } };
   }
 
   const walletMatch = pathname.match(/^\/v1\/admin\/wallets\/([a-zA-Z0-9_-]+)\/disable$/);
