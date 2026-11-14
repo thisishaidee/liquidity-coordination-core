@@ -54,7 +54,7 @@ A reserve-replenishment plan with three source wallets creates three transfer le
 
 ### Reservation ledger
 
-The draft adds a nullable funding_leg_id link to the existing reservations table. It does not yet change the existing manual balance-reservation logic. Do not duplicate the existing reservation ledger without a clear ownership boundary. Two implementation choices need a short prototype:
+The draft adds a nullable funding_leg_id link and a reservation_source discriminator to the existing reservations table. Legacy rows remain on the existing manual accounting path. New rows marked managed are reserved and released by database triggers, which conditionally update wallet_balances and abort when the balance ledger cannot satisfy the request. The release/complete handlers distinguish managed rows so they do not double-debit them. No endpoint currently creates managed rows, so the existing production flow remains unchanged. Do not duplicate the existing reservation ledger without a clear ownership boundary. Two implementation choices need a short prototype:
 
 1. Extend reservations with a nullable business_payment_intent_id / leg_id and a clear reservation_kind, preserving operation_id for the existing agent flow.
 2. Add a dedicated business_payment_reservations table linked to payment intent legs.
