@@ -6,7 +6,7 @@ The current branch implements Wallet Standard discovery for ownership challenges
 
 ## Platform requirement
 
-Wallet handoff is platform-neutral. Android is an early test target because the project is being developed and validated on an Android device; it is not the product's platform boundary.
+Wallet handoff is platform-neutral. Android is an early test target because the project is being developed and validated on an Android device; it is not the product's platform boundary. The table below describes target adapter strategies, not verified implementations. The current dashboard signing path uses Wallet Standard only; WalletConnect and platform-specific deep-link adapters remain future work.
 
 | Surface | Connection strategy | Required return path |
 |---|---|---|
@@ -22,8 +22,7 @@ The UI currently uses the Wallet Standard interface rather than wallet-brand-spe
 - Discover providers available in the current runtime.
 - Connect and return the public key plus network/cluster.
 - Request signing of an explicitly reviewed unsigned transaction.
-- Never broadcast automatically unless a separately approved execution design explicitly requires it.
-- Return the signed transaction/signature to the originating NERITH session.
+- Return the signed transaction bytes to the originating NERITH session. The Worker broadcasts only after it independently verifies the signatures, prepared message digest, approved transfer instruction and fee cap.
 - Disconnect, expire and restore sessions safely.
 
 Vendor integrations belong behind adapters. Initial candidates for device testing are OKX, Phantom, Solflare and Backpack, but availability and Solana transaction-signing support must be confirmed per platform and SDK version. A provider appearing in a detection list is not evidence of a working handoff.
@@ -41,7 +40,7 @@ The implemented builder returns an unsigned legacy transaction and an SHA-256 di
 - After every wallet response, extract the message bytes and compare their SHA-256 digest with the prepared digest. Treat cancellation, provider switching, stale blockhashes and partial signature collection as incomplete. Do not submit until every required signature is present.
 - Never ask one wallet to sign on behalf of another, and never interpret a connected session or ownership challenge as transaction authorization.
 
-The `POST /v1/admin/payment-intents/:intentId/funding-legs/:legId/submit-signed` endpoint receives the fully signed bytes and prepared digest. Before broadcast, the Worker verifies the message digest, exact fee payer/source-owner signer set, cryptographic signatures, one checked USDC transfer, exact accounts, amount and decimals, blockhash validity and fee cap. It records the signature before broadcast and supports retrying the same signed payload. Finalized on-chain reconciliation remains a separate required step. The fee payer signature is not interchangeable with the source owner's SPL-token authority signature. The UI and device handoff are not implemented yet.
+The `POST /v1/admin/payment-intents/:intentId/funding-legs/:legId/submit-signed` endpoint receives the fully signed bytes and prepared digest. Before broadcast, the Worker verifies the message digest, exact fee payer/source-owner signer set, cryptographic signatures, one checked USDC transfer, exact accounts, amount and decimals, blockhash validity and fee cap. It records the signature before broadcast and supports retrying the same signed payload. Finalized on-chain reconciliation remains a separate required step. The fee payer signature is not interchangeable with the source owner's SPL-token authority signature. The business dashboard signing UI is implemented, but real wallet-provider and device handoff testing has not passed.
 
 ## Transaction trust boundary
 
