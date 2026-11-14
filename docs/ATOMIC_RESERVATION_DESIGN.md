@@ -60,7 +60,7 @@ The draft branch wires the foundation into:
 - Existing agent completion is blocked for business payment intents. An agent cannot self-report an on-chain payment as complete.
 - Reservation expiry also moves eligible payment intents to expired and releases holds.
 
-The deterministic policy evaluator checks business scope, verified/fresh payment and reserve wallets, mint/destination allowlists, transaction and daily caps, reserve floors, per-transfer limits, fee-payer policy, network-fee caps, conversion-source allowlists, slippage and explicit partial-payment permission. The database re-checks mutable policy constraints when inserting the intent so concurrent requests cannot both consume the same daily allowance based only on a stale application read.
+The deterministic policy evaluator checks business scope, verified/fresh payment and reserve wallets, mint/destination allowlists, transaction and daily caps, reserve floors, per-transfer limits, fee-payer policy, network-fee caps, conversion-source allowlists, slippage and explicit partial-payment permission. A separate pure module, `src/payment-settlement.ts`, now verifies a parsed finalized SPL-token transfer against the expected funding leg: submitted signature, source-wallet signer, source/destination token-account owners, mint, exact amount and both token-balance deltas. It rejects extra top-level value-moving instructions and unapproved inner instructions. This verifier is unit-tested but is not yet connected to an RPC reconciliation endpoint. The database re-checks mutable policy constraints when inserting the intent so concurrent requests cannot both consume the same daily allowance based only on a stale application read.
 
 All of the above remains branch-only. No production migration or deployment has occurred.
 
@@ -82,7 +82,7 @@ A reserve-replenishment plan with multiple source wallets creates one distinct l
 - Build exact SPL Token / Token-2022 transfer instructions from verified source token accounts to the approved destination token account.
 - Resolve and validate associated token accounts, token program IDs, decimals and mint ownership; do not treat an arbitrary base58 key as proof of a valid token account.
 - Create an unsigned transaction for owner review and wallet signing. The browser must not hold or expose agent API keys or private keys.
-- Add transaction submission and reconciliation endpoints. Verify finalized transaction metadata against expected signer, source account, destination account, mint, amount and operation/leg before changing a leg to confirmed.
+- Wire the pure SPL-token transfer verifier into authenticated transaction-submission and reconciliation endpoints. Verify finalized transaction metadata against expected signer, source account, destination account, mint, amount and operation/leg before changing a leg to confirmed.
 - Refresh destination wallet balances from Solana RPC after each confirmed replenishment before preparing final payment.
 - Add a tested manual owner-signing fallback first; real Android OKX, Phantom, Solflare and Backpack handoff must be tested before claiming support.
 - Implement the Telegram Mini App review/handoff only after validating Telegram `initData`, scoped sessions, roles, replay protection and operation-bound approvals.
@@ -104,6 +104,7 @@ A reserve-replenishment plan with multiple source wallets creates one distinct l
 - [x] Database policy insert guard checks allowlists and daily limits.
 - [ ] Concurrent request stress test for overlapping source-wallet reservations.
 - [ ] Expiry integration test for mixed managed USDC and managed-fee SOL reservations.
+- [x] Pure SPL-token transfer verifier tests: exact signature, signer, recipient, mint, amount, source/destination balance deltas, duplicate transfers and unapproved programs.
 - [ ] On-chain funding-leg submission and reconciliation tests.
 - [ ] Real wallet transaction-signing and Android handoff tests.
 
