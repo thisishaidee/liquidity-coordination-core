@@ -2455,7 +2455,8 @@ type FundingLegSettlementRow = {
   fee_payer_address: string | null; fee_payer_wallet_status: string | null;
   fee_payer_verified_at: string | null; fee_payer_scope: string | null;
   fee_payer_role_authorized: number; network_fee_lamports: string;
-  fee_reservation_id: string | null;
+  fee_reservation_id: string | null; fee_ledger_id: string | null;
+  fee_ledger_status: string | null; fee_maximum_fee_lamports: string | null;
 };
 
 async function getFundingLegSettlementRow(
@@ -2500,7 +2501,10 @@ async function getFundingLegSettlementRow(
                AND role.role = 'payment' AND role.enabled = 1
            ) ELSE 1 END AS destination_role_authorized,
            reservation.id AS reservation_id,
-           fee_reservation.id AS fee_reservation_id
+           fee_reservation.id AS fee_reservation_id,
+           fee_ledger.id AS fee_ledger_id,
+           fee_ledger.status AS fee_ledger_status,
+           fee_ledger.maximum_fee_lamports AS fee_maximum_fee_lamports
     FROM operation_funding_legs l
     JOIN operations op ON op.id = l.operation_id
     JOIN business_payment_intents i ON i.operation_id = op.id AND i.business_id = op.business_id
@@ -2511,6 +2515,8 @@ async function getFundingLegSettlementRow(
       ON reservation.funding_leg_id = l.id AND reservation.status = 'active'
     LEFT JOIN reservations fee_reservation
       ON fee_reservation.operation_id = op.id AND fee_reservation.reservation_source = 'managed_fee' AND fee_reservation.status = 'active'
+    LEFT JOIN operation_funding_leg_fees fee_ledger
+      ON fee_ledger.funding_leg_id = l.id AND fee_ledger.operation_id = op.id
     WHERE i.id = ? AND l.id = ? AND op.business_id = ?
     LIMIT 1
   `).bind(intentId, legId, businessId).first<FundingLegSettlementRow>();
@@ -2547,11 +2553,11 @@ async function submitFundingLegTransaction(
   if (!row.reservation_id || row.source_status !== "active" || row.source_scope !== "business" || !row.source_verified_at || row.source_role_authorized !== 1) {
     return json({ error: "funding_leg_reservation_or_source_invalid" }, 409);
   }
-  if (row.leg_kind === "final_payment" &&
-      (row.fee_payer_wallet_status !== "active" || row.fee_payer_scope !== "business" ||
-       !row.fee_payer_verified_at || row.fee_payer_role_authorized !== 1 ||
-       (BigInt(row.network_fee_lamports) > 0n && !row.fee_reservation_id))) {
-    return json({ error: "final_payment_fee_wallet_or_reservation_invalid" }, 409);
+  if (row.fee_payer_wallet_status !== "active" || row.fee_payer_scope !== "business" ||
+      !row.fee_payer_verified_at || row.fee_payer_role_authorized !== 1 ||
+      !row.fee_reservation_id || !row.fee_ledger_id || row.fee_ledger_status !== "reserved" ||
+      row.fee_maximum_fee_lamports !== row.network_fee_lamports) {
+    return json({ error: "funding_leg_fee_wallet_or_reservation_invalid" }, 409);
   }
   if (row.leg_kind === "reserve_replenishment" &&
       (!row.destination_wallet_id || row.destination_wallet_status !== "active" ||
@@ -2581,6 +2587,11 @@ async function submitFundingLegTransaction(
       )
   `).bind(body.signature, legId, row.operation_id,
     row.leg_status === "reserved" ? "awaiting_signature" : row.leg_status));
+  statements.push(env.DB.prepare(`
+    UPDATE operation_funding_leg_fees
+    SET transaction_hash = ?, status = 'submitted', updated_at = datetime('now')
+    WHERE id = ? AND funding_leg_id = ? AND status = 'reserved' AND transaction_hash IS NULL
+  `).bind(body.signature, row.fee_ledger_id, legId));
   if (row.leg_kind === "final_payment") {
     statements.push(env.DB.prepare(`
       UPDATE business_payment_intents SET status = 'submitted', updated_at = datetime('now')
