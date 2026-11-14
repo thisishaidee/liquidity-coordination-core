@@ -242,6 +242,33 @@ try {
       quoteResponse.status + " body: " + quoteBodyText);
   }
 
+  if (!hermesMockRequest || hermesMockRequest.method !== "POST" ||
+      hermesMockRequest.path !== "/v1/swap/quote" ||
+      Object.hasOwn(hermesMockRequest.headers, "x-payment")) {
+    throw new Error("Worker did not send the expected unpaid quote request to the local Hermes fixture, or unexpectedly sent X-PAYMENT.");
+  }
+  const forwardedPayload = JSON.parse(hermesMockRequest.body);
+  if (forwardedPayload?.input?.token !== "So11111111111111111111111111111111111111112" ||
+      forwardedPayload?.input?.amount !== "1000000000" ||
+      forwardedPayload?.input?.chainKey !== "sol" ||
+      forwardedPayload?.output?.token !== "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" ||
+      forwardedPayload?.output?.chainKey !== "sol" ||
+      forwardedPayload?.userAddress !== operatingAddress ||
+      forwardedPayload?.slippageBps !== 50) {
+    throw new Error("Worker's forwarded Hermes quote payload did not match the expected SOL-to-USDC request.");
+  }
+  output.steps.forwardedHermesRequest = {
+    method: hermesMockRequest.method,
+    path: hermesMockRequest.path,
+    headers: {
+      contentType: hermesMockRequest.headers["content-type"],
+      hasPaymentHeader: Object.hasOwn(hermesMockRequest.headers, "x-payment"),
+      liquidityOperationId: hermesMockRequest.headers["x-liquidity-operation-id"],
+      liquidityRequiredUsdc: hermesMockRequest.headers["x-liquidity-required-usdc"]
+    },
+    body: forwardedPayload
+  };
+
   const requirement = quoteBody.accepts.find(item =>
     item?.scheme === "exact" &&
     item?.network === "solana" &&
