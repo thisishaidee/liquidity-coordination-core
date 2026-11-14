@@ -245,6 +245,25 @@ try {
   queryD1(`UPDATE reservations SET status = 'released', released_at = datetime('now') WHERE id = '${managedReservationId}' AND status = 'active'`, "releaseManagedFundingReservation");
   const reservedAfterRelease = queryD1(`SELECT reserved_atoms FROM wallet_balances WHERE id = '${managedReserveBalanceId}'`, "verifyManagedReservationRelease");
   if (reservedAfterRelease[0]?.reserved_atoms !== "0") throw new Error("Managed reservation release did not decrement the aggregate exactly once.");
+  const batchReservationOneId = "res_" + randomBytes(16).toString("hex");
+  const batchReservationTwoId = "res_" + randomBytes(16).toString("hex");
+  let atomicMultiRowReservationRejected = false;
+  try {
+    queryD1(`INSERT INTO reservations
+      (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
+      VALUES
+      ('${batchReservationOneId}', '${managedOperationId}', '${managedReserveBalanceId}', '3000000', 'USDC', 'active', datetime('now', '+15 minutes'), '${managedLegId}', 'managed'),
+      ('${batchReservationTwoId}', '${managedOperationId}', '${managedReserveBalanceId}', '3000000', 'USDC', 'active', datetime('now', '+15 minutes'), '${managedSecondLegId}', 'managed')`, "rejectNonAtomicMultiWalletReservation");
+  } catch (error) {
+    atomicMultiRowReservationRejected = String(error).includes("managed_reservation_insufficient_balance");
+    if (!atomicMultiRowReservationRejected) throw error;
+  }
+  if (!atomicMultiRowReservationRejected) throw new Error("Multi-row reservation exceeded the confirmed source balance.");
+  const afterAtomicFailure = queryD1(`SELECT reserved_atoms FROM wallet_balances WHERE id = '${managedReserveBalanceId}'`, "verifyAtomicMultiRowReservationRollback");
+  const afterAtomicFailureRows = queryD1(`SELECT COUNT(*) AS count FROM reservations WHERE id IN ('${batchReservationOneId}', '${batchReservationTwoId}')`, "verifyAtomicMultiRowReservationRows");
+  if (afterAtomicFailure[0]?.reserved_atoms !== "0" || Number(afterAtomicFailureRows[0]?.count ?? 0) !== 0) {
+    throw new Error("Failed multi-row reservation did not roll back every row and balance update.");
+  }
 
   queryD1(`UPDATE operation_funding_legs SET status = 'reserved' WHERE id = '${managedLegId}'`, "fundingLegToReserved");
   queryD1(`UPDATE operation_funding_legs SET status = 'awaiting_signature' WHERE id = '${managedLegId}'`, "fundingLegAwaitingSignature");
@@ -263,6 +282,8 @@ try {
     rejectedOverReservation: insufficientManagedReservationRejected,
     reservedAfterRejectedInsert: reservedAfterRejectedInsert[0].reserved_atoms,
     reservedAfterRelease: reservedAfterRelease[0].reserved_atoms,
+    atomicMultiRowReservationRejected,
+    reservedAfterAtomicFailure: afterAtomicFailure[0].reserved_atoms,
     fundingLegConfirmed: true,
     confirmedLegRegressionRejected: fundingLegRegressionRejected
   };
