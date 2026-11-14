@@ -4348,6 +4348,10 @@ async function expireReservations(env: Env): Promise<{ expired: number; skipped:
         SELECT 1 FROM business_payment_intents payment_intent
         WHERE payment_intent.operation_id = o.id AND payment_intent.status = 'ambiguous'
       )
+      AND NOT EXISTS (
+        SELECT 1 FROM operation_funding_legs pending_leg
+        WHERE pending_leg.operation_id = o.id AND pending_leg.status IN ('submitted', 'ambiguous')
+      )
     ORDER BY o.created_at ASC
     LIMIT 100
   `).all<{ id: string; business_id: string; status: string }>();
