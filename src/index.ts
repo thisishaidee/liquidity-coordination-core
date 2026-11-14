@@ -22,7 +22,7 @@ import { verifySolanaTokenTransfer, type SolanaPaymentTransaction } from "./paym
 import { verifySolanaNetworkFee } from "./solana-network-fee";
 import { FINALIZED_TRANSACTION_READ_OPTIONS } from "./solana-rpc-options";
 import { buildUsdcFundingTransaction, verifySignedUsdcFundingTransaction } from "./solana-funding-transaction";
-import { Connection } from "@solana/web3.js";
+import { Connection, type Blockhash } from "@solana/web3.js";
 import { fetchFinalizedSplTokenBalance } from "./solana-finalized-balance";
 
 interface Env {
@@ -2792,7 +2792,8 @@ async function submitSignedFundingLegTransaction(
 ): Promise<Response> {
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
   const businessId = new URL(request.url).searchParams.get("businessId") ?? "";
-  if (!businessId || !env.SOLANA_RPC_URL) return json({ error: "business_id_or_solana_rpc_required" }, 400);
+  if (!businessId) return json({ error: "business_id_required" }, 400);
+  if (!env.SOLANA_RPC_URL || !env.SOLANA_USDC_MINT) return json({ error: "solana_rpc_or_usdc_mint_not_configured" }, 503);
   const body = await readJson(request);
   if (!body || typeof body.transactionBase64 !== "string" ||
       body.transactionBase64.length > 22_000 ||
@@ -2818,6 +2819,15 @@ async function submitSignedFundingLegTransaction(
   if (!row.fee_payer_address || !row.fee_maximum_fee_lamports ||
       !row.source_address || !row.asset_mint || !/^[1-9][0-9]{0,18}$/.test(row.amount_atoms)) {
     return json({ error: "funding_leg_transaction_identity_invalid" }, 409);
+  }
+  if (row.asset_mint !== env.SOLANA_USDC_MINT || Date.parse(row.intent_expires_at) <= Date.now() ||
+      !row.reservation_id || row.source_status !== "active" || row.source_scope !== "business" ||
+      !row.source_verified_at || row.source_role_authorized !== 1 ||
+      row.fee_payer_wallet_status !== "active" || row.fee_payer_scope !== "business" ||
+      !row.fee_payer_verified_at || row.fee_payer_role_authorized !== 1 ||
+      !row.fee_reservation_id || !row.fee_ledger_id ||
+      row.fee_reservation_amount !== row.network_fee_budget_lamports) {
+    return json({ error: "funding_leg_wallet_or_reservation_invalid" }, 409);
   }
   const destinationOwner = row.leg_kind === "reserve_replenishment"
     ? row.destination_wallet_address : row.destination_address;
@@ -2865,7 +2875,7 @@ async function submitSignedFundingLegTransaction(
   let blockhashValid: boolean;
   let estimatedFee: bigint | null;
   try {
-    const validity = await connection.isBlockhashValid(verified.recentBlockhash, "finalized");
+    const validity = await connection.isBlockhashValid(verified.recentBlockhash as Blockhash, "finalized");
     blockhashValid = validity.value;
     estimatedFee = await verified.transaction.getEstimatedFee(connection);
   } catch {
