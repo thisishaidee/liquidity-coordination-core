@@ -2061,6 +2061,11 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
     : decision.replenishmentPlan.shortfallAtoms;
   const finalLegId = "leg_" + crypto.randomUUID().replaceAll("-", "");
   const finalLegAmount = paymentAtoms.toString();
+  const feeTransactionCount = decision.action === "conversion_required" ? 0 : replenishmentLegs.length + 1;
+  const feeBudgetLamports = (BigInt(networkFeeLamports) * BigInt(feeTransactionCount)).toString();
+  if (BigInt(feeBudgetLamports) > 9_223_372_036_854_775_807n) {
+    return json({ error: "network_fee_budget_overflow" }, 409);
+  }
   const statements: D1PreparedStatement[] = [
     env.DB.prepare(`
       INSERT INTO operations
@@ -2076,19 +2081,19 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
       INSERT INTO business_payment_intents (
         id, business_id, operation_id, idempotency_key, destination, mint,
         requested_atoms, payment_atoms, fee_payer_wallet_id, network_fee_lamports,
-        allow_partial_payment, slippage_bps, action, status, policy_version, policy_snapshot, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        network_fee_budget_lamports, allow_partial_payment, slippage_bps, action, status, policy_version, policy_snapshot, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       paymentIntentId, agent.business_id, operationId, idempotencyKey, destination, mint,
       requestedAtoms.toString(), paymentAtoms.toString(), feePayerWalletId, networkFeeLamports,
-      allowPartialPayment ? 1 : 0, slippageBps, paymentAction, intentStatus, policyRow.version,
+      feeBudgetLamports, allowPartialPayment ? 1 : 0, slippageBps, paymentAction, intentStatus, policyRow.version,
       JSON.stringify({ ...policy, committedTodayAtoms: committedTodayAtoms.toString() }),
       expiresAt.toISOString()
     )
   ];
 
   const reservationDetails: Array<{ id: string; fundingLegId: string | null; walletId: string; token: string; amountAtoms: string }> = [];
-  if (decision.action !== "conversion_required" && BigInt(networkFeeLamports) > 0n) {
+  if (decision.action !== "conversion_required" && BigInt(feeBudgetLamports) > 0n) {
     const feePayerWalletRow = (walletRows.results ?? []).find(row =>
       row.wallet_id === feePayerWalletId && row.token === "SOL" &&
       (row.role === "payment" || row.role === "operating")
@@ -2099,8 +2104,8 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
       INSERT INTO reservations
         (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
       VALUES (?, ?, ?, ?, 'SOL', 'active', ?, NULL, 'managed_fee')
-    `).bind(feeReservationId, operationId, feePayerWalletRow.balance_id, networkFeeLamports, expiresAt.toISOString()));
-    reservationDetails.push({ id: feeReservationId, fundingLegId: null, walletId: feePayerWalletId, token: "SOL", amountAtoms: networkFeeLamports });
+    `).bind(feeReservationId, operationId, feePayerWalletRow.balance_id, feeBudgetLamports, expiresAt.toISOString()));
+    reservationDetails.push({ id: feeReservationId, fundingLegId: null, walletId: feePayerWalletId, token: "SOL", amountAtoms: feeBudgetLamports });
   }
   const fundingLegDetails: Array<{ id: string; kind: string; sourceWalletId: string; destinationWalletId: string | null; amountAtoms: string; status: string }> = [];
   for (const [index, planLeg] of replenishmentLegs.entries()) {
@@ -2120,6 +2125,11 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
     `).bind(legId, operationId, index, planLeg.sourceWalletId, decision.paymentWalletId,
       paymentWalletRow.address, mint, amountAtoms));
     statements.push(env.DB.prepare(`
+      INSERT INTO operation_funding_leg_fees
+        (id, operation_id, funding_leg_id, fee_payer_wallet_id, maximum_fee_lamports, status)
+      VALUES (?, ?, ?, ?, ?, 'reserved')
+    `).bind("fee_" + crypto.randomUUID().replaceAll("-", ""), operationId, legId, feePayerWalletId, networkFeeLamports));
+    statements.push(env.DB.prepare(`
       INSERT INTO reservations
         (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
       VALUES (?, ?, ?, ?, 'USDC', 'active', ?, ?, 'managed')
@@ -2135,6 +2145,11 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
         (id, operation_id, leg_index, kind, source_wallet_id, destination_address, asset_mint, amount_atoms, status)
       VALUES (?, ?, ?, 'final_payment', ?, ?, ?, ?, 'planned')
     `).bind(finalLegId, operationId, replenishmentLegs.length, decision.paymentWalletId, destination, mint, finalLegAmount));
+    statements.push(env.DB.prepare(`
+      INSERT INTO operation_funding_leg_fees
+        (id, operation_id, funding_leg_id, fee_payer_wallet_id, maximum_fee_lamports, status)
+      VALUES (?, ?, ?, ?, ?, 'reserved')
+    `).bind("fee_" + crypto.randomUUID().replaceAll("-", ""), operationId, finalLegId, feePayerWalletId, networkFeeLamports));
     if (!needsReplenishment) {
       statements.push(env.DB.prepare("UPDATE operation_funding_legs SET status = 'reserved' WHERE id = ?").bind(finalLegId));
       const paymentReservationId = "res_" + crypto.randomUUID().replaceAll("-", "");
