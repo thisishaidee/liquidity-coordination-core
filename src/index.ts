@@ -28,7 +28,8 @@ interface Env {
   TELEGRAM_TOTP_ENCRYPTION_KEY?: string;
   NERITH_SUPPORT_URL?: string;
   NERITH_PUBLIC_URL?: string;
-  HERMES_BASE_URL?: string;
+  NERITH_TEST_MODE?: string;
+  HERMES_TEST_402_FIXTURE?: string;
 }
 
 type AgentRow = {
@@ -2392,11 +2393,30 @@ async function proxyHermes(
 
   let upstream: Response;
   try {
-    const hermesBaseUrl = x402Context?.env.HERMES_BASE_URL ?? "https://hermes.swap.io";
-    upstream = await fetch(new URL(path, hermesBaseUrl), {
-      method: "POST", headers, body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(12_000), redirect: "error"
-    });
+    const testFixture = x402Context?.env.NERITH_TEST_MODE === "true"
+      ? x402Context.env.HERMES_TEST_402_FIXTURE
+      : undefined;
+    if (testFixture) {
+      // CI-only replay of a real, previously captured unpaid Hermes 402 response.
+      // Production must leave NERITH_TEST_MODE unset and always use the live Hermes host.
+      const fixture = JSON.parse(atob(testFixture)) as {
+        status?: number;
+        body?: string;
+        headers?: Record<string, string>;
+      };
+      if (fixture.status !== 402 || typeof fixture.body !== "string") {
+        throw new Error("Invalid local Hermes 402 test fixture.");
+      }
+      upstream = new Response(fixture.body, {
+        status: 402,
+        headers: fixture.headers ?? { "content-type": "application/json" }
+      });
+    } else {
+      upstream = await fetch(new URL(path, "https://hermes.swap.io"), {
+        method: "POST", headers, body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(12_000), redirect: "error"
+      });
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown upstream fetch error";
     console.error("hermes_upstream_fetch_failed", { path, error: message.slice(0, 240) });
