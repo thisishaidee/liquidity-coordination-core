@@ -230,7 +230,7 @@ try {
   queryD1(`INSERT INTO wallet_balances (id, wallet_id, token, confirmed_atoms, reserved_atoms, observed_at, source)
     VALUES ('${managedReserveBalanceId}', '${managedReserveWalletId}', 'USDC', '5000000', '0', datetime('now'), 'managed_reservation_fixture')`, "insertManagedReserveBalance");
   queryD1(`INSERT INTO wallet_balances (id, wallet_id, token, confirmed_atoms, reserved_atoms, observed_at, source)
-    VALUES ('${managedPaymentBalanceId}', '${managedPaymentWalletId}', 'USDC', '1000000', '0', datetime('now'), 'managed_reservation_fixture')`, "insertManagedPaymentBalance");
+    VALUES ('${managedPaymentBalanceId}', '${managedPaymentWalletId}', 'USDC', '2000000', '0', datetime('now'), 'managed_reservation_fixture')`, "insertManagedPaymentBalance");
   queryD1(`INSERT INTO wallet_balances (id, wallet_id, token, confirmed_atoms, reserved_atoms, observed_at, source)
     VALUES ('${managedPaymentSolBalanceId}', '${managedPaymentWalletId}', 'SOL', '1000000000', '0', datetime('now'), 'managed_reservation_fixture')`, "insertManagedPaymentSolBalance");
   queryD1(`INSERT INTO wallets
