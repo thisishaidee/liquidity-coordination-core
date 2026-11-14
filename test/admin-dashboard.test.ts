@@ -711,11 +711,15 @@ describe("browser page script syntax", () => {
     expect(connectorResponse.status).toBe(200);
     const connectorJs = await connectorResponse.text();
     expect(connectorJs).toContain("NERITHOKX");
+    expect(connectorJs).toContain("signTransaction");
     expect(() => new Function(connectorJs)).not.toThrow();
     const jupiterResponse = await worker.fetch(new Request("https://nerith.test/assets/jupiter-mobile-connector.js"), env);
     expect(jupiterResponse.status).toBe(200);
     const jupiterJs = await jupiterResponse.text();
     expect(jupiterJs).toContain("NERITHJUPITER");
+    expect(jupiterJs).toContain("NERITHSOLANA");
+    expect(jupiterJs).toContain("solana:signTransaction");
+    expect(jupiterJs).toContain("Wallet Standard account");
     expect(jupiterJs).toContain("13a7a3c0065f86dab70a544edc8ed07d");
     expect(jupiterJs).toContain("prepareX402Payment");
     expect(jupiterJs).toContain("signPreparedX402Payment");
@@ -755,6 +759,8 @@ describe("browser page script syntax", () => {
         expect(html).toContain('src="/assets/jupiter-mobile-connector.js"');
         expect(html).toContain("window.NERITHJUPITER?.connect");
         expect(html).toContain("window.NERITHJUPITER.signMessage");
+        expect(html).toContain("window.NERITHSOLANA");
+        expect(html).toContain("getX402WalletSigner");
         expect(html).toContain("prepareX402Payment");
         expect(html).toContain("signPreparedX402Payment");
         expect(html).toContain('id="x402DemoPanel"');
