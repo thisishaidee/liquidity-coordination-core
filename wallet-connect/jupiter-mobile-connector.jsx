@@ -2,7 +2,7 @@ import React, { useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { useWrappedReownAdapter } from "@jup-ag/jup-mobile-adapter";
 import { Connection, ComputeBudgetProgram, PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
-import { createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { createTransferCheckedInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 
 const REOWN_PROJECT_ID = "13a7a3c0065f86dab70a544edc8ed07d";
 const MAINNET_ADDRESS_PREFIX = "solana:";
@@ -80,16 +80,14 @@ function JupiterMobileBridge() {
         const sourceInfo = await connection.getAccountInfo(sourceAta, "confirmed");
         if (!sourceInfo) throw new Error("This Jupiter account has no Solana USDC token account.");
         const destinationInfo = await connection.getAccountInfo(destinationAta, "confirmed");
+        if (!destinationInfo) throw new Error("Swap.io's USDC receiving account is not initialized; refusing to add extra instructions to the x402 payment.");
         const instructions = [
           ComputeBudgetProgram.setComputeUnitLimit({ units: 40000 }),
-          ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1 })
+          ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1 }),
+          createTransferCheckedInstruction(
+            sourceAta, mint, destinationAta, payer, BigInt(requirement.maxAmountRequired), 6
+          )
         ];
-        if (!destinationInfo) {
-          instructions.push(createAssociatedTokenAccountIdempotentInstruction(feePayer, destinationAta, recipient, mint));
-        }
-        instructions.push(createTransferCheckedInstruction(
-          sourceAta, mint, destinationAta, payer, BigInt(requirement.maxAmountRequired), 6
-        ));
         const latest = await connection.getLatestBlockhash("confirmed");
         const message = new TransactionMessage({
           payerKey: feePayer,
