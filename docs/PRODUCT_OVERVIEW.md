@@ -10,6 +10,10 @@ NERITH is not a wallet, a custody service, a trading terminal, or an autonomous 
 
 The next milestone is documented in [AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md](AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md). Draft PR #51 adds the additive multi-wallet role schema, business-scoped role APIs, a responsive dashboard role-management surface, and deterministic USDC replenishment planning. These changes are branch-only and are not current production functionality until reviewed, merged and deployed with the D1 migration. The planner does not reserve balances or execute inter-wallet replenishment. The Worker still does not autonomously sign or broadcast transactions.
 
+## Deterministic payment policy status
+
+The draft also includes a pure payment-intent policy evaluator. It applies business and wallet scope, ownership verification, asset/destination allowlists, amount and daily caps, balance freshness, reserve floors, transfer caps, SOL network-fee payer policy, idempotency replay checks, and conditional conversion/slippage requirements. It produces plans only; it is not connected to a signer or fund-movement endpoint.
+
 ## Wallet ownership verification status
 
 The draft ownership-proof increment adds a five-minute, single-use Solana message challenge bound to the allowed NERITH web origin, business, registered wallet address and mainnet network. The Worker verifies the Ed25519 signature against the public key decoded from the registered base58 address. It stores a hash of the signature, not the signature itself.
