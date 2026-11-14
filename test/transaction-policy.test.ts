@@ -87,7 +87,7 @@ describe("deterministic payment intent policy", () => {
   it("allows direct payment from one verified, fresh payment wallet", () => {
     const result = evaluate(intent(), policy(), [wallet()], now);
     expect(result.eligible).toBe(true);
-    if (result.eligible) {
+    if (result.eligible && result.action === "direct_payment") {
       expect(result.action).toBe("direct_payment");
       expect(result.paymentWalletId).toBe("wallet_payment");
       expect(result.paymentAmountAtoms).toBe(5_000_000n);
@@ -177,7 +177,7 @@ describe("deterministic payment intent policy", () => {
     });
     const result = evaluate(intent({ slippageBps: 50 }), policy({ allowConversion: true }), [payment, reserve, solReserve], now);
     expect(result.eligible).toBe(true);
-    if (result.eligible) {
+    if (result.eligible && result.action === "conversion_required") {
       expect(result.action).toBe("conversion_required");
       expect(result.conversionShortfallAtoms).toBe(2_000_000n);
       expect(result.ownerApprovalRequired).toBe(true);
@@ -229,7 +229,7 @@ describe("deterministic payment intent policy", () => {
       now
     );
     expect(result.eligible).toBe(true);
-    if (result.eligible) {
+    if (result.eligible && result.action === "partial_payment") {
       expect(result.action).toBe("partial_payment");
       expect(result.paymentAmountAtoms).toBe(2_000_000n);
       expect(result.unpaidAtoms).toBe(3_000_000n);
