@@ -181,6 +181,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   if(window.NERITHOKX?.initialize)window.NERITHOKX.initialize().catch(()=>{});
   const state = { businessId: "", role: "", workspace: null, agents: [], wallets: [], walletRoles: [], telegram: [], forecast: null, operations: [], paymentIntents: [], nextCursor: null, operationStatus: "", loadErrors: {} };
   let pendingWalletVerification=null;
+  const walletOwnershipChallenges=new Map();
   const parseDecimalAtoms = (value, decimals=6) => {
     const text=String(value??"0");
     if(!/^\d+(?:\.\d+)?$/.test(text))return 0n;
@@ -389,15 +390,23 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     if(!bytes||bytes.length!==64)throw new Error("The connected wallet returned an unsupported message-signature format.");
     return bytes;
   }
+  async function prepareWalletOwnershipChallenge(walletId,address) {
+    const challenge=await apiWrite("/v1/admin/wallet-ownership/challenge",{businessId:state.businessId,walletId});
+    if(challenge.address!==address)throw new Error("The server challenge no longer matches this registered wallet. Refresh and try again.");
+    walletOwnershipChallenges.set(walletId,challenge);
+    return challenge;
+  }
   async function verifyWalletOwnershipWithWallet(walletId,address,button) {
     button.disabled=true;
     try{
-      const challenge=await apiWrite("/v1/admin/wallet-ownership/challenge",{businessId:state.businessId,walletId});
+      const challenge=walletOwnershipChallenges.get(walletId);
+      if(!challenge)throw new Error("The signing request is not ready yet. Wait for the verification prompt to finish preparing, then try again.");
       if(challenge.address!==address)throw new Error("The server challenge no longer matches this registered wallet. Refresh and try again.");
       const signatureBytes=await signOwnershipChallenge(address,challenge.message);
       let binary="";for(const byte of signatureBytes)binary+=String.fromCharCode(byte);
       const signature=btoa(binary).replaceAll("+","-").replaceAll("/","_").replace(/=/g,"");
       await apiWrite("/v1/admin/wallet-ownership/verify",{businessId:state.businessId,walletId,challengeId:challenge.challengeId,signature});
+      walletOwnershipChallenges.delete(walletId);
       await loadAll();
     }finally{button.disabled=false;}
   }
@@ -421,6 +430,19 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       const controls=canManage&&w.ownershipVerifiedAt?'<form class="wallet-role-form" data-wallet-role-form="'+escapeHtml(w.walletId)+'"><label class="wide">Assign role<select class="input" name="role" required><option value="payment" '+(selected==="payment"?"selected":"")+'>Payment wallet</option><option value="reserve" '+(selected==="reserve"?"selected":"")+'>Reserve wallet</option><option value="operating" '+(selected==="operating"?"selected":"")+'>Operating wallet</option><option value="receiving" '+(selected==="receiving"?"selected":"")+'>Receiving wallet</option></select></label><label>Minimum remaining USDC<input class="input" name="minimumRemaining" inputmode="decimal" autocomplete="off" placeholder="0.00" value="'+(roles.find(r=>r.role==="reserve")?escapeHtml(moneyAtoms(BigInt(roles.find(r=>r.role==="reserve").minimumRemainingAtoms||"0"))):"0")+'"></label><label>Maximum transfer USDC<input class="input" name="maximumTransfer" inputmode="decimal" autocomplete="off" placeholder="No cap" value="'+(roles.find(r=>r.role==="reserve"&&r.maximumTransferAtoms)?escapeHtml(moneyAtoms(BigInt(roles.find(r=>r.role==="reserve").maximumTransferAtoms))):"")+'"></label><button class="btn primary wide" type="submit">Save wallet role</button></form><div class="wallet-role-help">Only workspace admins can change wallet roles. Signing and transfers are not enabled here.</div>':canManage?'<div class="wallet-role-help">Verify address control before assigning or enabling a business role.</div>':'<div class="wallet-role-help">Read-only view. Ask a workspace admin to change wallet roles.</div>';
       return '<article class="wallet-card"><div class="panel-head"><strong>Business wallet</strong><span class="chip">'+escapeHtml(w.status)+'</span></div><div class="wallet-address mono">'+escapeHtml(w.address)+'</div><div class="wallet-role-current">'+verification+'</div>'+verificationHelp+roleMarkup+controls+'</article>';
     }).join("");
+    if(canManage){
+      target.querySelectorAll("[data-verify-wallet]").forEach(button=>{
+        const walletId=button.dataset.verifyWallet;
+        const address=button.dataset.address;
+        button.disabled=true;
+        button.textContent="Preparing verification…";
+        prepareWalletOwnershipChallenge(walletId,address).then(()=>{
+          if(button.isConnected){button.disabled=false;button.textContent="Verify ownership";}
+        }).catch(error=>{
+          if(button.isConnected){button.disabled=false;button.textContent="Retry verification";button.title=String(error.message||error);}
+        });
+      });
+    }
   }
   function renderLiquidity() {
     const connectPanel=$("walletConnectPanel");
@@ -760,6 +782,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       const registered=await apiWrite("/v1/admin/wallets",{businessId:state.businessId,network:"solana",address,scope:"business",purpose});
       registeredWalletId=registered.walletId;
       if(preferredWallet==="okx"||preferredWallet==="jupiter"){
+        await prepareWalletOwnershipChallenge(registered.walletId,address);
         pendingWalletVerification={walletId:registered.walletId,address};
         status.innerHTML='Wallet registered. Tap <button type="button" class="btn primary" id="signNewWalletOwnership">Sign ownership message</button> to confirm address control. This signature does not move funds.';
         return;
