@@ -22,7 +22,7 @@ All authoritative values come from the authenticated intent, funding leg, busine
 2. Load registered source-token owner and registered SOL fee payer independently. Both must be active and ownership-verified; they may be the same wallet.
 3. Fetch the configured mint from the configured HTTPS RPC. Confirm its account owner is the canonical SPL Token Program, decode it with the SDK and require exactly six decimals.
 4. Derive source and destination ATAs using the mint's actual token program. Confirm the source ATA exists, is owned by the registered source wallet, uses the configured mint and has sufficient finalized spendable balance.
-5. If the destination ATA is absent, include only the canonical idempotent ATA creation instruction, with the registered fee payer as rent payer. If present, verify its mint and owner.
+5. Require the destination ATA to already exist and verify its mint and owner. If it is absent, stop without constructing a transaction. ATA creation would debit rent-exempt SOL in addition to network fees; the current fee ledger has no separate rent budget or reservation.
 6. Obtain a fresh blockhash and last-valid block height. Build a legacy-format transaction for broad wallet compatibility; RPC readers must still accept legacy, v0 and v1 finalized transactions.
 
 ## Instruction and fee policy
@@ -60,7 +60,7 @@ An ownership challenge, provider connection, Telegram identity or admin session 
 
 - Mint owner/program and six-decimal validation; reject wrong mint and Token-2022.
 - Missing/wrong source ATA, wrong owner/mint and insufficient finalized balance.
-- Destination ATA present/absent; idempotent creation targets only approved recipient.
+- Destination ATA present; missing destination ATA is rejected without creating an account or spending rent.
 - Fee payer equals source owner and fee payer differs from source owner.
 - Missing/wrong signer, invalid signature, signature overwrite and message mutation between signers.
 - Fee estimate above per-transaction cap and aggregate remaining budget.
