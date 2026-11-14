@@ -4,7 +4,7 @@ import {
   getTransferCheckedInstruction,
   TOKEN_PROGRAM_ADDRESS
 } from "@solana-program/token";
-import { Keypair, PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
+import { Keypair, PublicKey, Transaction, TransactionInstruction, type Blockhash } from "@solana/web3.js";
 import { describe, expect, it } from "vitest";
 import { verifySignedUsdcFundingTransaction } from "../src/solana-funding-transaction";
 
@@ -20,9 +20,9 @@ async function buildSignedTransaction(options: {
   extraInstruction?: boolean;
   signSource?: boolean;
 } = {}) {
-  const feePayer = options.feePayer ?? Keypair.generate();
-  const source = options.source ?? Keypair.generate();
-  const destination = options.destination ?? Keypair.generate();
+  const feePayer = options.feePayer ?? await Keypair.generate();
+  const source = options.source ?? await Keypair.generate();
+  const destination = options.destination ?? await Keypair.generate();
   const feePayerAddress = feePayer.publicKey.toBase58();
   const sourceAddress = source.publicKey.toBase58();
   const destinationAddress = destination.publicKey.toBase58();
@@ -34,7 +34,7 @@ async function buildSignedTransaction(options: {
   });
   const transaction = new Transaction({
     feePayer: feePayer.publicKey,
-    blockhash: BLOCKHASH,
+    blockhash: BLOCKHASH as Blockhash,
     lastValidBlockHeight: 99n
   });
   transaction.add(getTransferCheckedInstruction({
@@ -55,7 +55,7 @@ async function buildSignedTransaction(options: {
   const signers = feePayer.publicKey.equals(source.publicKey) || options.signSource === false
     ? [feePayer] : [feePayer, source];
   await transaction.partialSign(...signers);
-  const bytes = transaction.serialize({ requireAllSignatures: false, verifySignatures: false });
+  const bytes = await transaction.serialize({ requireAllSignatures: false, verifySignatures: false });
   return {
     bytes: new Uint8Array(bytes),
     feePayerAddress,
@@ -80,7 +80,7 @@ describe("verifySignedUsdcFundingTransaction", () => {
   });
 
   it("accepts one signer when the fee payer is also the token owner", async () => {
-    const sameWallet = Keypair.generate();
+    const sameWallet = await Keypair.generate();
     const signed = await buildSignedTransaction({ feePayer: sameWallet, source: sameWallet });
     const verified = await verifySignedUsdcFundingTransaction(signed.bytes, {
       mintAddress: MINT,
@@ -131,7 +131,7 @@ describe("verifySignedUsdcFundingTransaction", () => {
       mintAddress: MINT,
       sourceWalletAddress: signed.sourceAddress,
       destinationOwnerAddress: signed.destinationAddress,
-      feePayerAddress: Keypair.generate().publicKey.toBase58(),
+      feePayerAddress: (await Keypair.generate()).publicKey.toBase58(),
       amountAtoms: AMOUNT.toString()
     })).rejects.toThrow("fee payer does not match");
   });
