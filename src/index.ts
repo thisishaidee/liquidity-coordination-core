@@ -2866,7 +2866,7 @@ async function getBusinessPaymentIntent(request: Request, env: Env, intentId: st
   if (limited) return limited;
   const intent = await env.DB.prepare(`
     SELECT i.id, i.operation_id, i.destination, i.mint, i.requested_atoms, i.payment_atoms,
-           i.fee_payer_wallet_id, i.network_fee_lamports, i.action, i.status,
+           i.fee_payer_wallet_id, i.network_fee_lamports, i.network_fee_budget_lamports, i.action, i.status,
            i.policy_version, i.expires_at, i.created_at, i.updated_at
     FROM business_payment_intents i
     JOIN operations op ON op.id = i.operation_id AND op.business_id = i.business_id
@@ -2875,7 +2875,8 @@ async function getBusinessPaymentIntent(request: Request, env: Env, intentId: st
   `).bind(intentId, agent.business_id, agent.id).first<{
     id: string; operation_id: string; destination: string; mint: string;
     requested_atoms: string; payment_atoms: string; fee_payer_wallet_id: string;
-    network_fee_lamports: string; action: string; status: string; policy_version: number;
+    network_fee_lamports: string; network_fee_budget_lamports: string;
+    action: string; status: string; policy_version: number;
     expires_at: string; created_at: string; updated_at: string;
   }>();
   if (!intent) return json({ error: "payment_intent_not_found" }, 404);
@@ -2885,8 +2886,12 @@ async function getBusinessPaymentIntent(request: Request, env: Env, intentId: st
              l.destination_wallet_id, destination_wallet.address AS destination_wallet_address,
              l.destination_address, l.asset_mint, l.amount_atoms, l.expected_output_atoms,
              l.received_output_atoms, l.status, l.transaction_hash, l.submitted_slot,
-             l.confirmed_slot, l.failure_reason, l.created_at, l.updated_at
+             l.confirmed_slot, l.failure_reason, fee.status AS fee_status,
+             fee.maximum_fee_lamports, fee.actual_fee_lamports, fee.transaction_hash AS fee_transaction_hash,
+             fee.finalized_slot AS fee_finalized_slot, fee.failure_reason AS fee_failure_reason,
+             l.created_at, l.updated_at
       FROM operation_funding_legs l
+      LEFT JOIN operation_funding_leg_fees fee ON fee.funding_leg_id = l.id
       LEFT JOIN wallets source_wallet ON source_wallet.id = l.source_wallet_id
       LEFT JOIN wallets destination_wallet ON destination_wallet.id = l.destination_wallet_id
       WHERE l.operation_id = ? ORDER BY l.leg_index ASC
@@ -2904,7 +2909,9 @@ async function getBusinessPaymentIntent(request: Request, env: Env, intentId: st
     intentId: intent.id, operationId: intent.operation_id, action: intent.action, status: intent.status,
     destination: intent.destination, mint: intent.mint, requestedAtoms: intent.requested_atoms,
     paymentAtoms: intent.payment_atoms, feePayerWalletId: intent.fee_payer_wallet_id,
-    networkFeeLamports: intent.network_fee_lamports, policyVersion: intent.policy_version,
+    networkFeeLamports: intent.network_fee_lamports,
+    networkFeeBudgetLamports: intent.network_fee_budget_lamports,
+    policyVersion: intent.policy_version,
     expiresAt: intent.expires_at, createdAt: intent.created_at, updatedAt: intent.updated_at,
     fundingLegs: (legs.results ?? []).map(row => ({
       id: row.id, index: row.leg_index, kind: row.kind, sourceWalletId: row.source_wallet_id,
@@ -2913,6 +2920,11 @@ async function getBusinessPaymentIntent(request: Request, env: Env, intentId: st
       assetMint: row.asset_mint, amountAtoms: row.amount_atoms, expectedOutputAtoms: row.expected_output_atoms,
       receivedOutputAtoms: row.received_output_atoms, status: row.status, transactionHash: row.transaction_hash,
       submittedSlot: row.submitted_slot, confirmedSlot: row.confirmed_slot, failureReason: row.failure_reason,
+      networkFee: {
+        status: row.fee_status, maximumLamports: row.maximum_fee_lamports,
+        actualLamports: row.actual_fee_lamports, transactionSignature: row.fee_transaction_hash,
+        finalizedSlot: row.fee_finalized_slot, failureReason: row.fee_failure_reason
+      },
       createdAt: row.created_at, updatedAt: row.updated_at
     })),
     reservations: (reservations.results ?? []).map(row => ({
