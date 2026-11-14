@@ -4383,6 +4383,95 @@ async function proxyHermes(
   return new Response(responseBody, { status: upstream.status, headers: responseHeaders });
 }
 
+async function requestAdminX402DemoQuote(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const body = await readJson(request);
+  if (!body || typeof body.businessId !== "string" ||
+      typeof body.operatingWalletAddress !== "string" ||
+      typeof body.paymentWalletAddress !== "string" ||
+      typeof body.sourceAmount !== "string") {
+    return json({ error: "invalid_request", message: "Provide businessId, operatingWalletAddress, paymentWalletAddress and sourceAmount." }, 400);
+  }
+  const { businessId, operatingWalletAddress, paymentWalletAddress, sourceAmount } = body;
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(operatingWalletAddress) ||
+      !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(paymentWalletAddress)) {
+    return json({ error: "invalid_wallet_address" }, 400);
+  }
+  let sourceAtoms: bigint;
+  try { sourceAtoms = parseTokenAmount(sourceAmount, 9); }
+  catch (error) { return json({ error: "invalid_source_amount", message: error instanceof Error ? error.message : "Invalid SOL amount" }, 400); }
+  if (sourceAtoms <= 0n || sourceAtoms > 1_000_000_000n) {
+    return json({ error: "source_amount_out_of_range", message: "The demo quote is limited to a maximum of 1 SOL." }, 400);
+  }
+
+  const agent = await env.DB.prepare(
+    "SELECT id, business_id, status, can_use_business_treasury FROM agents WHERE business_id = ? AND status = 'active' ORDER BY id LIMIT 1"
+  ).bind(businessId).first<AgentRow>();
+  if (!agent) return json({ error: "active_agent_not_found" }, 404);
+  const limited = await enforceAgentRateLimit(env, agent.id, "x402_demo_quote", 4, 600);
+  if (limited) return limited;
+
+  const operatingWallet = await env.DB.prepare(`
+    SELECT w.id AS wallet_id, b.confirmed_atoms, b.reserved_atoms, b.observed_at
+    FROM wallets w
+    JOIN wallet_balances b ON b.wallet_id = w.id AND b.token = 'SOL'
+    WHERE w.business_id = ? AND w.network = 'solana' AND w.address = ?
+      AND w.status = 'active' AND w.purpose = 'operating'
+      AND w.ownership_verified_at IS NOT NULL
+      AND ((w.scope = 'agent' AND w.agent_id = ?) OR (w.scope = 'business' AND ? = 1))
+    LIMIT 1
+  `).bind(businessId, operatingWalletAddress, agent.id, agent.can_use_business_treasury).first<{
+    wallet_id: string; confirmed_atoms: string; reserved_atoms: string; observed_at: string;
+  }>();
+  if (!operatingWallet) return json({ error: "operating_wallet_not_authorized", message: "Choose an ownership-verified operating wallet assigned to the selected agent." }, 403);
+  const operatingAgeMs = Date.now() - Date.parse(operatingWallet.observed_at);
+  const operatingAvailable = BigInt(operatingWallet.confirmed_atoms) - BigInt(operatingWallet.reserved_atoms);
+  if (!Number.isFinite(operatingAgeMs) || operatingAgeMs < 0 || operatingAgeMs > 5 * 60 * 1000) {
+    return json({ error: "operating_balance_stale", message: "Refresh the operating wallet's Solana balance before requesting a quote." }, 409);
+  }
+  if (operatingAvailable < sourceAtoms) {
+    return json({ error: "insufficient_operating_sol", message: "The operating wallet does not have enough available SOL for this quote size." }, 409);
+  }
+
+  const paymentWallet = await env.DB.prepare(`
+    SELECT b.confirmed_atoms, b.reserved_atoms, b.observed_at
+    FROM wallets w
+    JOIN wallet_balances b ON b.wallet_id = w.id AND b.token = 'USDC'
+    WHERE w.business_id = ? AND w.network = 'solana' AND w.address = ?
+      AND w.scope = 'business' AND w.purpose = 'api_payment' AND w.status = 'active'
+      AND w.ownership_verified_at IS NOT NULL
+    LIMIT 1
+  `).bind(businessId, paymentWalletAddress).first<{
+    confirmed_atoms: string; reserved_atoms: string; observed_at: string;
+  }>();
+  if (!paymentWallet) return json({ error: "api_payment_wallet_not_configured", message: "Register and verify a separate x402 API fee reserve wallet." }, 409);
+  const paymentAgeMs = Date.now() - Date.parse(paymentWallet.observed_at);
+  const paymentAvailable = BigInt(paymentWallet.confirmed_atoms) - BigInt(paymentWallet.reserved_atoms);
+  if (!Number.isFinite(paymentAgeMs) || paymentAgeMs < 0 || paymentAgeMs > 5 * 60 * 1000 || paymentAvailable < 10_000n) {
+    return json({
+      error: "api_payment_reserve_unavailable",
+      message: "The x402 fee reserve needs a fresh balance of at least 0.01 USDC.",
+      minimumReserveUSDC: "0.01"
+    }, 409);
+  }
+
+  const payload = {
+    input: { token: SOL_MINT, amount: sourceAtoms.toString(), chainKey: "sol" },
+    output: { token: USDC_MINT, chainKey: "sol" },
+    userAddress: operatingWalletAddress,
+    slippageBps: 50
+  };
+  const x402Context: X402ProxyContext = {
+    env,
+    agent,
+    paymentWalletAddress,
+    requestHash: await sha256("admin-x402-demo\n" + agent.id + "\n" + paymentWalletAddress + "\n" + JSON.stringify(payload))
+  };
+  return proxyHermes(request, "/v1/swap/quote", payload, {
+    "X-NERITH-X402-DEMO": "true"
+  }, x402Context);
+}
+
 async function requestSwapQuote(request: Request, env: Env): Promise<Response> {
   const agent = await authenticate(request, env.DB);
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
@@ -6354,6 +6443,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/v1/admin/operations") return getAdminBusinessOperations(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/forecast") return getAdminBusinessForecast(request, env);
     if ((request.method === "GET" || request.method === "POST") && url.pathname === "/v1/admin/x402/budgets") return manageX402Budgets(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/admin/x402/demo/quote") return requestAdminX402DemoQuote(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/x402/reconcile") return reconcileX402PaymentAdmin(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/bootstrap") return bootstrapBusiness(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/agents") return provisionAgent(request, env);
