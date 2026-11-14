@@ -325,7 +325,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   }
   async function connectSolanaWallet(preferredWallet="") {
     if(preferredWallet==="jupiter"){
-      const wallet=standardSolanaWallets.find(item=>/jupiter/i.test(item.name||""));
+      const wallet=[...standardSolanaWallets].find(item=>/jupiter/i.test(item.name||""));
       if(!wallet)throw new Error("Jupiter Wallet is not available in this browser yet. Open the official Jupiter Wallet page, install or open Jupiter Wallet, then return to NERITH and choose Wallet in this browser.");
       const connected=await wallet.features["standard:connect"].connect();
       const account=(connected?.accounts||[]).find(item=>supportsSolanaMainnet(item.chains));
@@ -810,7 +810,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       return;
     }
     if(wallet==="jupiter"){
-      const detected=standardSolanaWallets.some(item=>/jupiter/i.test(item.name||""));
+      const detected=[...standardSolanaWallets].some(item=>/jupiter/i.test(item.name||""));
       if(detected){
         $("walletChooser").hidden=true;
         $("connectBusinessWallet").setAttribute("aria-expanded","false");
