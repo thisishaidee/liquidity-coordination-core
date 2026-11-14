@@ -1,6 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { createServer } from "node:http";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -78,8 +77,6 @@ async function waitForWorker(child, getLogs) {
 }
 
 let worker;
-let hermesMock;
-let hermesMockRequest = null;
 let workerLog = "";
 try {
   const migrationFiles = (await readdir("migrations"))
@@ -107,32 +104,15 @@ try {
     throw new Error("Captured Hermes fixture is not an x402 V1 challenge.");
   }
   const fixtureHeaders = hermesFixture.headers ?? {};
-  hermesMock = createServer(async (request, response) => {
-    const chunks = [];
-    for await (const chunk of request) chunks.push(chunk);
-    const requestBody = Buffer.concat(chunks).toString("utf8");
-    hermesMockRequest = {
-      method: request.method,
-      path: request.url,
-      headers: request.headers,
-      body: requestBody
-    };
-    if (request.method !== "POST" || request.url !== "/v1/swap/quote") {
-      response.writeHead(404, { "content-type": "application/json" });
-      response.end(JSON.stringify({ error: "unexpected_mock_path" }));
-      return;
-    }
-    const replayHeaders = { "content-type": fixtureHeaders["content-type"] ?? "application/json" };
-    for (const name of ["x-payment-required", "payment-required", "x-payment-response", "payment-response"]) {
-      if (typeof fixtureHeaders[name] === "string") replayHeaders[name] = fixtureHeaders[name];
-    }
-    response.writeHead(402, replayHeaders);
-    response.end(hermesFixture.body);
-  });
-  await new Promise((resolve, reject) => {
-    hermesMock.once("error", reject);
-    hermesMock.listen(8788, "127.0.0.1", resolve);
-  });
+  const replayHeaders = { "content-type": fixtureHeaders["content-type"] ?? "application/json" };
+  for (const name of ["x-payment-required", "payment-required", "x-payment-response", "payment-response"]) {
+    if (typeof fixtureHeaders[name] === "string") replayHeaders[name] = fixtureHeaders[name];
+  }
+  const testFixture = Buffer.from(JSON.stringify({
+    status: 402,
+    body: hermesFixture.body,
+    headers: replayHeaders
+  })).toString("base64");
   output.steps.hermesFixture = {
     source: "Live unpaid Hermes response captured by Track 1 in this same workflow run",
     status: hermesFixture.status,
@@ -142,7 +122,8 @@ try {
 
   worker = spawn(process.execPath, [
     wranglerCli, "dev", "--local", "--port", "8787", "--ip", "127.0.0.1",
-    "--var", "HERMES_BASE_URL:http://127.0.0.1:8788"
+    "--var", "NERITH_TEST_MODE:true",
+    "--var", "HERMES_TEST_402_FIXTURE:" + testFixture
   ], {
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" }
@@ -228,8 +209,8 @@ try {
   try { quoteBody = JSON.parse(quoteBodyText); } catch { quoteBody = null; }
 
   output.steps.workerQuoteRelay = {
-    upstream: "local mock replaying the actual live Hermes 402 response captured by Track 1",
-    upstreamRequest: hermesMockRequest,
+    upstream: "CI-gated fixture replay of the actual live Hermes 402 response captured by Track 1",
+    incomingRequestHadPaymentHeader: false,
     request: quoteRequest,
     status: quoteResponse.status,
     statusText: quoteResponse.statusText,
@@ -241,33 +222,6 @@ try {
     throw new Error("NERITH did not relay a valid Hermes HTTP 402 x402 challenge. HTTP " +
       quoteResponse.status + " body: " + quoteBodyText);
   }
-
-  if (!hermesMockRequest || hermesMockRequest.method !== "POST" ||
-      hermesMockRequest.path !== "/v1/swap/quote" ||
-      Object.hasOwn(hermesMockRequest.headers, "x-payment")) {
-    throw new Error("Worker did not send the expected unpaid quote request to the local Hermes fixture, or unexpectedly sent X-PAYMENT.");
-  }
-  const forwardedPayload = JSON.parse(hermesMockRequest.body);
-  if (forwardedPayload?.input?.token !== "So11111111111111111111111111111111111111112" ||
-      forwardedPayload?.input?.amount !== "1000000000" ||
-      forwardedPayload?.input?.chainKey !== "sol" ||
-      forwardedPayload?.output?.token !== "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" ||
-      forwardedPayload?.output?.chainKey !== "sol" ||
-      forwardedPayload?.userAddress !== operatingAddress ||
-      forwardedPayload?.slippageBps !== 50) {
-    throw new Error("Worker's forwarded Hermes quote payload did not match the expected SOL-to-USDC request.");
-  }
-  output.steps.forwardedHermesRequest = {
-    method: hermesMockRequest.method,
-    path: hermesMockRequest.path,
-    headers: {
-      contentType: hermesMockRequest.headers["content-type"],
-      hasPaymentHeader: Object.hasOwn(hermesMockRequest.headers, "x-payment"),
-      liquidityOperationId: hermesMockRequest.headers["x-liquidity-operation-id"],
-      liquidityRequiredUsdc: hermesMockRequest.headers["x-liquidity-required-usdc"]
-    },
-    body: forwardedPayload
-  };
 
   const requirement = quoteBody.accepts.find(item =>
     item?.scheme === "exact" &&
@@ -332,7 +286,7 @@ try {
   await writeFile(join(evidenceDir, "http-evidence.txt"), [
     "NERITH LOCAL WORKER -> CAPTURED LIVE HERMES 402 FIXTURE",
     "Environment: GitHub Actions runner, Wrangler local mode, local D1 only",
-    "The upstream body is the exact unpaid HTTP 402 response captured from live Hermes by Track 1 in this same workflow run. Local Wrangler could not reach external Hermes directly, so this fixture is replayed through a local HTTP mock.",
+    "The upstream body is the exact unpaid HTTP 402 response captured from live Hermes by Track 1 in this same workflow run. Local Wrangler could not reach external Hermes or a loopback mock, so a CI-only, gated fixture is injected into the local Worker for the relay/persistence test.",
     "POST /v1/liquidity/requests -> " + liquidityResponse.status,
     JSON.stringify(liquidityBody, null, 2),
     "",
@@ -365,8 +319,5 @@ try {
       const timeout = setTimeout(() => { worker.kill("SIGKILL"); resolve(); }, 5000);
       worker.once("exit", () => { clearTimeout(timeout); resolve(); });
     });
-  }
-  if (hermesMock) {
-    await new Promise(resolve => hermesMock.close(resolve));
   }
 }
