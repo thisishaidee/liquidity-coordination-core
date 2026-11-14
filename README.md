@@ -42,6 +42,12 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 | POST | `/v1/admin/wallet-ownership/verify` | Verify a wallet-signed ownership challenge |
 | POST | `/v1/admin/balances` | Record a controlled manual balance snapshot |
 | POST | `/v1/admin/balances/sync` | Refresh registered wallet balances from Solana RPC |
+| GET | `/v1/admin/payment-policy?businessId=...` | Read business payment policy |
+| POST | `/v1/admin/payment-policy` | Update business payment policy |
+| POST | `/v1/payments/prepare` | Agent-authenticated, idempotent payment-intent preparation and guarded funding reservations |
+| POST | `/v1/admin/payment-intents/:intentId/funding-legs/:legId/submit?businessId=...` | Record a business-owner-signed transaction signature |
+| POST | `/v1/admin/payment-intents/:intentId/funding-legs/:legId/reconcile?businessId=...` | Verify finalized SPL-token settlement from Solana RPC |
+| POST | `/v1/admin/payment-intents/:intentId/prepare-final-payment?businessId=...` | Refresh finalized payment-wallet USDC and reserve final payment after all replenishment legs confirm |
 | POST | `/v1/admin/reservations/expire` | Platform-token-only manual sweep of expired reservations |
 | POST | `/v1/admin/telegram/setup` | Platform-token-only shared bot setup, webhook registration and command publishing |
 | GET | `/v1/admin/telegram/status` | Platform-token-only shared Telegram webhook status |
@@ -71,7 +77,10 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 - Exact decimal-to-atom conversion using BigInt.
 - Conservative liquidity decision engine.
 - Direct USDC liquidity reservation from one eligible wallet in the existing V1 agent flow.
-- Draft managed reservation accounting for verified multi-wallet funding legs, with database guards and all-or-nothing multi-row reservation/release (not yet exposed through a payment API).
+- Business payment-intent preparation with deterministic policy evaluation, business-wide idempotency, daily and per-transaction caps, and atomic multi-wallet USDC/SOL reservation holds.
+- Owner/admin-only funding-leg submission and finalized Solana RPC reconciliation with exact SPL transfer verification, immutable transaction signatures, ambiguity holds and separate network-fee validation.
+- Finalized payment-wallet USDC refresh after all reserve legs confirm; the final-payment leg and reservation are unlocked atomically under database-enforced intent and funding-leg gates.
+- Finalized SPL-token balance lookup validates owner, mint, decimals and canonical atom amounts across every token account.
 - Conditional balance update to prevent concurrent over-reservation.
 - Reservation expiry timestamp (15 minutes) and explicit release endpoint.
 - Agent and business wallet scope enforcement.
@@ -109,7 +118,7 @@ The Worker stores the actual Hermes V1 Solana challenge for the exact operation/
 
 The draft includes a pure evaluator in `src/transaction-policy.ts`. It checks business scope, idempotency, intent expiry, asset and destination allowlists, per-transaction and daily limits, fresh verified payment/reserve wallets, reserve floors, transfer caps, SOL network-fee payer allowlists and balances, and conversion-source/slippage policy. It can return a direct-payment, reserve-replenishment, conversion-required or explicitly permitted partial-payment plan.
 
-The evaluator is planning and policy logic only. It does not reserve funds, create transactions, sign, broadcast or authorize a signer. Callers must load committed spend, verify idempotency state and independently validate transaction details before requesting any signature.
+The evaluator is planning and policy logic only. The payment-preparation API now persists intents, funding legs and bounded internal reservations; owner/admin settlement routes accept externally signed transaction signatures and verify finalized on-chain transfers. NERITH still does not build, sign or broadcast these transfers. Replenishment can unlock a final-payment reservation only after a separate finalized balance refresh. Conversion remains out of scope for this funding-leg verifier.
 
 ## Important safety boundaries
 
