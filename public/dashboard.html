@@ -515,6 +515,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     const agentWallets=op.filter(w=>w.scope==="agent");
     $("operatingWallets").innerHTML=state.loadErrors.Wallets?'<div class="empty">Wallet data unavailable. Refresh to try again.</div>':'<div class="pixel" style="grid-column:1/-1">Business treasury wallets · shared only where agent permission allows</div>'+(businessWallets.length?businessWallets.map(walletCard).join(""):'<div class="empty">No business treasury operating wallets registered.</div>')+'<hr class="dotted" style="grid-column:1/-1"><div class="pixel" style="grid-column:1/-1">Agent-scoped wallets · isolated and never pooled</div>'+(agentWallets.length?agentWallets.map(walletCard).join(""):'<div class="empty">No agent-scoped operating wallets registered.</div>');
     $("paymentWallets").innerHTML=state.loadErrors.Wallets?'<div class="empty">Payment reserve data unavailable. Refresh to try again.</div>':pay.length?pay.map(walletCard).join(""):'<div class="empty">No separate x402 payment reserve is registered.</div>';
+    renderX402DemoOptions();
   }
   function renderForecast() {
     const f=state.forecast;
