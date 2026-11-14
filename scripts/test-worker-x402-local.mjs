@@ -106,6 +106,7 @@ try {
   const fundingLegTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_funding_leg_identity_immutable', 'trg_funding_leg_transaction_hash_immutable', 'trg_funding_leg_state_transition', 'trg_funding_leg_submitted_requires_hash', 'trg_funding_leg_confirmed_requires_hash')", "inspectFundingLegTriggers");
   const fundingLegTransactionHashIndex = queryD1("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_funding_legs_transaction_hash'", "inspectFundingLegTransactionHashIndex");
   const finalPaymentTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_final_payment_leg_requires_confirmed_funding', 'trg_final_payment_reservation_requires_confirmed_funding', 'trg_replenished_final_leg_requires_ready_intent', 'trg_replenished_final_reservation_requires_ready_intent')", "inspectFinalPaymentFundingTriggers");
+  const activeFundingReservationIndex = queryD1("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_active_managed_reservation_per_funding_leg'", "inspectActiveFundingReservationIndex");
   const paymentIntentTables = queryD1("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('business_payment_policies', 'business_payment_intents')", "inspectBusinessPaymentTables");
   const paymentIntentTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_business_payment_intent_identity_immutable', 'trg_business_payment_intent_state_transition', 'trg_business_payment_intent_scope_insert', 'trg_business_payment_intent_policy_guard')", "inspectBusinessPaymentTriggers");
   const schemaChecks = {
@@ -122,6 +123,7 @@ try {
     fundingLegSafetyTriggers: fundingLegTriggers.length === 5,
     uniqueFundingLegTransactionHash: fundingLegTransactionHashIndex.length === 1 && fundingLegTransactionHashIndex[0].sql.includes("CREATE UNIQUE INDEX"),
     finalPaymentFundingGates: finalPaymentTriggers.length === 4,
+    uniqueActiveFundingReservation: activeFundingReservationIndex.length === 1 && activeFundingReservationIndex[0].sql.includes("CREATE UNIQUE INDEX"),
     businessPaymentTables: paymentIntentTables.length === 2,
     businessPaymentTriggers: paymentIntentTriggers.length === 4
   };
