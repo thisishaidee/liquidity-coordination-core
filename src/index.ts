@@ -2778,9 +2778,23 @@ async function reconcileFundingLegTransaction(
           WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
         `).bind(verification.reason, lookup.slot, legId, row.transaction_hash),
         env.DB.prepare(`
+          UPDATE operation_funding_leg_fees
+          SET actual_fee_lamports = ?, finalized_slot = ?, status = 'reconciled',
+              failure_reason = ?, updated_at = datetime('now')
+          WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
+        `).bind(actualNetworkFee, lookup.slot, verification.reason, row.fee_ledger_id, row.transaction_hash),
+        env.DB.prepare(`
           UPDATE business_payment_intents SET status = 'ambiguous', updated_at = datetime('now')
           WHERE id = ? AND status IN ('submitted', 'replenishing')
-        `).bind(intentId)
+        `).bind(intentId),
+        env.DB.prepare(`
+          UPDATE reservations SET status = 'consumed', released_at = datetime('now')
+          WHERE operation_id = ? AND reservation_source = 'managed_fee' AND status = 'active'
+            AND NOT EXISTS (
+              SELECT 1 FROM operation_funding_leg_fees
+              WHERE operation_id = ? AND status IN ('reserved', 'submitted', 'ambiguous')
+            )
+        `).bind(row.operation_id, row.operation_id)
       ]);
     } catch {
       return json({ error: "funding_leg_ambiguity_record_failed" }, 409);
@@ -2800,15 +2814,23 @@ async function reconcileFundingLegTransaction(
     env.DB.prepare(`
       UPDATE reservations SET status = 'consumed', released_at = datetime('now')
       WHERE funding_leg_id = ? AND status = 'active'
-    `).bind(legId)
+    `).bind(legId),
+    env.DB.prepare(`
+      UPDATE operation_funding_leg_fees
+      SET actual_fee_lamports = ?, finalized_slot = ?, status = 'reconciled',
+          failure_reason = NULL, updated_at = datetime('now')
+      WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
+    `).bind(actualNetworkFee, lookup.slot, row.fee_ledger_id, row.transaction_hash),
+    env.DB.prepare(`
+      UPDATE reservations SET status = 'consumed', released_at = datetime('now')
+      WHERE operation_id = ? AND reservation_source = 'managed_fee' AND status = 'active'
+        AND NOT EXISTS (
+          SELECT 1 FROM operation_funding_leg_fees
+          WHERE operation_id = ? AND status IN ('reserved', 'submitted', 'ambiguous')
+        )
+    `).bind(row.operation_id, row.operation_id)
   ];
   if (row.leg_kind === "final_payment") {
-    if (row.fee_reservation_id) {
-      statements.push(env.DB.prepare(`
-        UPDATE reservations SET status = 'consumed', released_at = datetime('now')
-        WHERE id = ? AND reservation_source = 'managed_fee' AND status = 'active'
-      `).bind(row.fee_reservation_id));
-    }
     statements.push(env.DB.prepare(`
       UPDATE business_payment_intents SET status = 'confirmed', updated_at = datetime('now')
       WHERE id = ? AND business_id = ? AND status = 'submitted'
