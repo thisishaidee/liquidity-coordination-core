@@ -86,7 +86,7 @@ This stage must not create or hold private keys, sign transactions, broadcast tr
 
 ## Route behavior currently implemented
 
-- Both routes require a business-scoped owner/admin session, same-origin/allowlisted browser origin on writes, and a `businessId` query parameter. The intent and leg are resolved together from D1, so a leg cannot be submitted under another business scope.
+- Both routes require a business-scoped owner/admin session, same-origin/allowlisted browser origin on writes, and a `businessId` query parameter. The expiry worker also preserves holds while any funding leg is submitted or ambiguous. The intent and leg are resolved together from D1, so a leg cannot be submitted under another business scope.
 - The submit body accepts only a base58 transaction signature. It does not accept transaction facts or a client-declared settlement state.
 - Reconciliation uses the stored signature and the configured HTTPS RPC. Exact finalized transfers consume only the linked reservation. Finalized mismatches become `ambiguous` and retain their hold; the scheduled expiry routine skips ambiguous intents.
 - Reserve-replenishment confirmation does not credit a cached payment-wallet balance or unlock final payment. The separate fee reservation also remains untouched pending an actual fee-debit verifier.
