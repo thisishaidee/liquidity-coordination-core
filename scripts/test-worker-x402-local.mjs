@@ -632,6 +632,12 @@ const businessPaymentIntentCount = queryD1(`SELECT COUNT(*) AS count FROM busine
   }
   const directFeeReservationCount = queryD1(`SELECT COUNT(*) AS count FROM reservations WHERE operation_id = '${directPaymentBody.operationId}' AND token = 'SOL' AND reservation_source = 'managed_fee'`, "verifyFeeReservationIdempotency");
   if (Number(directFeeReservationCount[0]?.count) !== 1) throw new Error("Idempotent replay duplicated the SOL fee reservation.");
+  const directFeeLedger = queryD1(`SELECT f.status, f.maximum_fee_lamports, f.funding_leg_id
+    FROM operation_funding_leg_fees f WHERE f.operation_id = '${directPaymentBody.operationId}'`, "verifyDirectPaymentFeeLedger");
+  if (directFeeLedger.length !== 1 || directFeeLedger[0].status !== "reserved" ||
+      directFeeLedger[0].maximum_fee_lamports !== "5000" || !directFeeLedger[0].funding_leg_id) {
+    throw new Error("Direct payment did not create exactly one per-leg fee ledger entry.");
+  }
   const directReplayResponse = await fetch(baseUrl + "/v1/payments/prepare", {
     method: "POST", headers: paymentAuthHeaders, body: JSON.stringify(directPaymentPayload)
   });
@@ -689,6 +695,17 @@ const businessPaymentIntentCount = queryD1(`SELECT COUNT(*) AS count FROM busine
   const prepositionHold = queryD1(`SELECT r.amount_atoms, r.funding_leg_id, r.reservation_source, b.reserved_atoms
     FROM reservations r JOIN wallet_balances b ON b.id = r.wallet_balance_id
     WHERE r.operation_id = '${multiWalletPaymentBody.operationId}' AND r.token = 'USDC' AND r.funding_leg_id IS NULL`, "verifyPaymentWalletPrepositionHold");
+  const multiFeeHold = queryD1(`SELECT r.amount_atoms, b.reserved_atoms
+    FROM reservations r JOIN wallet_balances b ON b.id = r.wallet_balance_id
+    WHERE r.operation_id = '${multiWalletPaymentBody.operationId}' AND r.token = 'SOL'
+      AND r.reservation_source = 'managed_fee' AND r.status = 'active'`, "verifyAggregateMultiLegFeeHold");
+  const multiFeeLedger = queryD1(`SELECT status, maximum_fee_lamports
+    FROM operation_funding_leg_fees WHERE operation_id = '${multiWalletPaymentBody.operationId}'`, "verifyMultiLegFeeLedger");
+  if (multiFeeHold.length !== 1 || multiFeeHold[0].amount_atoms !== "15000" ||
+      multiFeeHold[0].reserved_atoms !== "15000" || multiFeeLedger.length !== 3 ||
+      multiFeeLedger.some(row => row.status !== "reserved" || row.maximum_fee_lamports !== "5000")) {
+    throw new Error("Multi-leg fee budget was not reserved and recorded for all three transactions.");
+  }
   if (prepositionHold.length !== 1 || prepositionHold[0].amount_atoms !== "1000000" ||
       prepositionHold[0].reservation_source !== "managed" || prepositionHold[0].reserved_atoms !== "1000000") {
     throw new Error("Existing payment-wallet liquidity was not held while reserve replenishment is in flight.");
