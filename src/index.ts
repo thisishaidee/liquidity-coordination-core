@@ -2207,7 +2207,8 @@ type FundingLegSettlementRow = {
   destination_verified_at: string | null; reservation_id: string | null;
   source_role_authorized: number; destination_role_authorized: number;
   fee_payer_address: string | null; fee_payer_wallet_status: string | null;
-  fee_payer_verified_at: string | null; network_fee_lamports: string;
+  fee_payer_verified_at: string | null; fee_payer_scope: string | null;
+  fee_payer_role_authorized: number; network_fee_lamports: string;
   fee_reservation_id: string | null;
 };
 
@@ -2223,6 +2224,12 @@ async function getFundingLegSettlementRow(
            fee_wallet.address AS fee_payer_address,
            fee_wallet.status AS fee_payer_wallet_status,
            fee_wallet.ownership_verified_at AS fee_payer_verified_at,
+           fee_wallet.scope AS fee_payer_scope,
+           EXISTS (
+             SELECT 1 FROM wallet_role_assignments fee_role
+             WHERE fee_role.business_id = op.business_id AND fee_role.wallet_id = fee_wallet.id
+               AND fee_role.enabled = 1 AND fee_role.role IN ('payment', 'operating')
+           ) AS fee_payer_role_authorized,
            op.id AS operation_id, op.business_id, op.status AS operation_status,
            source_wallet.id AS source_wallet_id, source_wallet.address AS source_address,
            source_wallet.status AS source_status, source_wallet.scope AS source_scope,
@@ -2422,11 +2429,12 @@ async function reconcileFundingLegTransaction(
       row.network_fee_lamports
     );
     const feeInvalid = !feeVerification.verified ||
-      row.fee_payer_wallet_status !== "active" || !row.fee_payer_verified_at ||
+      row.fee_payer_wallet_status !== "active" || row.fee_payer_scope !== "business" ||
+      !row.fee_payer_verified_at || row.fee_payer_role_authorized !== 1 ||
       (BigInt(row.network_fee_lamports) > 0n && !row.fee_reservation_id);
     if (feeInvalid) {
       const reason = feeVerification.verified
-        ? "Registered fee wallet is no longer active and verified, or its fee reservation is missing."
+        ? "Registered fee wallet is no longer active, verified, correctly scoped or assigned, or its fee reservation is missing."
         : feeVerification.reason;
       try {
         await env.DB.batch([
