@@ -2889,7 +2889,7 @@ async function submitSignedFundingLegTransaction(
   let blockhashValid: boolean;
   let estimatedFee: bigint | null;
   try {
-    const validity = await connection.isBlockhashValid(verified.recentBlockhash as Blockhash, "finalized");
+    const validity = await connection.isBlockhashValid(verified.recentBlockhash as Blockhash, { commitment: "finalized" });
     blockhashValid = validity.value;
     estimatedFee = await verified.transaction.getEstimatedFee(connection);
   } catch {
