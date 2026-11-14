@@ -40,6 +40,14 @@ CREATE TRIGGER IF NOT EXISTS trg_funding_leg_identity_immutable
 BEFORE UPDATE OF operation_id, leg_index, kind, source_wallet_id,
                  destination_wallet_id, destination_address, asset_mint, amount_atoms
 ON operation_funding_legs
+WHEN NEW.operation_id IS NOT OLD.operation_id
+  OR NEW.leg_index IS NOT OLD.leg_index
+  OR NEW.kind IS NOT OLD.kind
+  OR NEW.source_wallet_id IS NOT OLD.source_wallet_id
+  OR NEW.destination_wallet_id IS NOT OLD.destination_wallet_id
+  OR NEW.destination_address IS NOT OLD.destination_address
+  OR NEW.asset_mint IS NOT OLD.asset_mint
+  OR NEW.amount_atoms IS NOT OLD.amount_atoms
 BEGIN
   SELECT RAISE(ABORT, 'funding_leg_identity_immutable');
 END;
