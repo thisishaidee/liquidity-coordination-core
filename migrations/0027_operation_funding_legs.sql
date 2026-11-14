@@ -32,7 +32,7 @@ CREATE INDEX IF NOT EXISTS idx_funding_legs_operation_order
   ON operation_funding_legs(operation_id, leg_index);
 CREATE INDEX IF NOT EXISTS idx_funding_legs_status_updated
   ON operation_funding_legs(status, updated_at);
-CREATE INDEX IF NOT EXISTS idx_funding_legs_transaction_hash
+CREATE UNIQUE INDEX IF NOT EXISTS idx_funding_legs_transaction_hash
   ON operation_funding_legs(transaction_hash)
   WHERE transaction_hash IS NOT NULL;
 
