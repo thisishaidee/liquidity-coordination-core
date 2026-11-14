@@ -1135,11 +1135,19 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     const original=button.textContent;
     button.disabled=true;button.textContent="Opening wallet…";
     if(help)help.textContent="Connect the wallet that owns this exact address, then approve the ownership message in the wallet app. No funds will move.";
-    try{await verifyWalletOwnershipWithWallet(button.dataset.verifyWallet,button.dataset.address,button);}
+    try{
+      const connectedAddress=await connectSolanaWallet();
+      if(connectedAddress!==button.dataset.address){
+        throw new Error("The connected wallet is "+connectedAddress+", but this business wallet is "+button.dataset.address+". Switch to the wallet that owns the registered address and retry.");
+      }
+      if(help)help.textContent="Wallet connected. Approve the ownership message in the wallet app. This is a message signature only; no transaction or network fee is involved.";
+      await verifyWalletOwnershipWithWallet(button.dataset.verifyWallet,button.dataset.address,button);
+      if(help)help.textContent="Address control verified. You can now assign a business role below.";
+    }
     catch(error){
       const message=String(error.message||error);
       button.textContent="Retry ownership check";
-      if(help)help.textContent="Verification did not complete: "+message+". Reopen NERITH inside the matching wallet app, then retry.";
+      if(help)help.textContent="Verification did not complete: "+message+". If no wallet opened, open this dashboard inside the wallet app that owns this address, then retry.";
       showError("Wallet ownership verification failed: "+message);
     }finally{if(button.isConnected){button.disabled=false;if(button.textContent==="Opening wallet…")button.textContent=original;}}
   });
