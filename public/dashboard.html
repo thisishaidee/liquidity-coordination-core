@@ -602,7 +602,8 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
         ["WalletRoles",api("/v1/admin/wallet-roles?businessId="+id),value=>{state.walletRoles=requireArray(value,"roles","wallet_roles");}],
         ["Telegram connections",api("/v1/admin/telegram/connections?businessId="+id),value=>{state.telegram=requireArray(value,"connections","telegram_connections");}],
         ["Forecast",api("/v1/admin/forecast?businessId="+id),value=>{state.forecast=validateForecast(value);}],
-        ["Operations",api("/v1/admin/operations?"+operationParams.toString()),value=>{const data=validateOperations(value);state.operations=data.operations;state.nextCursor=data.nextCursor;state.operationCounts=data.statusCounts;}],
+        ["Operations",api("/v1/admin/operations?"+operationParams.toString()),value=>{const data=validateOperations(value);state.operations=data.operations;state.nextCursor=data.nextCursor;state.operationCounts=data.statusCounts;}],,
+        ["PaymentIntents",api("/v1/admin/payment-intents?businessId="+id),value=>{if(!Array.isArray(value.intents))throw new Error("invalid_payment_intents_response");state.paymentIntents=value.intents;}]
         ["PaymentIntents",api("/v1/admin/payment-intents?businessId="+id),value=>{if(!Array.isArray(value.intents))throw new Error("invalid_payment_intents_response");state.paymentIntents=value.intents;}]
       ];
       const results=await Promise.allSettled(requests.map(item=>item[1]));
@@ -778,7 +779,7 @@ $("startTourBanner").addEventListener("click",openTour);$("tourLaunch").addEvent
     $("access").hidden=true;$("app").hidden=false;
     $("topBusiness").textContent="Design preview · no live workspace";
     $("sideBusiness").textContent="No business data loaded";
-    renderOverview();renderAgents();renderLiquidity();renderForecast();renderOperations();renderTelegram();renderSettings();
+    renderOverview();renderAgents();renderLiquidity();renderForecast();renderOperations();renderPaymentIntents();renderTelegram();renderSettings();
     $("tourBanner").hidden=true;$("tourLaunch").hidden=true;
     const notice=document.createElement("div");notice.className="note";notice.style.marginBottom="18px";notice.textContent="STATIC DESIGN PREVIEW · No business data, balances, agents or operations are connected."; $("globalError").after(notice);
     document.querySelectorAll("#refreshBtn,#overviewRefresh,#agentsRefresh,#liquidityRefresh,#forecastRefresh,#operationsRefresh,#telegramRefresh,#loadMoreOperations,#operationFilter").forEach(el=>{el.disabled=true;});
