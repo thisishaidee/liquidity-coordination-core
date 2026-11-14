@@ -280,6 +280,21 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   }
 
 
+  // Wallet Standard discovery supports injected desktop and mobile wallet providers
+  // without binding the dashboard to a single wallet brand.
+  const standardSolanaWallets=new Set();
+  const standardWalletApi=Object.freeze({
+    register:(...wallets)=>wallets.forEach(wallet=>{
+      if(wallet&&Array.isArray(wallet.chains)&&wallet.chains.some(chain=>chain==="solana:mainnet")&&wallet.features){
+        standardSolanaWallets.add(wallet);
+      }
+    })
+  });
+  window.addEventListener("wallet-standard:register-wallet",event=>{
+    if(typeof event.detail==="function")event.detail(standardWalletApi);
+  });
+  window.dispatchEvent(new CustomEvent("wallet-standard:app-ready",{detail:standardWalletApi}));
+
   function getInjectedSolanaProvider() {
     const candidates=[
       window.okxwallet?.solana,
@@ -290,22 +305,39 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     ];
     return candidates.find(provider=>provider&&typeof provider.connect==="function"&&typeof provider.signMessage==="function")||null;
   }
-  async function verifyWalletOwnershipWithWallet(walletId,address,button) {
+  async function signOwnershipChallenge(address,message) {
+    for(const wallet of standardSolanaWallets){
+      const connect=wallet.features["standard:connect"]?.connect;
+      const signMessage=wallet.features["solana:signMessage"]?.signMessage;
+      if(typeof connect!=="function"||typeof signMessage!=="function")continue;
+      const connected=await connect();
+      const account=(connected?.accounts||[]).find(item=>item.address===address&&
+        Array.isArray(item.chains)&&item.chains.includes("solana:mainnet"));
+      if(!account)continue;
+      const signed=await signMessage({account,message:new TextEncoder().encode(message)});
+      const signature=signed?.[0]?.signature;
+      if(signature instanceof Uint8Array&&signature.length===64)return signature;
+      throw new Error("The selected Wallet Standard provider returned an unsupported message-signature format.");
+    }
     const provider=getInjectedSolanaProvider();
-    if(!provider)throw new Error("No supported Solana wallet was detected. Open NERITH in your OKX, Phantom, Solflare or Backpack wallet browser.");
+    if(!provider)throw new Error("No compatible Solana wallet was detected. Use a Wallet Standard wallet or open NERITH in your OKX, Phantom, Solflare or Backpack wallet browser.");
+    const connected=await provider.connect();
+    const connectedKey=connected?.publicKey?.toString?.()||provider.publicKey?.toString?.()||"";
+    if(connectedKey!==address)throw new Error("The connected wallet address does not match this registered wallet. Switch to the matching wallet and try again.");
+    const signed=await provider.signMessage(new TextEncoder().encode(message),"utf8");
+    const signedKey=signed?.publicKey?.toString?.()||provider.publicKey?.toString?.()||connectedKey;
+    if(signedKey!==address)throw new Error("The signing wallet changed accounts. Reconnect the registered wallet and try again.");
+    const rawSignature=signed?.signature??signed;
+    const bytes=rawSignature instanceof Uint8Array?rawSignature:ArrayBuffer.isView(rawSignature)?new Uint8Array(rawSignature.buffer,rawSignature.byteOffset,rawSignature.byteLength):null;
+    if(!bytes||bytes.length!==64)throw new Error("The connected wallet returned an unsupported message-signature format.");
+    return bytes;
+  }
+  async function verifyWalletOwnershipWithWallet(walletId,address,button) {
     button.disabled=true;
     try{
-      const connected=await provider.connect();
-      const connectedKey=connected?.publicKey?.toString?.()||provider.publicKey?.toString?.()||"";
-      if(connectedKey!==address)throw new Error("The connected wallet address does not match this registered wallet. Switch to the matching wallet and try again.");
       const challenge=await apiWrite("/v1/admin/wallet-ownership/challenge",{businessId:state.businessId,walletId});
       if(challenge.address!==address)throw new Error("The server challenge no longer matches this registered wallet. Refresh and try again.");
-      const signed=await provider.signMessage(new TextEncoder().encode(challenge.message),"utf8");
-      const signedKey=signed?.publicKey?.toString?.()||provider.publicKey?.toString?.()||connectedKey;
-      if(signedKey!==address)throw new Error("The signing wallet changed accounts. Reconnect the registered wallet and try again.");
-      const rawSignature=signed?.signature??signed;
-      const signatureBytes=rawSignature instanceof Uint8Array?rawSignature:ArrayBuffer.isView(rawSignature)?new Uint8Array(rawSignature.buffer,rawSignature.byteOffset,rawSignature.byteLength):null;
-      if(!signatureBytes||signatureBytes.length!==64)throw new Error("The connected wallet returned an unsupported message-signature format.");
+      const signatureBytes=await signOwnershipChallenge(address,challenge.message);
       let binary="";for(const byte of signatureBytes)binary+=String.fromCharCode(byte);
       const signature=btoa(binary).replaceAll("+","-").replaceAll("/","_").replace(/=/g,"");
       await apiWrite("/v1/admin/wallet-ownership/verify",{businessId:state.businessId,walletId,challengeId:challenge.challengeId,signature});
