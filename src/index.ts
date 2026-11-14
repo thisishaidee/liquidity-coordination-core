@@ -1845,6 +1845,78 @@ async function setBusinessWalletRole(request: Request, env: Env): Promise<Respon
   return json({ businessId, walletId, role, enabled, priority, minimumRemainingAtoms, maximumTransferAtoms });
 }
 
+
+function encodeBase64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/=/g, "").replace(/\\+/g, "-").replace(/\\//g, "_");
+}
+
+async function createWalletOwnershipChallenge(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const body = await readJson(request);
+  if (!body || typeof body.businessId !== "string" || typeof body.walletId !== "string") return json({ error: "invalid_request" }, 400);
+  const origin = request.headers.get("origin");
+  if (!origin || !isAllowedAdminOrigin(origin, new URL(request.url).origin, env.ADMIN_ALLOWED_ORIGINS)) return json({ error: "origin_not_allowed" }, 403);
+  const wallet = await env.DB.prepare("SELECT id, address, network FROM wallets WHERE id = ? AND business_id = ? AND scope = 'business' AND status = 'active' LIMIT 1")
+    .bind(body.walletId, body.businessId).first<{ id: string; address: string; network: string }>();
+  if (!wallet) return json({ error: "active_business_wallet_not_found" }, 404);
+  if (wallet.network !== "solana") return json({ error: "unsupported_wallet_network" }, 400);
+
+  const nonce = crypto.getRandomValues(new Uint8Array(32));
+  const nonceText = encodeBase64Url(nonce);
+  const challengeId = crypto.randomUUID();
+  const issuedAt = new Date();
+  const expiresAt = new Date(issuedAt.getTime() + 5 * 60 * 1000);
+  const issuedText = issuedAt.toISOString();
+  const expiresText = expiresAt.toISOString();
+  const message = [
+    "NERITH WALLET OWNERSHIP PROOF",
+    "Origin: " + origin,
+    "Business ID: " + body.businessId,
+    "Wallet address: " + wallet.address,
+    "Network: solana:mainnet-beta",
+    "Nonce: " + nonceText,
+    "Issued at: " + issuedText,
+    "Expires at: " + expiresText,
+    "",
+    "This signature proves control of this wallet address only.",
+    "It does not authorize spending or grant agent execution permission."
+  ].join(String.fromCharCode(10));
+
+  await env.DB.prepare("INSERT INTO wallet_ownership_challenges (id, business_id, wallet_id, address, origin, network, message, nonce_hash, issued_at, expires_at) VALUES (?, ?, ?, ?, ?, 'solana:mainnet-beta', ?, ?, ?, ?)")
+    .bind(challengeId, body.businessId, wallet.id, wallet.address, origin, message, await sha256(nonceText), issuedText, expiresText).run();
+  return json({ challengeId, walletId: wallet.id, address: wallet.address, message, expiresAt: expiresText });
+}
+
+async function verifyWalletOwnership(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const body = await readJson(request);
+  if (!body || typeof body.businessId !== "string" || typeof body.walletId !== "string" ||
+      typeof body.challengeId !== "string" || typeof body.signature !== "string" ||
+      body.challengeId.length > 64 || body.signature.length > 256) return json({ error: "invalid_request" }, 400);
+  const origin = request.headers.get("origin");
+  if (!origin || !isAllowedAdminOrigin(origin, new URL(request.url).origin, env.ADMIN_ALLOWED_ORIGINS)) return json({ error: "origin_not_allowed" }, 403);
+
+  const challenge = await env.DB.prepare("SELECT c.id, c.address, c.origin, c.network, c.message, c.expires_at, w.address AS current_address FROM wallet_ownership_challenges c JOIN wallets w ON w.id = c.wallet_id AND w.business_id = c.business_id WHERE c.id = ? AND c.business_id = ? AND c.wallet_id = ? AND c.consumed_at IS NULL AND julianday(c.expires_at) > julianday('now') AND w.scope = 'business' AND w.status = 'active' LIMIT 1")
+    .bind(body.challengeId, body.businessId, body.walletId).first<{ id: string; address: string; origin: string; network: string; message: string; expires_at: string; current_address: string }>();
+  if (!challenge) return json({ error: "challenge_expired_or_consumed" }, 409);
+  if (challenge.origin !== origin) return json({ error: "challenge_origin_mismatch" }, 403);
+  if (challenge.network !== "solana:mainnet-beta" || challenge.address !== challenge.current_address) return json({ error: "challenge_wallet_mismatch" }, 409);
+  if (!(await verifySolanaMessageSignature(challenge.address, challenge.message, body.signature))) return json({ error: "invalid_wallet_signature" }, 400);
+
+  const verifiedAt = new Date().toISOString();
+  const signatureHash = await sha256(body.signature);
+  const results = await env.DB.batch([
+    env.DB.prepare("UPDATE wallet_ownership_challenges SET consumed_at = ?, verified_at = ?, signature_hash = ? WHERE id = ? AND business_id = ? AND wallet_id = ? AND consumed_at IS NULL AND julianday(expires_at) > julianday('now')")
+      .bind(verifiedAt, verifiedAt, signatureHash, challenge.id, body.businessId, body.walletId),
+    env.DB.prepare("UPDATE wallets SET ownership_verified_at = ?, ownership_verified_origin = ? WHERE id = ? AND business_id = ? AND address = ? AND EXISTS (SELECT 1 FROM wallet_ownership_challenges c WHERE c.id = ? AND c.verified_at = ? AND c.consumed_at = ?)")
+      .bind(verifiedAt, origin, body.walletId, body.businessId, challenge.address, challenge.id, verifiedAt, verifiedAt)
+  ]);
+  if (Number(results[0]?.meta?.changes ?? 0) !== 1 || Number(results[1]?.meta?.changes ?? 0) !== 1) return json({ error: "challenge_already_used_or_expired" }, 409);
+  return json({ verified: true, walletId: body.walletId, address: challenge.address, ownershipVerifiedAt: verifiedAt, ownershipVerifiedOrigin: origin, authority: "address_control_only" });
+}
+
 async function upsertBalanceSnapshot(request: Request, env: Env): Promise<Response> {
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
   const body = await readJson(request);
@@ -4592,6 +4664,8 @@ export default {
     if (request.method === "GET" && url.pathname === "/v1/admin/wallets") return listBusinessWallets(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/wallet-roles") return listBusinessWalletRoles(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/wallet-roles") return setBusinessWalletRole(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/admin/wallet-ownership/challenge") return createWalletOwnershipChallenge(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/admin/wallet-ownership/verify") return verifyWalletOwnership(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/wallets") return registerWallet(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/balances") return upsertBalanceSnapshot(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/balances/sync") return syncSolanaBalances(request, env);
