@@ -32,7 +32,7 @@ export type UsdcFundingTransactionResult = {
   amountAtoms: string;
   decimals: 6;
   recentBlockhash: string;
-  lastValidBlockHeight: number;
+  lastValidBlockHeight: string;
   estimatedFeeLamports: string;
   requiredSigners: string[];
 };
@@ -172,7 +172,7 @@ export async function buildUsdcFundingTransaction(
     amountAtoms: input.amountAtoms,
     decimals: 6,
     recentBlockhash: lifetime.blockhash,
-    lastValidBlockHeight: lifetime.lastValidBlockHeight,
+    lastValidBlockHeight: lifetime.lastValidBlockHeight.toString(),
     estimatedFeeLamports: fee.toString(),
     requiredSigners
   };
