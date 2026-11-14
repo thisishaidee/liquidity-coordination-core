@@ -17,6 +17,6 @@ const connector = await build({
 const bundledConnector = connector.outputFiles[0]?.text;
 if (!bundledConnector) throw new Error("OKX wallet connector bundle was not generated.");
 if (!html.includes("<script>")) throw new Error("Business dashboard inline script was not found.");
-const htmlWithWalletSdk = html.replace("<script>", "<script>\\n" + bundledConnector + "\\n");
-const generated = `// Generated from public/dashboard.html by scripts/embed-business-dashboard.mjs.\\nexport const businessDashboardHtml = ${JSON.stringify(htmlWithWalletSdk)};\\n`;
+const htmlWithWalletSdk = html.replace("<script>", "<script>\n" + bundledConnector + "\n");
+const generated = `// Generated from public/dashboard.html by scripts/embed-business-dashboard.mjs.\nexport const businessDashboardHtml = ${JSON.stringify(htmlWithWalletSdk)};\n`;
 writeFileSync(resolve(root, "src/business-dashboard.ts"), generated);
