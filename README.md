@@ -129,7 +129,7 @@ The evaluator is planning and policy logic only. The payment-preparation API per
 This is still an early backend, not a production funds executor.
 
 - Reservations are internal ledger holds. They do not transfer or spend funds.
-- V1 only fulfills directly from one eligible USDC wallet. It deliberately does not combine multiple wallets until split reservations can be made atomically.
+- The legacy V1 agent-operation fulfillment path remains direct from one eligible USDC wallet. The separate business payment-intent flow adds atomic multi-wallet reserve replenishment and final-payment legs; it does not alter legacy operation semantics.
 - Swap.io quote and unsigned transaction preparation are proxied through x402. The caller's x402 client signs the separate USDC API payment; this Worker never receives wallet private keys. The caller must still sign the returned swap transaction locally.
 - The manual admin balance endpoint accepts operator-entered snapshots for controlled testing only. The admin sync endpoint reads SOL and USDC balances from Solana RPC at confirmed commitment. Never accept balances from agent requests.
 - A scheduled Worker runs reservation expiry cleanup every minute. The admin expiry endpoint is also available for manual reconciliation. Verify the cron trigger is active after deployment.
