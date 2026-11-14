@@ -1,0 +1,28 @@
+# Isolated remote Worker for Solana devnet wallet testing.
+# This is NOT production. It uses a dedicated empty D1 database and devnet RPC.
+# Never replace the DB UUID or allowed origin with production values.
+
+name = "nerith-devnet-testing"
+main = "src/index.ts"
+compatibility_date = "2026-11-11"
+
+[vars]
+NERITH_SUPPORT_URL = "https://nerith-devnet-testing.workers.dev"
+NERITH_PUBLIC_URL = "https://nerith-devnet-testing.workers.dev"
+ADMIN_ALLOWED_ORIGINS = "https://nerith-devnet-testing.pages.dev"
+SOLANA_RPC_URL = "https://api.devnet.solana.com"
+SOLANA_USDC_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+NERITH_TEST_MODE = "true"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "nerith-devnet-testing"
+database_id = "e5d9ea84-e4f9-48fc-95c8-d78b19ffc13f"
+migrations_dir = "migrations"
+
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1

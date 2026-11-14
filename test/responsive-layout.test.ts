@@ -43,6 +43,50 @@ describe("responsive page source contracts", () => {
     }
   });
 
+  it("provides responsive business wallet role controls without implying signing authority", () => {
+    expect(businessDashboardHtml).toContain('id="walletRolesList"');
+    expect(businessDashboardHtml).toContain('data-wallet-role-form');
+    expect(businessDashboardHtml).toContain('wallet-role-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));');
+    expect(businessDashboardHtml).toContain('@media(max-width:560px){.wallet-role-form{grid-template-columns:1fr}');
+    expect(businessDashboardHtml).toContain("A wallet role does not grant signing authority.");
+    expect(businessDashboardHtml).toContain('/v1/admin/wallet-roles?businessId=');
+  });
+
+  it("requires an owner-signed, domain-bound wallet challenge before role assignment", () => {
+    expect(businessDashboardHtml).toContain('data-verify-wallet');
+    expect(businessDashboardHtml).toContain('/v1/admin/wallet-ownership/challenge');
+    expect(businessDashboardHtml).toContain('/v1/admin/wallet-ownership/verify');
+    expect(businessDashboardHtml).toContain('window.okxwallet?.solana');
+    expect(businessDashboardHtml).toContain('window.phantom?.solana');
+    expect(businessDashboardHtml).toContain('wallet-standard:register-wallet');
+    expect(businessDashboardHtml).toContain('wallet-standard:app-ready');
+    expect(businessDashboardHtml).toContain('solana:signMessage');
+    expect(businessDashboardHtml).toContain('solana:mainnet');
+    expect(businessDashboardHtml).toContain('solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp');
+    expect(businessDashboardHtml).toContain('const canManage=["owner","admin"].includes(state.role)');
+    expect(businessDashboardHtml).toContain("The signing wallet changed accounts.");
+    expect(businessDashboardHtml).toContain('A workspace admin must sign a short-lived message');
+    expect(businessDashboardHtml).toContain('Verify address control before assigning or enabling a business role.');
+  });
+
+  it("provides a responsive business payment inbox with wallet signing and settlement actions", () => {
+    expect(businessDashboardHtml).toContain('id="page-payments"');
+    expect(businessDashboardHtml).toContain('id="paymentIntentsList"');
+    expect(businessDashboardHtml).toContain('data-prepare-funding-leg');
+    expect(businessDashboardHtml).toContain('data-reconcile-funding-leg');
+    expect(businessDashboardHtml).toContain('solana:signTransaction');
+    expect(businessDashboardHtml).toContain('/submit-signed');
+    expect(businessDashboardHtml).toContain('/v1/admin/payment-intents?businessId=');
+    expect(businessDashboardHtml).toContain('@media(max-width:560px)');
+    expect(businessDashboardHtml).toContain('overflow-wrap:anywhere');
+    expect(businessDashboardHtml).toContain('const canManagePayments = ["owner","admin"].includes(state.role);');
+    expect(businessDashboardHtml).toContain('for (const signerAddress of prepared.requiredSigners || [])');
+    expect(businessDashboardHtml).toContain("function extractLegacyMessageBytes(transactionBytes)");
+    expect(businessDashboardHtml).toContain("sha256Hex(extractLegacyMessageBytes(signedTransaction)) !== prepared.messageSha256");
+    expect(businessDashboardHtml).toContain('["planned","blocked","reserved"].includes(leg.status)');
+    expect(businessDashboardHtml).toContain(".wallet-role-help{margin-top:9px;color:var(--muted);font-size:10px;line-height:1.6;overflow-wrap:anywhere;word-break:break-word}");
+  });
+
   it("declares business-dashboard action buttons as non-submit controls", () => {
     expect(businessDashboardHtml).not.toMatch(/<button\b(?![^>]*\btype\s*=)[^>]*>/i);
   });

@@ -15,7 +15,11 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 ## Product and security documentation
 
 - [Product and architecture overview](docs/PRODUCT_OVERVIEW.md)
+- [Autonomous multi-wallet liquidity architecture](docs/AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md) (implementation specification; not yet live)
 - [Static security audit (12 November 2026)](docs/SECURITY_AUDIT_2026-11-12.md)
+- [Functional release-readiness audit (14 November 2026)](docs/RELEASE_READINESS_AUDIT_2026-11-14.md)
+- [Static security and release-readiness audit (14 November 2026)](docs/SECURITY_AUDIT_2026-11-14.md)
+- [Cross-platform wallet handoff requirements](docs/WALLET_HANDOFF_CROSS_PLATFORM.md) (target architecture; not yet implemented or device-verified)
 
 ## Current API
 
@@ -35,12 +39,26 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 | POST | `/v1/admin/agents/:id/disable` | Disable an agent credential |
 | POST | `/v1/admin/wallets/:id/disable` | Revoke a wallet after its active reservations clear |
 | POST | `/v1/admin/wallets` | Register an authorized Solana wallet |
+| GET | `/v1/admin/wallet-roles?businessId=...` | List business-scoped wallet roles |
+| POST | `/v1/admin/wallet-roles` | Assign or update a business wallet role and its reserve limits |
+| POST | `/v1/admin/wallet-ownership/challenge` | Create a five-minute wallet ownership message challenge |
+| POST | `/v1/admin/wallet-ownership/verify` | Verify a wallet-signed ownership challenge |
 | POST | `/v1/admin/balances` | Record a controlled manual balance snapshot |
 | POST | `/v1/admin/balances/sync` | Refresh registered wallet balances from Solana RPC |
+| GET | `/v1/admin/payment-policy?businessId=...` | Read business payment policy |
+| GET | `/v1/admin/payment-intents?businessId=...` | List recent business payment requests and their funding legs for owner review |
+| POST | `/v1/admin/payment-policy` | Update business payment policy |
+| POST | `/v1/payments/prepare` | Agent-authenticated, idempotent payment-intent preparation and guarded funding reservations |
+| POST | `/v1/admin/payment-intents/:intentId/funding-legs/:legId/prepare?businessId=...` | Build an unsigned, exact checked-USDC transfer for wallet review |
+| POST | `/v1/admin/payment-intents/:intentId/funding-legs/:legId/submit-signed?businessId=...` | Verify fully signed transaction bytes and broadcast from the Worker |
+| POST | `/v1/admin/payment-intents/:intentId/funding-legs/:legId/submit?businessId=...` | Record a business-owner-signed transaction signature |
+| POST | `/v1/admin/payment-intents/:intentId/funding-legs/:legId/reconcile?businessId=...` | Verify finalized SPL-token settlement from Solana RPC |
+| POST | `/v1/admin/payment-intents/:intentId/prepare-final-payment?businessId=...` | Refresh finalized payment-wallet USDC and reserve final payment after all replenishment legs confirm |
 | POST | `/v1/admin/reservations/expire` | Platform-token-only manual sweep of expired reservations |
 | POST | `/v1/admin/telegram/setup` | Platform-token-only shared bot setup, webhook registration and command publishing |
 | GET | `/v1/admin/telegram/status` | Platform-token-only shared Telegram webhook status |
 | GET/POST | `/v1/admin/x402/budgets` | Read or set business-wide and per-agent daily x402 USDC spending limits |
+| POST | `/v1/admin/x402/demo/quote` | Owner/admin-only, one-call Swap.io x402 proof run using verified operating and API-fee wallets |
 | POST | `/v1/admin/x402/reconcile` | Reconcile a pending x402 reservation with its finalized on-chain receipt |
 | POST | `/v1/admin/telegram/link-codes` | Create a one-time private Telegram linking invitation |
 | POST | `/v1/telegram/webhook` | Receive verified Telegram bot updates |
@@ -65,7 +83,12 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 
 - Exact decimal-to-atom conversion using BigInt.
 - Conservative liquidity decision engine.
-- Direct USDC liquidity reservation from one eligible wallet.
+- Direct USDC liquidity reservation from one eligible wallet in the existing V1 agent flow.
+- Owner/admin-controlled Swap.io x402 proof flow: relays the unpaid 402 challenge, requires a separate explicit Jupiter Mobile USDC payment signature, enforces a 0.01 USDC per-call cap, and verifies the settlement receipt before displaying the quote; it does not execute the swap.
+- Business payment-intent preparation with deterministic policy evaluation, business-wide idempotency, daily and per-transaction caps, and atomic multi-wallet USDC/SOL reservation holds.
+- Owner/admin-only funding-leg submission and finalized Solana RPC reconciliation with exact SPL transfer verification, immutable transaction signatures, ambiguity holds and separate network-fee validation.
+- Finalized payment-wallet USDC refresh after all reserve legs confirm; the final-payment leg and reservation are unlocked atomically under database-enforced intent and funding-leg gates.
+- Finalized SPL-token balance lookup validates owner, mint, decimals and canonical atom amounts across every token account.
 - Conditional balance update to prevent concurrent over-reservation.
 - Reservation expiry timestamp (15 minutes) and explicit release endpoint.
 - Agent and business wallet scope enforcement.
@@ -99,12 +122,18 @@ Send that body to `POST /v1/admin/x402/budgets` using an authenticated admin ses
 
 The Worker stores the actual Hermes V1 Solana challenge for the exact operation/request, reserves its quoted amount before forwarding the payment, rejects payment replay, and verifies the finalized receipt transaction against the challenge's USDC mint, exact payer debit, exact recipient credit, payer signature and advertised facilitator fee payer before marking spend as settled. A timeout, missing receipt or RPC uncertainty keeps the reservation pending instead of silently freeing budget. GET budgets also lists pending reservations; after a receipt transaction is available, an authenticated admin can POST `{ "reservationId": "x4r_..." }` to `/v1/admin/x402/reconcile` to retry verification. These limits govern paid calls routed through NERITH; they are not a wallet-level spending lock for direct transfers made outside NERITH.
 
+## Deterministic payment policy
+
+The draft includes a pure evaluator in `src/transaction-policy.ts`. It checks business scope, idempotency, intent expiry, asset and destination allowlists, per-transaction and daily limits, fresh verified payment/reserve wallets, reserve floors, transfer caps, SOL network-fee payer allowlists and balances, and conversion-source/slippage policy. It can return a direct-payment, reserve-replenishment, conversion-required or explicitly permitted partial-payment plan.
+
+The evaluator is planning and policy logic only. The payment-preparation API persists intents, funding legs and bounded internal reservations. The business dashboard now lists payment intents, builds unsigned checked-USDC transfers, requests sequential Wallet Standard signatures from each required business wallet, and submits the fully signed bytes to an owner/admin-only Worker relay. The Worker verifies the message digest, signer set, signatures, exact transfer accounts, amount, decimals, blockhash and fee cap before broadcast. Finalized RPC reconciliation remains the settlement source of truth. Replenishment unlocks final payment only after a separate finalized balance refresh. Conversion remains out of scope for this funding-leg verifier.
+
 ## Important safety boundaries
 
 This is still an early backend, not a production funds executor.
 
 - Reservations are internal ledger holds. They do not transfer or spend funds.
-- V1 only fulfills directly from one eligible USDC wallet. It deliberately does not combine multiple wallets until split reservations can be made atomically.
+- The legacy V1 agent-operation fulfillment path remains direct from one eligible USDC wallet. The separate business payment-intent flow adds atomic multi-wallet reserve replenishment and final-payment legs; it does not alter legacy operation semantics.
 - Swap.io quote and unsigned transaction preparation are proxied through x402. The caller's x402 client signs the separate USDC API payment; this Worker never receives wallet private keys. The caller must still sign the returned swap transaction locally.
 - The manual admin balance endpoint accepts operator-entered snapshots for controlled testing only. The admin sync endpoint reads SOL and USDC balances from Solana RPC at confirmed commitment. Never accept balances from agent requests.
 - A scheduled Worker runs reservation expiry cleanup every minute. The admin expiry endpoint is also available for manual reconciliation. Verify the cron trigger is active after deployment.
@@ -127,7 +156,7 @@ npm run typecheck
 npm test
 ```
 
-Use the dedicated Cloudflare D1 database already provisioned for this repository. Its ID is configured in `wrangler.toml`; migrations 0001 through 0023 are tracked in `migrations/`; apply all pending migrations and verify them in `d1_migrations`. For a fresh environment, create a D1 database and apply migrations:
+Use the dedicated Cloudflare D1 database already provisioned for this repository. Its ID is configured in `wrangler.toml`; migrations 0001 through 0032 are tracked in `migrations/`; apply all pending migrations and verify them in `d1_migrations`. For a fresh environment, create a D1 database and apply migrations:
 
 ```bash
 npx wrangler d1 create liquidity-coordination

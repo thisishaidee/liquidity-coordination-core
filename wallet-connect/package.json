@@ -1,0 +1,18 @@
+{
+  "name": "nerith-jupiter-mobile-connector",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@jup-ag/jup-mobile-adapter": "0.0.2",
+    "@reown/appkit": "1.8.24",
+    "@reown/appkit-adapter-solana": "1.8.24",
+    "@reown/appkit-wallet-button": "1.8.24",
+    "@solana/wallet-adapter-base": "0.9.23",
+    "@solana/wallet-adapter-react": "0.15.39",
+    "@solana/web3.js": "1.98.4",
+    "next": "14.2.35",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "@solana/spl-token": "0.4.14"
+  }
+}

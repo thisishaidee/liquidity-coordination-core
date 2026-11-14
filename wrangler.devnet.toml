@@ -1,0 +1,19 @@
+# LOCAL-ONLY Solana devnet test configuration.
+# This file intentionally uses a placeholder D1 ID and a separate Worker name.
+# Do not deploy this config to Cloudflare. It is for local Wrangler testing only.
+
+name = "nerith-devnet-local"
+main = "src/index.ts"
+compatibility_date = "2026-11-11"
+
+[vars]
+NERITH_SUPPORT_URL = "http://localhost:8787"
+NERITH_PUBLIC_URL = "http://localhost:8787"
+ADMIN_ALLOWED_ORIGINS = "http://localhost:8787"
+SOLANA_CLUSTER = "devnet"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "nerith-devnet-local"
+database_id = "00000000-0000-0000-0000-000000000001"
+migrations_dir = "migrations"

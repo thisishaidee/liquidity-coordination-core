@@ -1,5 +1,7 @@
 import { dashboardHtml } from "./dashboard";
 import { businessDashboardHtml } from "./business-dashboard";
+import { okxWalletConnectorJs } from "./okx-wallet-connector";
+import { jupiterMobileConnectorJs } from "./jupiter-mobile-connector";
 import { pixelFieldSvg } from "./pixel-field";
 import { landingHtml } from "./landing";
 import { controlHtml } from "./control";
@@ -15,6 +17,15 @@ import { decryptTotpSecret, encryptTotpSecret, generateTotpSecret, verifyTotpSte
 import { verifySolSourceDebit, type SolanaSettlementTransaction } from "./settlement";
 import { parseHermesPaymentPayload, parseHermesPaymentRequirement, parseHermesPaymentReceipt, verifyHermesPaymentTransaction, type HermesPaymentRequirement } from "./x402";
 import { describeAdminRoute, isAllowedAdminOrigin, isDashboardRoleAllowed, matchesBusinessScope } from "./admin-auth";
+import { decodeSolanaAddress, verifySolanaMessageSignature } from "./solana-wallet-verification";
+import { evaluatePaymentIntentPolicy, type PaymentIntent, type PaymentPolicy, type PolicyWalletSnapshot } from "./transaction-policy";
+import { fetchFinalizedSolanaTransaction } from "./solana-finalized-transaction";
+import { verifySolanaTokenTransfer, type SolanaPaymentTransaction } from "./payment-settlement";
+import { verifySolanaNetworkFee } from "./solana-network-fee";
+import { FINALIZED_TRANSACTION_READ_OPTIONS } from "./solana-rpc-options";
+import { buildUsdcFundingTransaction, verifySignedUsdcFundingTransaction } from "./solana-funding-transaction";
+import { Connection, type Blockhash } from "@solana/web3.js";
+import { fetchFinalizedSplTokenBalance } from "./solana-finalized-balance";
 
 interface Env {
   DB: D1Database;
@@ -1702,6 +1713,7 @@ async function listBusinessWallets(request: Request, env: Env): Promise<Response
   if (!business) return json({ error: "business_not_found" }, 404);
   const rows = await env.DB.prepare(`
     SELECT w.id, w.address, w.network, w.scope, w.purpose, w.status,
+           w.ownership_verified_at, w.ownership_verified_origin,
            b.token, b.confirmed_atoms, b.reserved_atoms, b.observed_at, b.source
     FROM wallets w
     LEFT JOIN wallet_balances b ON b.wallet_id = w.id
@@ -1709,17 +1721,19 @@ async function listBusinessWallets(request: Request, env: Env): Promise<Response
     ORDER BY w.status ASC, w.purpose ASC, w.address ASC, b.token ASC
   `).bind(businessId).all<{
     id: string; address: string; network: string; scope: string; purpose: string; status: string;
+    ownership_verified_at: string | null; ownership_verified_origin: string | null;
     token: string | null; confirmed_atoms: string | null; reserved_atoms: string | null;
     observed_at: string | null; source: string | null;
   }>();
   const wallets = new Map<string, {
     walletId: string; address: string; network: string; scope: string; purpose: string; status: string;
+    ownershipVerifiedAt: string | null; ownershipVerifiedOrigin: string | null;
     balances: Array<{ token: string; confirmed: string; reserved: string; available: string; observedAt: string; source: string; fresh: boolean }>;
   }>();
   for (const row of rows.results ?? []) {
     if (!wallets.has(row.id)) wallets.set(row.id, {
       walletId: row.id, address: row.address, network: row.network, scope: row.scope,
-      purpose: row.purpose, status: row.status, balances: []
+      purpose: row.purpose, status: row.status, ownershipVerifiedAt: row.ownership_verified_at, ownershipVerifiedOrigin: row.ownership_verified_origin, balances: []
     });
     if (row.token && row.confirmed_atoms !== null && row.reserved_atoms !== null && row.observed_at && row.source) {
       const decimals = row.token === "SOL" ? 9 : 6;
@@ -1738,6 +1752,1816 @@ async function listBusinessWallets(request: Request, env: Env): Promise<Response
     }
   }
   return json({ businessId, wallets: [...wallets.values()] });
+}
+
+
+function parsePolicyArray(value: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.every(item => typeof item === "string")
+      ? parsed
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function isSqliteAtomString(value: unknown): value is string {
+  if (typeof value !== "string" || !/^[1-9][0-9]{0,18}$/.test(value)) return false;
+  return BigInt(value) <= 9_223_372_036_854_775_807n;
+}
+
+type BusinessPaymentPolicyRow = {
+  business_id: string;
+  allowed_mints: string;
+  allowed_destinations: string;
+  allowed_conversion_mints: string;
+  max_transaction_atoms: string;
+  max_network_fee_lamports: string;
+  allowed_fee_payer_wallet_ids: string;
+  max_daily_atoms: string;
+  max_balance_age_seconds: number;
+  max_intent_lifetime_seconds: number;
+  max_slippage_bps: number;
+  allow_conversion: number;
+  allow_partial_payment: number;
+  version: number;
+  updated_at: string;
+};
+
+function toPaymentPolicy(row: BusinessPaymentPolicyRow, committedTodayAtoms: bigint): PaymentPolicy {
+  return {
+    businessId: row.business_id,
+    allowedMints: parsePolicyArray(row.allowed_mints),
+    allowedDestinations: parsePolicyArray(row.allowed_destinations),
+    allowedConversionMints: parsePolicyArray(row.allowed_conversion_mints),
+    maxTransactionAtoms: row.max_transaction_atoms,
+    maxNetworkFeeLamports: row.max_network_fee_lamports,
+    allowedFeePayerWalletIds: parsePolicyArray(row.allowed_fee_payer_wallet_ids),
+    maxDailyAtoms: row.max_daily_atoms,
+    committedTodayAtoms: committedTodayAtoms.toString(),
+    maxBalanceAgeSeconds: row.max_balance_age_seconds,
+    maxIntentLifetimeSeconds: row.max_intent_lifetime_seconds,
+    maxSlippageBps: row.max_slippage_bps,
+    allowConversion: row.allow_conversion === 1,
+    allowPartialPayment: row.allow_partial_payment === 1
+  };
+}
+
+async function getBusinessPaymentPolicy(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const businessId = new URL(request.url).searchParams.get("businessId");
+  if (!businessId) return json({ error: "business_id_required" }, 400);
+  const row = await env.DB.prepare("SELECT * FROM business_payment_policies WHERE business_id = ? LIMIT 1")
+    .bind(businessId).first<BusinessPaymentPolicyRow>();
+  if (!row) return json({ businessId, policy: null });
+  return json({
+    businessId,
+    policy: {
+      allowedMints: parsePolicyArray(row.allowed_mints),
+      allowedDestinations: parsePolicyArray(row.allowed_destinations),
+      allowedConversionMints: parsePolicyArray(row.allowed_conversion_mints),
+      maxTransactionAtoms: row.max_transaction_atoms,
+      maxNetworkFeeLamports: row.max_network_fee_lamports,
+      allowedFeePayerWalletIds: parsePolicyArray(row.allowed_fee_payer_wallet_ids),
+      maxDailyAtoms: row.max_daily_atoms,
+      maxBalanceAgeSeconds: row.max_balance_age_seconds,
+      maxIntentLifetimeSeconds: row.max_intent_lifetime_seconds,
+      maxSlippageBps: row.max_slippage_bps,
+      allowConversion: row.allow_conversion === 1,
+      allowPartialPayment: row.allow_partial_payment === 1,
+      version: row.version,
+      updatedAt: row.updated_at
+    }
+  });
+}
+
+async function setBusinessPaymentPolicy(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const body = await readJson(request);
+  if (!body) return json({ error: "invalid_json" }, 400);
+  const {
+    businessId, allowedMints, allowedDestinations, allowedConversionMints,
+    maxTransactionAtoms, maxNetworkFeeLamports, allowedFeePayerWalletIds,
+    maxDailyAtoms, maxBalanceAgeSeconds, maxIntentLifetimeSeconds,
+    maxSlippageBps, allowConversion, allowPartialPayment
+  } = body;
+  const validStringArray = (value: unknown, min: number, max: number, itemMax: number) =>
+    Array.isArray(value) && value.length >= min && value.length <= max &&
+    value.every(item => typeof item === "string" && item.length > 0 && item.length <= itemMax) &&
+    new Set(value).size === value.length;
+  if (
+    typeof businessId !== "string" || !businessId ||
+    !validStringArray(allowedMints, 1, 10, 128) ||
+    !validStringArray(allowedDestinations, 1, 100, 128) ||
+    !validStringArray(allowedConversionMints, 0, 10, 128) ||
+    !validStringArray(allowedFeePayerWalletIds, 1, 20, 128) ||
+    !isSqliteAtomString(maxTransactionAtoms) ||
+    !isSqliteAtomString(maxNetworkFeeLamports) && maxNetworkFeeLamports !== "0" ||
+    !isSqliteAtomString(maxDailyAtoms) ||
+    !Number.isSafeInteger(maxBalanceAgeSeconds) || (maxBalanceAgeSeconds as number) < 1 || (maxBalanceAgeSeconds as number) > 86400 ||
+    !Number.isSafeInteger(maxIntentLifetimeSeconds) || (maxIntentLifetimeSeconds as number) < 60 || (maxIntentLifetimeSeconds as number) > 86400 ||
+    !Number.isSafeInteger(maxSlippageBps) || (maxSlippageBps as number) < 0 || (maxSlippageBps as number) > 10000 ||
+    typeof allowConversion !== "boolean" || typeof allowPartialPayment !== "boolean"
+  ) return json({ error: "invalid_payment_policy", message: "Provide explicit allowlists, bounded atom limits, balance freshness, intent lifetime, slippage and policy flags." }, 400);
+
+  const business = await env.DB.prepare("SELECT id FROM businesses WHERE id = ?").bind(businessId).first<{ id: string }>();
+  if (!business) return json({ error: "business_not_found" }, 404);
+  const feePayerIds = allowedFeePayerWalletIds as string[];
+  const placeholders = feePayerIds.map(() => "?").join(",");
+  const eligibleFeePayers = await env.DB.prepare(`
+    SELECT DISTINCT w.id
+    FROM wallets w
+    JOIN wallet_role_assignments r ON r.wallet_id = w.id AND r.business_id = w.business_id
+    WHERE w.business_id = ? AND w.scope = 'business' AND w.network = 'solana'
+      AND w.status = 'active' AND w.ownership_verified_at IS NOT NULL
+      AND r.enabled = 1 AND r.role IN ('payment', 'operating')
+      AND w.id IN (${placeholders})
+  `).bind(businessId, ...feePayerIds).all<{ id: string }>();
+  if ((eligibleFeePayers.results ?? []).length !== feePayerIds.length) {
+    return json({ error: "invalid_fee_payer_allowlist", message: "Every fee payer must be a verified, active business payment or operating wallet." }, 409);
+  }
+
+  await env.DB.prepare(`
+    INSERT INTO business_payment_policies (
+      business_id, allowed_mints, allowed_destinations, allowed_conversion_mints,
+      max_transaction_atoms, max_network_fee_lamports, allowed_fee_payer_wallet_ids,
+      max_daily_atoms, max_balance_age_seconds, max_intent_lifetime_seconds,
+      max_slippage_bps, allow_conversion, allow_partial_payment, version, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now'))
+    ON CONFLICT(business_id) DO UPDATE SET
+      allowed_mints = excluded.allowed_mints,
+      allowed_destinations = excluded.allowed_destinations,
+      allowed_conversion_mints = excluded.allowed_conversion_mints,
+      max_transaction_atoms = excluded.max_transaction_atoms,
+      max_network_fee_lamports = excluded.max_network_fee_lamports,
+      allowed_fee_payer_wallet_ids = excluded.allowed_fee_payer_wallet_ids,
+      max_daily_atoms = excluded.max_daily_atoms,
+      max_balance_age_seconds = excluded.max_balance_age_seconds,
+      max_intent_lifetime_seconds = excluded.max_intent_lifetime_seconds,
+      max_slippage_bps = excluded.max_slippage_bps,
+      allow_conversion = excluded.allow_conversion,
+      allow_partial_payment = excluded.allow_partial_payment,
+      version = business_payment_policies.version + 1,
+      updated_at = datetime('now')
+  `).bind(
+    businessId, JSON.stringify(allowedMints), JSON.stringify(allowedDestinations),
+    JSON.stringify(allowedConversionMints), maxTransactionAtoms, maxNetworkFeeLamports,
+    JSON.stringify(feePayerIds), maxDailyAtoms, maxBalanceAgeSeconds,
+    maxIntentLifetimeSeconds, maxSlippageBps, allowConversion ? 1 : 0,
+    allowPartialPayment ? 1 : 0
+  ).run();
+  const saved = await env.DB.prepare("SELECT version, updated_at FROM business_payment_policies WHERE business_id = ?")
+    .bind(businessId).first<{ version: number; updated_at: string }>();
+  return json({ businessId, saved: true, version: saved?.version ?? 1, updatedAt: saved?.updated_at ?? null }, 200);
+}
+
+async function createBusinessPaymentIntent(request: Request, env: Env): Promise<Response> {
+  const agent = await authenticate(request, env.DB);
+  if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
+  if (agent.can_use_business_treasury !== 1) return json({ error: "business_treasury_permission_required" }, 403);
+  const limited = await enforceAgentRateLimit(env, agent.id, "payment_prepare", 10, 60);
+  if (limited) return limited;
+  const body = await readJson(request);
+  if (!body) return json({ error: "invalid_json" }, 400);
+  const { taskId, idempotencyKey, destination, feePayerWalletId } = body;
+  const mint = typeof body.mint === "string" ? body.mint : (env.SOLANA_USDC_MINT ?? "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+  const networkFeeLamports = typeof body.networkFeeLamports === "string" ? body.networkFeeLamports : "";
+  const allowPartialPayment = body.allowPartialPayment === true;
+  const slippageBps = body.slippageBps === undefined ? null : body.slippageBps;
+  const purpose = typeof body.purpose === "string" ? body.purpose.trim() : "Business payment";
+  if (
+    typeof taskId !== "string" || !/^[a-zA-Z0-9._:-]{1,100}$/.test(taskId) ||
+    typeof idempotencyKey !== "string" || !/^[a-zA-Z0-9._:-]{8,128}$/.test(idempotencyKey) ||
+    typeof destination !== "string" || !destination || destination.length > 128 ||
+    typeof feePayerWalletId !== "string" || !feePayerWalletId ||
+    mint !== (env.SOLANA_USDC_MINT ?? "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v") ||
+    !/^(0|[1-9][0-9]{0,18})$/.test(networkFeeLamports) ||
+    BigInt(networkFeeLamports || "0") === 0n ||
+    BigInt(networkFeeLamports || "0") > 9_223_372_036_854_775_807n ||
+    (slippageBps !== null && (!Number.isSafeInteger(slippageBps) || (slippageBps as number) < 0 || (slippageBps as number) > 10000)) ||
+    purpose.length > 300
+  ) return json({ error: "invalid_payment_request" }, 400);
+
+  try { decodeSolanaAddress(destination); }
+  catch { return json({ error: "invalid_solana_destination", message: "Destination must be a valid 32-byte Solana public key." }, 400); }
+
+  let requestedAtoms: bigint;
+  try { requestedAtoms = parseTokenAmount(body.amount); }
+  catch (error) { return json({ error: "invalid_amount", message: error instanceof Error ? error.message : "Invalid amount" }, 400); }
+
+  const existingIntent = await env.DB.prepare(`
+    SELECT i.id, i.operation_id, i.destination, i.mint, i.requested_atoms, i.fee_payer_wallet_id,
+           i.network_fee_lamports, i.allow_partial_payment, i.slippage_bps,
+           i.action, i.status, op.task_id
+    FROM business_payment_intents i
+    JOIN operations op ON op.id = i.operation_id
+    WHERE i.business_id = ? AND i.idempotency_key = ?
+    LIMIT 1
+  `).bind(agent.business_id, idempotencyKey).first<{
+    id: string; operation_id: string; destination: string; mint: string;
+    requested_atoms: string; fee_payer_wallet_id: string; network_fee_lamports: string;
+    allow_partial_payment: number; slippage_bps: number | null; action: string; status: string; task_id: string;
+  }>();
+  if (existingIntent) {
+    const sameRequest = existingIntent.destination === destination && existingIntent.mint === mint &&
+      existingIntent.requested_atoms === requestedAtoms.toString() &&
+      existingIntent.fee_payer_wallet_id === feePayerWalletId &&
+      existingIntent.network_fee_lamports === networkFeeLamports &&
+      existingIntent.allow_partial_payment === (allowPartialPayment ? 1 : 0) &&
+      existingIntent.slippage_bps === (slippageBps as number | null) &&
+      existingIntent.task_id === taskId;
+    if (!sameRequest) return json({ error: "idempotency_key_conflict" }, 409);
+    return json({
+      intentId: existingIntent.id, operationId: existingIntent.operation_id,
+      action: existingIntent.action, status: existingIntent.status, reused: true
+    });
+  }
+
+  const duplicateTask = await env.DB.prepare("SELECT id FROM operations WHERE agent_id = ? AND task_id = ? LIMIT 1")
+    .bind(agent.id, taskId).first<{ id: string }>();
+  if (duplicateTask) return json({ error: "duplicate_task", existingOperationId: duplicateTask.id }, 409);
+
+  const policyRow = await env.DB.prepare("SELECT * FROM business_payment_policies WHERE business_id = ? LIMIT 1")
+    .bind(agent.business_id).first<BusinessPaymentPolicyRow>();
+  if (!policyRow) return json({ error: "payment_policy_not_configured" }, 409);
+
+  const walletRows = await env.DB.prepare(`
+    SELECT w.id AS wallet_id, w.business_id, w.scope, w.status,
+           w.ownership_verified_at, w.address, r.role, r.enabled,
+           r.minimum_remaining_atoms, r.maximum_transfer_atoms,
+           b.id AS balance_id, b.token, b.confirmed_atoms, b.reserved_atoms, b.observed_at
+    FROM wallets w
+    JOIN wallet_role_assignments r ON r.wallet_id = w.id AND r.business_id = w.business_id
+    JOIN wallet_balances b ON b.wallet_id = w.id
+    WHERE w.business_id = ? AND w.network = 'solana'
+      AND r.enabled = 1 AND r.role IN ('payment', 'reserve', 'operating')
+  `).bind(agent.business_id).all<{
+    wallet_id: string; business_id: string; scope: string; status: string;
+    ownership_verified_at: string | null; address: string; role: string; enabled: number;
+    minimum_remaining_atoms: string; maximum_transfer_atoms: string | null;
+    balance_id: string; token: string; confirmed_atoms: string; reserved_atoms: string; observed_at: string;
+  }>();
+  const usdcMint = env.SOLANA_USDC_MINT ?? "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const snapshots: PolicyWalletSnapshot[] = (walletRows.results ?? []).map(row => ({
+    walletId: row.wallet_id, businessId: row.business_id, scope: row.scope,
+    status: row.status, role: row.role as PolicyWalletSnapshot["role"], enabled: row.enabled === 1,
+    ownershipVerifiedAt: row.ownership_verified_at,
+    mint: row.token === "USDC" ? usdcMint : row.token === "SOL" ? "SOL" : row.token,
+    confirmedAtoms: row.confirmed_atoms, reservedAtoms: row.reserved_atoms,
+    observedAt: row.observed_at, minimumRemainingAtoms: row.minimum_remaining_atoms,
+    maximumTransferAtoms: row.maximum_transfer_atoms
+  }));
+  const committedRows = await env.DB.prepare(`
+    SELECT payment_atoms FROM business_payment_intents
+    WHERE business_id = ? AND created_at >= date('now')
+      AND status IN ('reserved', 'replenishing', 'awaiting_owner_approval', 'awaiting_signature', 'submitted', 'confirmed', 'ambiguous')
+  `).bind(agent.business_id).all<{ payment_atoms: string }>();
+  const committedTodayAtoms = (committedRows.results ?? []).reduce((sum, row) => sum + BigInt(row.payment_atoms), 0n);
+  const policy = toPaymentPolicy(policyRow, committedTodayAtoms);
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + policy.maxIntentLifetimeSeconds * 1000);
+  const intent: PaymentIntent = {
+    operationId: "pending",
+    idempotencyKey,
+    idempotencyKeyAlreadyUsed: false,
+    businessId: agent.business_id,
+    destination,
+    mint,
+    amountAtoms: requestedAtoms.toString(),
+    createdAt: now.toISOString(),
+    expiresAt: expiresAt.toISOString(),
+    allowPartialPayment,
+    slippageBps: slippageBps as number | null,
+    networkFeeLamports,
+    networkFeePayerWalletId: feePayerWalletId
+  };
+  const decision = evaluatePaymentIntentPolicy(intent, policy, snapshots, now.getTime());
+  if (!decision.eligible) return json({ error: decision.code, message: decision.message }, 409);
+
+  const operationId = makeOperationId();
+  const paymentIntentId = "bpi_" + crypto.randomUUID().replaceAll("-", "");
+  const paymentAtoms = decision.action === "conversion_required"
+    ? decision.policyPermittedAtoms
+    : decision.paymentAmountAtoms;
+  const paymentWalletRow = (walletRows.results ?? []).find(row =>
+    row.wallet_id === decision.paymentWalletId && row.token === "USDC" && row.role === "payment"
+  );
+  if (!paymentWalletRow) return json({ error: "payment_wallet_balance_missing" }, 409);
+
+  const replenishmentLegs = decision.action === "conversion_required"
+    ? []
+    : decision.replenishmentPlan.legs;
+  const needsReplenishment = replenishmentLegs.length > 0;
+  const paymentAction = decision.action;
+  const intentStatus = decision.action === "conversion_required"
+    ? "awaiting_owner_approval"
+    : needsReplenishment ? "replenishing" : "reserved";
+  const operationStatus = decision.action === "conversion_required"
+    ? "awaiting_conversion" : "reserved";
+  const conversionSourceWalletId = decision.action === "conversion_required"
+    ? decision.conversionSourceWallets[0]?.walletId ?? null : null;
+  const operationShortfall = decision.action === "conversion_required"
+    ? decision.conversionShortfallAtoms
+    : decision.replenishmentPlan.shortfallAtoms;
+  const finalLegId = "leg_" + crypto.randomUUID().replaceAll("-", "");
+  const finalLegAmount = paymentAtoms.toString();
+  const feeTransactionCount = decision.action === "conversion_required" ? 0 : replenishmentLegs.length + 1;
+  const feeBudgetLamports = (BigInt(networkFeeLamports) * BigInt(feeTransactionCount)).toString();
+  if (BigInt(feeBudgetLamports) > 9_223_372_036_854_775_807n) {
+    return json({ error: "network_fee_budget_overflow" }, 409);
+  }
+  const statements: D1PreparedStatement[] = [
+    env.DB.prepare(`
+      INSERT INTO operations
+        (id, business_id, agent_id, task_id, network, token, amount_atoms, purpose,
+         status, action, available_atoms, shortfall_atoms, source_wallet_id)
+      VALUES (?, ?, ?, ?, 'solana', 'USDC', ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      operationId, agent.business_id, agent.id, taskId, requestedAtoms.toString(),
+      purpose, operationStatus, paymentAction, decision.paymentWalletAvailableAtoms.toString(),
+      operationShortfall.toString(), conversionSourceWalletId
+    ),
+    env.DB.prepare(`
+      INSERT INTO business_payment_intents (
+        id, business_id, operation_id, idempotency_key, destination, mint,
+        requested_atoms, payment_atoms, fee_payer_wallet_id, network_fee_lamports,
+        network_fee_budget_lamports, allow_partial_payment, slippage_bps, action, status, policy_version, policy_snapshot, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      paymentIntentId, agent.business_id, operationId, idempotencyKey, destination, mint,
+      requestedAtoms.toString(), paymentAtoms.toString(), feePayerWalletId, networkFeeLamports,
+      feeBudgetLamports, allowPartialPayment ? 1 : 0, slippageBps, paymentAction, intentStatus, policyRow.version,
+      JSON.stringify({ ...policy, committedTodayAtoms: committedTodayAtoms.toString() }),
+      expiresAt.toISOString()
+    )
+  ];
+
+  const reservationDetails: Array<{ id: string; fundingLegId: string | null; walletId: string; token: string; amountAtoms: string }> = [];
+  if (decision.action !== "conversion_required" && BigInt(feeBudgetLamports) > 0n) {
+    const feePayerWalletRow = (walletRows.results ?? []).find(row =>
+      row.wallet_id === feePayerWalletId && row.token === "SOL" &&
+      (row.role === "payment" || row.role === "operating")
+    );
+    if (!feePayerWalletRow) return json({ error: "network_fee_balance_missing" }, 409);
+    const feeReservationId = "res_" + crypto.randomUUID().replaceAll("-", "");
+    statements.push(env.DB.prepare(`
+      INSERT INTO reservations
+        (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
+      VALUES (?, ?, ?, ?, 'SOL', 'active', ?, NULL, 'managed_fee')
+    `).bind(feeReservationId, operationId, feePayerWalletRow.balance_id, feeBudgetLamports, expiresAt.toISOString()));
+    reservationDetails.push({ id: feeReservationId, fundingLegId: null, walletId: feePayerWalletId, token: "SOL", amountAtoms: feeBudgetLamports });
+  }
+  const fundingLegDetails: Array<{ id: string; kind: string; sourceWalletId: string; destinationWalletId: string | null; amountAtoms: string; status: string }> = [];
+  for (const [index, planLeg] of replenishmentLegs.entries()) {
+    const sourceRow = (walletRows.results ?? []).find(row =>
+      row.wallet_id === planLeg.sourceWalletId && row.token === "USDC" &&
+      (row.role === "reserve" || row.role === "operating")
+    );
+    if (!sourceRow || !paymentWalletRow.address) return json({ error: "replenishment_wallet_snapshot_missing" }, 409);
+    const legId = "leg_" + crypto.randomUUID().replaceAll("-", "");
+    const reservationId = "res_" + crypto.randomUUID().replaceAll("-", "");
+    const amountAtoms = planLeg.amountAtoms.toString();
+    statements.push(env.DB.prepare(`
+      INSERT INTO operation_funding_legs
+        (id, operation_id, leg_index, kind, source_wallet_id, destination_wallet_id,
+         destination_address, asset_mint, amount_atoms, status)
+      VALUES (?, ?, ?, 'reserve_replenishment', ?, ?, ?, ?, ?, 'planned')
+    `).bind(legId, operationId, index, planLeg.sourceWalletId, decision.paymentWalletId,
+      paymentWalletRow.address, mint, amountAtoms));
+    statements.push(env.DB.prepare(`
+      INSERT INTO operation_funding_leg_fees
+        (id, operation_id, funding_leg_id, fee_payer_wallet_id, maximum_fee_lamports, status)
+      VALUES (?, ?, ?, ?, ?, 'reserved')
+    `).bind("fee_" + crypto.randomUUID().replaceAll("-", ""), operationId, legId, feePayerWalletId, networkFeeLamports));
+    statements.push(env.DB.prepare(`
+      INSERT INTO reservations
+        (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
+      VALUES (?, ?, ?, ?, 'USDC', 'active', ?, ?, 'managed')
+    `).bind(reservationId, operationId, sourceRow.balance_id, amountAtoms, expiresAt.toISOString(), legId));
+    statements.push(env.DB.prepare("UPDATE operation_funding_legs SET status = 'reserved' WHERE id = ?").bind(legId));
+    reservationDetails.push({ id: reservationId, fundingLegId: legId, walletId: planLeg.sourceWalletId, token: "USDC", amountAtoms });
+    fundingLegDetails.push({ id: legId, kind: "reserve_replenishment", sourceWalletId: planLeg.sourceWalletId, destinationWalletId: decision.paymentWalletId, amountAtoms, status: "reserved" });
+  }
+
+  if (decision.action !== "conversion_required") {
+    statements.push(env.DB.prepare(`
+      INSERT INTO operation_funding_legs
+        (id, operation_id, leg_index, kind, source_wallet_id, destination_address, asset_mint, amount_atoms, status)
+      VALUES (?, ?, ?, 'final_payment', ?, ?, ?, ?, 'planned')
+    `).bind(finalLegId, operationId, replenishmentLegs.length, decision.paymentWalletId, destination, mint, finalLegAmount));
+    statements.push(env.DB.prepare(`
+      INSERT INTO operation_funding_leg_fees
+        (id, operation_id, funding_leg_id, fee_payer_wallet_id, maximum_fee_lamports, status)
+      VALUES (?, ?, ?, ?, ?, 'reserved')
+    `).bind("fee_" + crypto.randomUUID().replaceAll("-", ""), operationId, finalLegId, feePayerWalletId, networkFeeLamports));
+    if (!needsReplenishment) {
+      statements.push(env.DB.prepare("UPDATE operation_funding_legs SET status = 'reserved' WHERE id = ?").bind(finalLegId));
+      const paymentReservationId = "res_" + crypto.randomUUID().replaceAll("-", "");
+      statements.push(env.DB.prepare(`
+        INSERT INTO reservations
+          (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
+        VALUES (?, ?, ?, ?, 'USDC', 'active', ?, ?, 'managed')
+      `).bind(paymentReservationId, operationId, paymentWalletRow.balance_id, finalLegAmount, expiresAt.toISOString(), finalLegId));
+      reservationDetails.push({ id: paymentReservationId, fundingLegId: finalLegId, walletId: decision.paymentWalletId, token: "USDC", amountAtoms: finalLegAmount });
+    } else if (decision.paymentWalletAvailableAtoms > 0n) {
+      const prepositionReservationId = "res_" + crypto.randomUUID().replaceAll("-", "");
+      const prepositionAtoms = decision.paymentWalletAvailableAtoms.toString();
+      statements.push(env.DB.prepare(`
+        INSERT INTO reservations
+          (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
+        VALUES (?, ?, ?, ?, 'USDC', 'active', ?, NULL, 'managed')
+      `).bind(prepositionReservationId, operationId, paymentWalletRow.balance_id, prepositionAtoms, expiresAt.toISOString()));
+      reservationDetails.push({ id: prepositionReservationId, fundingLegId: null, walletId: decision.paymentWalletId, token: "USDC", amountAtoms: prepositionAtoms });
+    }
+    fundingLegDetails.push({ id: finalLegId, kind: "final_payment", sourceWalletId: decision.paymentWalletId, destinationWalletId: null, amountAtoms: finalLegAmount, status: needsReplenishment ? "planned" : "reserved" });
+  }
+
+  try {
+    await env.DB.batch(statements);
+  } catch (error) {
+    const existing = await env.DB.prepare(`
+      SELECT i.id, i.operation_id, i.destination, i.mint, i.requested_atoms, i.fee_payer_wallet_id,
+             i.network_fee_lamports, i.allow_partial_payment, i.slippage_bps,
+             i.action, i.status, op.task_id
+      FROM business_payment_intents i JOIN operations op ON op.id = i.operation_id
+      WHERE i.business_id = ? AND i.idempotency_key = ? LIMIT 1
+    `).bind(agent.business_id, idempotencyKey).first<{ id: string; operation_id: string; destination: string; mint: string; requested_atoms: string; fee_payer_wallet_id: string; network_fee_lamports: string; allow_partial_payment: number; slippage_bps: number | null; action: string; status: string; task_id: string }>();
+    if (existing && existing.destination === destination && existing.mint === mint &&
+        existing.requested_atoms === requestedAtoms.toString() && existing.fee_payer_wallet_id === feePayerWalletId &&
+        existing.network_fee_lamports === networkFeeLamports &&
+        existing.allow_partial_payment === (allowPartialPayment ? 1 : 0) &&
+        existing.slippage_bps === (slippageBps as number | null) && existing.task_id === taskId) {
+      return json({ intentId: existing.id, operationId: existing.operation_id, action: existing.action, status: existing.status, reused: true });
+    }
+    return json({ error: "payment_intent_persistence_failed", message: error instanceof Error ? error.message : String(error) }, 409);
+  }
+
+  return json({
+    intentId: paymentIntentId,
+    operationId,
+    status: intentStatus,
+    action: paymentAction,
+    requestedAtoms: requestedAtoms.toString(),
+    paymentAtoms: paymentAtoms.toString(),
+    fundingLegs: fundingLegDetails,
+    reservations: reservationDetails,
+    ownerApprovalRequired: decision.ownerApprovalRequired,
+    note: decision.action === "conversion_required"
+      ? "Conversion requires explicit owner approval. No conversion or final-payment transaction has been prepared."
+      : needsReplenishment
+        ? "Reserve-wallet amounts are held in the internal ledger. Final payment remains blocked until every replenishment leg is confirmed."
+        : "The payment-wallet amount is held in the internal ledger. No transaction has been signed or broadcast."
+  }, 201);
+}
+
+
+async function prepareFinalPaymentAfterReplenishment(
+  request: Request, env: Env, intentId: string
+): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const businessId = new URL(request.url).searchParams.get("businessId") ?? "";
+  if (!businessId) return json({ error: "business_id_required" }, 400);
+  if (!env.SOLANA_RPC_URL) return json({ error: "solana_rpc_not_configured" }, 503);
+
+  const row = await env.DB.prepare(`
+    SELECT i.id AS intent_id, i.status AS intent_status, i.action, i.expires_at,
+           i.payment_atoms, i.mint, op.id AS operation_id,
+           final_leg.id AS final_leg_id, final_leg.status AS final_leg_status,
+           payment_wallet.id AS payment_wallet_id, payment_wallet.address AS payment_wallet_address,
+           payment_wallet.status AS payment_wallet_status, payment_wallet.scope AS payment_wallet_scope,
+           payment_wallet.ownership_verified_at,
+           balance.id AS balance_id, balance.reserved_atoms,
+           (SELECT role.minimum_remaining_atoms FROM wallet_role_assignments role
+            WHERE role.business_id = i.business_id AND role.wallet_id = payment_wallet.id
+              AND role.role = 'payment' AND role.enabled = 1 LIMIT 1) AS payment_minimum_remaining_atoms,
+           (SELECT role.maximum_transfer_atoms FROM wallet_role_assignments role
+            WHERE role.business_id = i.business_id AND role.wallet_id = payment_wallet.id
+              AND role.role = 'payment' AND role.enabled = 1 LIMIT 1) AS payment_maximum_transfer_atoms,
+           EXISTS (
+             SELECT 1 FROM wallet_role_assignments role
+             WHERE role.business_id = i.business_id AND role.wallet_id = payment_wallet.id
+               AND role.role = 'payment' AND role.enabled = 1
+           ) AS payment_role_authorized,
+           (SELECT COUNT(*) FROM operation_funding_legs funding
+            WHERE funding.operation_id = op.id AND funding.kind = 'reserve_replenishment') AS reserve_leg_count,
+           (SELECT COUNT(*) FROM operation_funding_legs funding
+            WHERE funding.operation_id = op.id AND funding.kind = 'reserve_replenishment'
+              AND funding.status = 'confirmed') AS confirmed_reserve_leg_count,
+           (SELECT COUNT(*) FROM operation_funding_legs funding
+            WHERE funding.operation_id = op.id AND funding.kind = 'conversion') AS conversion_leg_count
+    FROM business_payment_intents i
+    JOIN operations op ON op.id = i.operation_id AND op.business_id = i.business_id
+    JOIN operation_funding_legs final_leg ON final_leg.operation_id = op.id AND final_leg.kind = 'final_payment'
+    JOIN wallets payment_wallet ON payment_wallet.id = final_leg.source_wallet_id
+    JOIN wallet_balances balance ON balance.wallet_id = payment_wallet.id AND balance.token = 'USDC'
+    WHERE i.id = ? AND i.business_id = ?
+    LIMIT 1
+  `).bind(intentId, businessId).first<{
+    intent_id: string; intent_status: string; action: string; expires_at: string;
+    payment_atoms: string; mint: string; operation_id: string;
+    final_leg_id: string; final_leg_status: string;
+    payment_wallet_id: string; payment_wallet_address: string;
+    payment_wallet_status: string; payment_wallet_scope: string;
+    ownership_verified_at: string | null; balance_id: string; reserved_atoms: string;
+    payment_minimum_remaining_atoms: string | null; payment_maximum_transfer_atoms: string | null;
+    payment_role_authorized: number; reserve_leg_count: number;
+    confirmed_reserve_leg_count: number; conversion_leg_count: number;
+  }>();
+  if (!row) return json({ error: "payment_intent_not_found" }, 404);
+  if (row.action === "replenish_then_pay" && row.intent_status === "awaiting_signature" &&
+      row.final_leg_status === "reserved") {
+    const existingReservation = await env.DB.prepare(`
+      SELECT id FROM reservations
+      WHERE funding_leg_id = ? AND reservation_source = 'managed' AND status = 'active'
+      LIMIT 1
+    `).bind(row.final_leg_id).first<{ id: string }>();
+    if (existingReservation) {
+      return json({
+        intentId,
+        status: "awaiting_signature",
+        finalPaymentLegId: row.final_leg_id,
+        reservationId: existingReservation.id,
+        reused: true,
+        note: "The finalized payment-wallet balance has already been refreshed and the final-payment amount is reserved."
+      });
+    }
+  }
+  if (row.action !== "replenish_then_pay" || row.intent_status !== "replenishing") {
+    return json({ error: "payment_intent_not_waiting_for_replenishment", status: row.intent_status }, 409);
+  }
+  if (Date.parse(row.expires_at) <= Date.now()) return json({ error: "payment_intent_expired" }, 409);
+  if (row.reserve_leg_count < 1 || row.confirmed_reserve_leg_count !== row.reserve_leg_count || row.conversion_leg_count > 0) {
+    return json({
+      error: "reserve_replenishment_not_fully_confirmed",
+      confirmedReserveLegs: row.confirmed_reserve_leg_count,
+      totalReserveLegs: row.reserve_leg_count
+    }, 409);
+  }
+  if (row.final_leg_status !== "planned" || row.payment_wallet_status !== "active" ||
+      row.payment_wallet_scope !== "business" || !row.ownership_verified_at ||
+      row.payment_role_authorized !== 1) {
+    return json({ error: "final_payment_wallet_or_leg_not_authorized" }, 409);
+  }
+
+  const mint = env.SOLANA_USDC_MINT ?? "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  if (row.mint !== mint) return json({ error: "final_payment_mint_not_supported" }, 409);
+  let balance: { amountAtoms: string; commitment: "finalized" };
+  try {
+    balance = await fetchFinalizedSplTokenBalance(
+      env.SOLANA_RPC_URL, row.payment_wallet_address, mint, 6
+    );
+  } catch {
+    return json({
+      intentId,
+      status: "replenishing",
+      pending: true,
+      error: "finalized_payment_wallet_balance_unavailable",
+      message: "Reserve transfers are confirmed, but NERITH could not obtain a finalized payment-wallet balance. No final-payment reservation was created."
+    }, 503);
+  }
+
+  const prepositionRows = await env.DB.prepare(`
+    SELECT amount_atoms FROM reservations
+    WHERE operation_id = ? AND wallet_balance_id = ? AND funding_leg_id IS NULL
+      AND reservation_source = 'managed' AND status = 'active'
+  `).bind(row.operation_id, row.balance_id).all<{ amount_atoms: string }>();
+  const prepositionAtoms = (prepositionRows.results ?? [])
+    .reduce((sum, reservation) => sum + BigInt(reservation.amount_atoms), 0n);
+  const currentlyReservedAtoms = BigInt(row.reserved_atoms);
+  if (prepositionAtoms > currentlyReservedAtoms) {
+    return json({ error: "payment_wallet_reservation_ledger_mismatch" }, 409);
+  }
+  const reservedAfterPrepositionRelease = currentlyReservedAtoms - prepositionAtoms;
+  const finalizedAtoms = BigInt(balance.amountAtoms);
+  const spendableAfterRefresh = finalizedAtoms > reservedAfterPrepositionRelease
+    ? finalizedAtoms - reservedAfterPrepositionRelease : 0n;
+  const minimumRemainingAtoms = BigInt(row.payment_minimum_remaining_atoms ?? "0");
+  const maximumTransferAtoms = row.payment_maximum_transfer_atoms
+    ? BigInt(row.payment_maximum_transfer_atoms) : 9_223_372_036_854_775_807n;
+  if (BigInt(row.payment_atoms) > maximumTransferAtoms ||
+      spendableAfterRefresh < BigInt(row.payment_atoms) + minimumRemainingAtoms) {
+    try {
+      await env.DB.batch([
+        env.DB.prepare(`
+          UPDATE wallet_balances
+          SET confirmed_atoms = ?, observed_at = datetime('now'), source = 'solana_rpc_finalized'
+          WHERE id = ? AND wallet_id = ? AND token = 'USDC'
+        `).bind(balance.amountAtoms, row.balance_id, row.payment_wallet_id),
+        env.DB.prepare(`
+          UPDATE reservations SET status = 'released', released_at = datetime('now')
+          WHERE operation_id = ? AND wallet_balance_id = ? AND funding_leg_id IS NULL
+            AND reservation_source = 'managed' AND status = 'active'
+        `).bind(row.operation_id, row.balance_id)
+      ]);
+    } catch {
+      return json({ error: "payment_wallet_balance_refresh_conflict" }, 409);
+    }
+    return json({
+      intentId,
+      status: "replenishing",
+      error: "finalized_payment_wallet_balance_insufficient",
+      finalizedUSDCBalanceAtoms: balance.amountAtoms,
+      spendableAfterExistingReservationsAtoms: spendableAfterRefresh.toString(),
+      requiredPaymentAtoms: row.payment_atoms,
+      minimumRemainingAtoms: minimumRemainingAtoms.toString(),
+      note: "The finalized balance snapshot was refreshed and the temporary preposition hold released, but the payment amount plus required reserve floor is not available. The final-payment leg remains blocked."
+    }, 409);
+  }
+
+  const reservationId = "res_" + crypto.randomUUID().replaceAll("-", "");
+  const statements: D1PreparedStatement[] = [
+    env.DB.prepare(`
+      UPDATE business_payment_intents SET status = 'awaiting_signature', updated_at = datetime('now')
+      WHERE id = ? AND business_id = ? AND status = 'replenishing'
+    `).bind(intentId, businessId),
+    env.DB.prepare(`
+      UPDATE wallet_balances
+      SET confirmed_atoms = ?, observed_at = datetime('now'), source = 'solana_rpc_finalized'
+      WHERE id = ? AND wallet_id = ? AND token = 'USDC'
+    `).bind(balance.amountAtoms, row.balance_id, row.payment_wallet_id),
+    env.DB.prepare(`
+      UPDATE reservations SET status = 'released', released_at = datetime('now')
+      WHERE operation_id = ? AND wallet_balance_id = ? AND funding_leg_id IS NULL
+        AND reservation_source = 'managed' AND status = 'active'
+    `).bind(row.operation_id, row.balance_id),
+    env.DB.prepare(`
+      UPDATE operation_funding_legs SET status = 'reserved', updated_at = datetime('now')
+      WHERE id = ? AND operation_id = ? AND kind = 'final_payment' AND status = 'planned'
+    `).bind(row.final_leg_id, row.operation_id),
+    env.DB.prepare(`
+      INSERT INTO reservations
+        (id, operation_id, wallet_balance_id, amount_atoms, token, status,
+         expires_at, funding_leg_id, reservation_source)
+      VALUES (?, ?, ?, ?, 'USDC', 'active', ?, ?, 'managed')
+    `).bind(reservationId, row.operation_id, row.balance_id, row.payment_atoms, row.expires_at, row.final_leg_id)
+  ];
+  try {
+    const results = await env.DB.batch(statements);
+    for (const index of [0, 1, 3, 4]) {
+      if ((results[index]?.meta?.changes ?? 0) !== 1) {
+        return json({ error: "final_payment_preparation_conflict" }, 409);
+      }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes("managed_reservation_insufficient_balance")) {
+      try {
+        await env.DB.batch([
+          env.DB.prepare(`
+            UPDATE wallet_balances
+            SET confirmed_atoms = ?, observed_at = datetime('now'), source = 'solana_rpc_finalized'
+            WHERE id = ? AND wallet_id = ? AND token = 'USDC'
+          `).bind(balance.amountAtoms, row.balance_id, row.payment_wallet_id),
+          env.DB.prepare(`
+            UPDATE reservations SET status = 'released', released_at = datetime('now')
+            WHERE operation_id = ? AND wallet_balance_id = ? AND funding_leg_id IS NULL
+              AND reservation_source = 'managed' AND status = 'active'
+          `).bind(row.operation_id, row.balance_id)
+        ]);
+      } catch {
+        return json({ error: "payment_wallet_balance_refresh_conflict" }, 409);
+      }
+      return json({
+        error: "finalized_payment_wallet_balance_insufficient",
+        finalizedBalanceAtoms: balance.amountAtoms,
+        requiredPaymentAtoms: row.payment_atoms,
+        message: "Finalized USDC balance is insufficient after preserving existing active reservations and wallet reserve floors. The refreshed snapshot was retained and the preposition hold released."
+      }, 409);
+    }
+    return json({ error: "final_payment_preparation_conflict" }, 409);
+  }
+
+  return json({
+    intentId,
+    status: "awaiting_signature",
+    finalPaymentLegId: row.final_leg_id,
+    paymentWalletId: row.payment_wallet_id,
+    finalizedUSDCBalanceAtoms: balance.amountAtoms,
+    paymentAtoms: row.payment_atoms,
+    reservationId,
+    commitment: balance.commitment,
+    note: "Every reserve transfer is finalized and verified. The payment wallet balance was refreshed at finalized commitment and the final-payment amount is now reserved. No transaction has been signed or broadcast."
+  }, 200);
+}
+
+type FundingLegSettlementRow = {
+  leg_id: string; leg_status: string; leg_kind: string; transaction_hash: string | null;
+  amount_atoms: string; asset_mint: string; destination_address: string;
+  intent_id: string; intent_status: string; intent_action: string; intent_expires_at: string;
+  intent_destination: string; intent_mint: string; payment_atoms: string;
+  operation_id: string; business_id: string; operation_status: string;
+  source_wallet_id: string; source_address: string; source_status: string;
+  source_scope: string; source_verified_at: string | null;
+  destination_wallet_id: string | null; destination_wallet_address: string | null;
+  destination_wallet_status: string | null; destination_wallet_scope: string | null;
+  destination_verified_at: string | null; reservation_id: string | null;
+  source_role_authorized: number; destination_role_authorized: number;
+  fee_payer_wallet_id: string; fee_payer_address: string | null; fee_payer_wallet_status: string | null;
+  fee_payer_verified_at: string | null; fee_payer_scope: string | null;
+  fee_payer_role_authorized: number; network_fee_lamports: string;
+  network_fee_budget_lamports: string; fee_reservation_amount: string | null;
+  fee_reservation_id: string | null; fee_ledger_id: string | null;
+  fee_ledger_status: string | null; fee_maximum_fee_lamports: string | null;
+};
+
+async function getFundingLegSettlementRow(
+  env: Env, intentId: string, legId: string, businessId: string
+): Promise<FundingLegSettlementRow | null> {
+  return env.DB.prepare(`
+    SELECT l.id AS leg_id, l.status AS leg_status, l.kind AS leg_kind,
+           l.transaction_hash, l.amount_atoms, l.asset_mint, l.destination_address,
+           i.id AS intent_id, i.status AS intent_status, i.action AS intent_action,
+           i.expires_at AS intent_expires_at, i.destination AS intent_destination,
+           i.mint AS intent_mint, i.payment_atoms, i.network_fee_lamports, i.network_fee_budget_lamports,
+           fee_wallet.id AS fee_payer_wallet_id,
+           fee_wallet.address AS fee_payer_address,
+           fee_wallet.status AS fee_payer_wallet_status,
+           fee_wallet.ownership_verified_at AS fee_payer_verified_at,
+           fee_wallet.scope AS fee_payer_scope,
+           EXISTS (
+             SELECT 1 FROM wallet_role_assignments fee_role
+             WHERE fee_role.business_id = op.business_id AND fee_role.wallet_id = fee_wallet.id
+               AND fee_role.enabled = 1 AND fee_role.role IN ('payment', 'operating')
+           ) AS fee_payer_role_authorized,
+           op.id AS operation_id, op.business_id, op.status AS operation_status,
+           source_wallet.id AS source_wallet_id, source_wallet.address AS source_address,
+           source_wallet.status AS source_status, source_wallet.scope AS source_scope,
+           source_wallet.ownership_verified_at AS source_verified_at,
+           CASE WHEN l.kind = 'final_payment' THEN EXISTS (
+             SELECT 1 FROM wallet_role_assignments role
+             WHERE role.business_id = op.business_id AND role.wallet_id = source_wallet.id
+               AND role.role = 'payment' AND role.enabled = 1
+           ) ELSE EXISTS (
+             SELECT 1 FROM wallet_role_assignments role
+             WHERE role.business_id = op.business_id AND role.wallet_id = source_wallet.id
+               AND role.role IN ('reserve', 'operating') AND role.enabled = 1
+           ) END AS source_role_authorized,
+           destination_wallet.id AS destination_wallet_id,
+           destination_wallet.address AS destination_wallet_address,
+           destination_wallet.status AS destination_wallet_status,
+           destination_wallet.scope AS destination_wallet_scope,
+           destination_wallet.ownership_verified_at AS destination_verified_at,
+           CASE WHEN l.kind = 'reserve_replenishment' THEN EXISTS (
+             SELECT 1 FROM wallet_role_assignments role
+             WHERE role.business_id = op.business_id AND role.wallet_id = destination_wallet.id
+               AND role.role = 'payment' AND role.enabled = 1
+           ) ELSE 1 END AS destination_role_authorized,
+           reservation.id AS reservation_id,
+           fee_reservation.id AS fee_reservation_id,
+           fee_reservation.amount_atoms AS fee_reservation_amount,
+           fee_ledger.id AS fee_ledger_id,
+           fee_ledger.status AS fee_ledger_status,
+           fee_ledger.maximum_fee_lamports AS fee_maximum_fee_lamports
+    FROM operation_funding_legs l
+    JOIN operations op ON op.id = l.operation_id
+    JOIN business_payment_intents i ON i.operation_id = op.id AND i.business_id = op.business_id
+    JOIN wallets source_wallet ON source_wallet.id = l.source_wallet_id
+    JOIN wallets fee_wallet ON fee_wallet.id = i.fee_payer_wallet_id
+    LEFT JOIN wallets destination_wallet ON destination_wallet.id = l.destination_wallet_id
+    LEFT JOIN reservations reservation
+      ON reservation.funding_leg_id = l.id AND reservation.status = 'active'
+    LEFT JOIN reservations fee_reservation
+      ON fee_reservation.operation_id = op.id AND fee_reservation.reservation_source = 'managed_fee' AND fee_reservation.status = 'active'
+    LEFT JOIN operation_funding_leg_fees fee_ledger
+      ON fee_ledger.funding_leg_id = l.id AND fee_ledger.operation_id = op.id
+    WHERE i.id = ? AND l.id = ? AND op.business_id = ?
+    LIMIT 1
+  `).bind(intentId, legId, businessId).first<FundingLegSettlementRow>();
+}
+
+async function prepareFundingLegTransaction(
+  request: Request, env: Env, intentId: string, legId: string
+): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const businessId = new URL(request.url).searchParams.get("businessId") ?? "";
+  if (!businessId) return json({ error: "business_id_required" }, 400);
+  if (!env.SOLANA_RPC_URL || !env.SOLANA_USDC_MINT) {
+    return json({ error: "solana_rpc_or_usdc_mint_not_configured" }, 503);
+  }
+
+  const row = await getFundingLegSettlementRow(env, intentId, legId, businessId);
+  if (!row) return json({ error: "funding_leg_not_found" }, 404);
+  if (row.transaction_hash || row.leg_status === "submitted" || row.leg_status === "confirmed" ||
+      row.leg_status === "ambiguous") {
+    return json({ error: "funding_leg_already_submitted_or_terminal", status: row.leg_status }, 409);
+  }
+  if (row.intent_action === "conversion_required" || row.leg_kind === "conversion") {
+    return json({ error: "conversion_settlement_not_supported" }, 409);
+  }
+  if (Date.parse(row.intent_expires_at) <= Date.now()) return json({ error: "payment_intent_expired" }, 409);
+  if (row.intent_status !== "reserved" && row.intent_status !== "replenishing" &&
+      row.intent_status !== "awaiting_signature") {
+    return json({ error: "payment_intent_not_submittable", status: row.intent_status }, 409);
+  }
+  if (row.leg_status !== "reserved" && row.leg_status !== "awaiting_signature" &&
+      row.leg_status !== "authorized_for_execution") {
+    return json({ error: "funding_leg_not_submittable", status: row.leg_status }, 409);
+  }
+  if (!row.reservation_id || row.source_status !== "active" || row.source_scope !== "business" ||
+      !row.source_verified_at || row.source_role_authorized !== 1) {
+    return json({ error: "funding_leg_reservation_or_source_invalid" }, 409);
+  }
+  if (row.fee_payer_wallet_status !== "active" || row.fee_payer_scope !== "business" ||
+      !row.fee_payer_verified_at || row.fee_payer_role_authorized !== 1 ||
+      !row.fee_reservation_id || !row.fee_ledger_id || row.fee_ledger_status !== "reserved" ||
+      row.fee_maximum_fee_lamports !== row.network_fee_lamports ||
+      row.fee_reservation_amount !== row.network_fee_budget_lamports) {
+    return json({ error: "funding_leg_fee_wallet_or_reservation_invalid" }, 409);
+  }
+  if (row.asset_mint !== env.SOLANA_USDC_MINT ||
+      !/^[1-9][0-9]{0,18}$/.test(row.amount_atoms) ||
+      !/^(0|[1-9][0-9]{0,18})$/.test(row.network_fee_budget_lamports) ||
+      !/^(0|[1-9][0-9]{0,18})$/.test(row.network_fee_lamports)) {
+    return json({ error: "funding_leg_usdc_identity_invalid" }, 409);
+  }
+  if (row.leg_kind === "reserve_replenishment" &&
+      (!row.destination_wallet_id || row.destination_wallet_status !== "active" ||
+       row.destination_wallet_scope !== "business" || !row.destination_verified_at ||
+       row.destination_role_authorized !== 1 || row.destination_address !== row.destination_wallet_address)) {
+    return json({ error: "funding_leg_destination_wallet_invalid" }, 409);
+  }
+  if (row.leg_kind === "final_payment" &&
+      (row.destination_address !== row.intent_destination ||
+       row.asset_mint !== row.intent_mint || row.amount_atoms !== row.payment_atoms)) {
+    return json({ error: "funding_leg_intent_identity_mismatch" }, 409);
+  }
+  const destinationOwner = row.leg_kind === "reserve_replenishment"
+    ? row.destination_wallet_address : row.destination_address;
+  if (!destinationOwner || !row.fee_payer_address) {
+    return json({ error: "funding_leg_wallet_identity_missing" }, 409);
+  }
+
+  const feeRows = await env.DB.prepare(`
+    SELECT funding_leg_id, status, maximum_fee_lamports, actual_fee_lamports
+    FROM operation_funding_leg_fees WHERE operation_id = ?
+  `).bind(row.operation_id).all<{
+    funding_leg_id: string; status: string; maximum_fee_lamports: string; actual_fee_lamports: string | null;
+  }>();
+  const rows = feeRows.results ?? [];
+  const currentFeeRow = rows.find(item => item.funding_leg_id === legId);
+  if (!currentFeeRow || currentFeeRow.status !== "reserved" ||
+      currentFeeRow.maximum_fee_lamports !== row.fee_maximum_fee_lamports) {
+    return json({ error: "funding_leg_fee_ledger_invalid" }, 409);
+  }
+  let approvedFeeBudget = 0n;
+  let reconciledFeeTotal = 0n;
+  let otherOutstandingFeeCaps = 0n;
+  for (const item of rows) {
+    if (!/^(0|[1-9][0-9]{0,18})$/.test(item.maximum_fee_lamports)) {
+      return json({ error: "funding_leg_fee_ledger_invalid" }, 409);
+    }
+    const cap = BigInt(item.maximum_fee_lamports);
+    approvedFeeBudget += cap;
+    if (item.status === "reconciled") {
+      if (item.actual_fee_lamports === null ||
+          !/^(0|[1-9][0-9]{0,18})$/.test(item.actual_fee_lamports)) {
+        return json({ error: "funding_leg_fee_reconciliation_invalid" }, 409);
+      }
+      reconciledFeeTotal += BigInt(item.actual_fee_lamports);
+    } else if (["reserved", "submitted", "ambiguous"].includes(item.status)) {
+      if (item.funding_leg_id !== legId) otherOutstandingFeeCaps += cap;
+    } else if (item.status !== "not_required") {
+      return json({ error: "funding_leg_fee_ledger_invalid" }, 409);
+    }
+  }
+  const aggregateBudget = BigInt(row.network_fee_budget_lamports);
+  if (approvedFeeBudget !== aggregateBudget || reconciledFeeTotal + otherOutstandingFeeCaps > aggregateBudget) {
+    return json({ error: "funding_leg_aggregate_fee_budget_invalid" }, 409);
+  }
+  const remainingAggregateFeeLamports =
+    (aggregateBudget - reconciledFeeTotal - otherOutstandingFeeCaps).toString();
+
+  const [sourceBalance, feePayerBalance, sourceRoleFloor, feePayerRoleFloor] = await Promise.all([
+    env.DB.prepare("SELECT reserved_atoms FROM wallet_balances WHERE wallet_id = ? AND token = 'USDC' LIMIT 1")
+      .bind(row.source_wallet_id).first<{ reserved_atoms: string }>(),
+    env.DB.prepare("SELECT reserved_atoms FROM wallet_balances WHERE wallet_id = ? AND token = 'SOL' LIMIT 1")
+      .bind(row.fee_payer_wallet_id).first<{ reserved_atoms: string }>(),
+    env.DB.prepare(`
+      SELECT CAST(COALESCE(MAX(CAST(minimum_remaining_atoms AS INTEGER)), 0) AS TEXT) AS minimum_remaining_atoms
+      FROM wallet_role_assignments
+      WHERE business_id = ? AND wallet_id = ? AND enabled = 1 AND ${row.leg_kind === "final_payment"
+        ? "role = 'payment'" : "role IN ('reserve', 'operating')"}
+    `).bind(businessId, row.source_wallet_id).first<{ minimum_remaining_atoms: string }>(),
+    env.DB.prepare(`
+      SELECT CAST(COALESCE(MAX(CAST(minimum_remaining_atoms AS INTEGER)), 0) AS TEXT) AS minimum_remaining_atoms
+      FROM wallet_role_assignments
+      WHERE business_id = ? AND wallet_id = ? AND enabled = 1 AND role IN ('payment', 'operating')
+    `).bind(businessId, row.fee_payer_wallet_id).first<{ minimum_remaining_atoms: string }>()
+  ]);
+  if (!sourceBalance || !feePayerBalance ||
+      !/^(0|[1-9][0-9]{0,18})$/.test(sourceBalance.reserved_atoms) ||
+      !/^(0|[1-9][0-9]{0,18})$/.test(feePayerBalance.reserved_atoms)) {
+    return json({ error: "funding_leg_wallet_balance_reservation_missing" }, 409);
+  }
+  const sourceMinimum = BigInt(sourceBalance.reserved_atoms) +
+    BigInt(sourceRoleFloor?.minimum_remaining_atoms ?? "0");
+  const feePayerMinimum = BigInt(feePayerBalance.reserved_atoms) +
+    BigInt(feePayerRoleFloor?.minimum_remaining_atoms ?? "0");
+
+  try {
+    const prepared = await buildUsdcFundingTransaction({
+      rpcUrl: env.SOLANA_RPC_URL,
+      mintAddress: row.asset_mint,
+      sourceWalletAddress: row.source_address,
+      destinationOwnerAddress: destinationOwner,
+      feePayerAddress: row.fee_payer_address,
+      amountAtoms: row.amount_atoms,
+      maximumFeeLamports: row.fee_maximum_fee_lamports,
+      remainingAggregateFeeLamports,
+      minimumSourceBalanceAtoms: sourceMinimum.toString(),
+      minimumFeePayerBalanceLamports: feePayerMinimum.toString()
+    });
+    return json({
+      intentId,
+      fundingLegId: legId,
+      status: "unsigned_transaction_ready",
+      transactionBase64: prepared.transactionBase64,
+      messageSha256: prepared.messageSha256,
+      recentBlockhash: prepared.recentBlockhash,
+      lastValidBlockHeight: prepared.lastValidBlockHeight,
+      estimatedFeeLamports: prepared.estimatedFeeLamports,
+      requiredSigners: prepared.requiredSigners,
+      transfer: {
+        sourceWalletAddress: prepared.sourceWalletAddress,
+        sourceTokenAccount: prepared.sourceTokenAccount,
+        destinationOwnerAddress: prepared.destinationOwnerAddress,
+        destinationTokenAccount: prepared.destinationTokenAccount,
+        mintAddress: prepared.mintAddress,
+        amountAtoms: prepared.amountAtoms,
+        decimals: prepared.decimals,
+        feePayerAddress: prepared.feePayerAddress
+      },
+      note: "Unsigned transaction only. NERITH has not requested signatures or broadcast anything."
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Transaction preparation failed.";
+    return json({ error: "funding_transaction_preparation_failed", reason }, 502);
+  }
+}
+
+async function submitFundingLegTransaction(
+  request: Request, env: Env, intentId: string, legId: string
+): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const businessId = new URL(request.url).searchParams.get("businessId") ?? "";
+  const body = await readJson(request);
+  if (!body || typeof body.signature !== "string" ||
+      !/^[1-9A-HJ-NP-Za-km-z]{80,100}$/.test(body.signature)) {
+    return json({ error: "invalid_transaction_signature" }, 400);
+  }
+  const row = await getFundingLegSettlementRow(env, intentId, legId, businessId);
+  if (!row) return json({ error: "funding_leg_not_found" }, 404);
+  if (row.leg_status === "submitted" && row.transaction_hash === body.signature) {
+    return json({ intentId, fundingLegId: legId, status: "submitted", reused: true,
+      note: "Signature is recorded only; on-chain settlement is still unverified." });
+  }
+  if (row.transaction_hash) return json({ error: "funding_leg_signature_already_bound" }, 409);
+  if (row.intent_action === "conversion_required" || row.leg_kind === "conversion") {
+    return json({ error: "conversion_settlement_not_supported" }, 409);
+  }
+  if (Date.parse(row.intent_expires_at) <= Date.now()) return json({ error: "payment_intent_expired" }, 409);
+  if (row.intent_status !== "reserved" && row.intent_status !== "replenishing" && row.intent_status !== "awaiting_signature") {
+    return json({ error: "payment_intent_not_submittable", status: row.intent_status }, 409);
+  }
+  if (row.leg_status !== "reserved" && row.leg_status !== "awaiting_signature" &&
+      row.leg_status !== "authorized_for_execution") {
+    return json({ error: "funding_leg_not_submittable", status: row.leg_status }, 409);
+  }
+  if (!row.reservation_id || row.source_status !== "active" || row.source_scope !== "business" || !row.source_verified_at || row.source_role_authorized !== 1) {
+    return json({ error: "funding_leg_reservation_or_source_invalid" }, 409);
+  }
+  if (row.fee_payer_wallet_status !== "active" || row.fee_payer_scope !== "business" ||
+      !row.fee_payer_verified_at || row.fee_payer_role_authorized !== 1 ||
+      !row.fee_reservation_id || !row.fee_ledger_id || row.fee_ledger_status !== "reserved" ||
+      row.fee_maximum_fee_lamports !== row.network_fee_lamports) {
+    return json({ error: "funding_leg_fee_wallet_or_reservation_invalid" }, 409);
+  }
+  if (row.leg_kind === "reserve_replenishment" &&
+      (!row.destination_wallet_id || row.destination_wallet_status !== "active" ||
+       row.destination_wallet_scope !== "business" || !row.destination_verified_at ||
+       row.destination_role_authorized !== 1 || row.destination_address !== row.destination_wallet_address)) {
+    return json({ error: "funding_leg_destination_wallet_invalid" }, 409);
+  }
+  if (row.leg_kind === "final_payment" &&
+      (row.destination_address !== row.intent_destination ||
+       row.asset_mint !== row.intent_mint || row.amount_atoms !== row.payment_atoms)) {
+    return json({ error: "funding_leg_intent_identity_mismatch" }, 409);
+  }
+
+  const statements: D1PreparedStatement[] = [];
+  if (row.leg_status === "reserved") {
+    statements.push(env.DB.prepare(
+      "UPDATE operation_funding_legs SET status = 'awaiting_signature' WHERE id = ? AND status = 'reserved' AND transaction_hash IS NULL"
+    ).bind(legId));
+  }
+  statements.push(env.DB.prepare(`
+    UPDATE operation_funding_legs
+    SET transaction_hash = ?, status = 'submitted', updated_at = datetime('now')
+    WHERE id = ? AND operation_id = ? AND status = ? AND transaction_hash IS NULL
+      AND EXISTS (
+        SELECT 1 FROM reservations r
+        WHERE r.funding_leg_id = operation_funding_legs.id AND r.status = 'active'
+      )
+  `).bind(body.signature, legId, row.operation_id,
+    row.leg_status === "reserved" ? "awaiting_signature" : row.leg_status));
+  statements.push(env.DB.prepare(`
+    UPDATE operation_funding_leg_fees
+    SET transaction_hash = ?, status = 'submitted', updated_at = datetime('now')
+    WHERE id = ? AND funding_leg_id = ? AND status = 'reserved' AND transaction_hash IS NULL
+  `).bind(body.signature, row.fee_ledger_id, legId));
+  if (row.leg_kind === "final_payment") {
+    statements.push(env.DB.prepare(`
+      UPDATE business_payment_intents SET status = 'submitted', updated_at = datetime('now')
+      WHERE id = ? AND business_id = ? AND status IN ('reserved', 'awaiting_signature')
+    `).bind(intentId, businessId));
+  }
+  try {
+    await env.DB.batch(statements);
+  } catch {
+    return json({ error: "funding_leg_submission_conflict" }, 409);
+  }
+  const updated = await getFundingLegSettlementRow(env, intentId, legId, businessId);
+  if (!updated || updated.leg_status !== "submitted" || updated.transaction_hash !== body.signature) {
+    return json({ error: "funding_leg_submission_conflict" }, 409);
+  }
+  return json({ intentId, fundingLegId: legId, status: "submitted", transactionSignature: body.signature,
+    note: "Signature recorded. NERITH has not yet verified finality or payment settlement." }, 202);
+}
+
+async function submitSignedFundingLegTransaction(
+  request: Request, env: Env, intentId: string, legId: string
+): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const businessId = new URL(request.url).searchParams.get("businessId") ?? "";
+  if (!businessId) return json({ error: "business_id_required" }, 400);
+  if (!env.SOLANA_RPC_URL || !env.SOLANA_USDC_MINT) return json({ error: "solana_rpc_or_usdc_mint_not_configured" }, 503);
+  const body = await readJson(request);
+  if (!body || typeof body.transactionBase64 !== "string" ||
+      body.transactionBase64.length > 22_000 ||
+      !/^[A-Za-z0-9+/]+={0,2}$/.test(body.transactionBase64) ||
+      typeof body.messageSha256 !== "string" || !/^[a-f0-9]{64}$/.test(body.messageSha256)) {
+    return json({ error: "invalid_signed_transaction_payload" }, 400);
+  }
+  let transactionBytes: Uint8Array;
+  try {
+    const binary = atob(body.transactionBase64);
+    if (binary.length < 100 || binary.length > 16_384) return json({ error: "signed_transaction_size_invalid" }, 400);
+    transactionBytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) transactionBytes[index] = binary.charCodeAt(index);
+  } catch {
+    return json({ error: "signed_transaction_base64_invalid" }, 400);
+  }
+
+  const row = await getFundingLegSettlementRow(env, intentId, legId, businessId);
+  if (!row) return json({ error: "funding_leg_not_found" }, 404);
+  if (row.intent_action === "conversion_required" || row.leg_kind === "conversion") {
+    return json({ error: "conversion_settlement_not_supported" }, 409);
+  }
+  if (!row.fee_payer_address || !row.fee_maximum_fee_lamports ||
+      !row.source_address || !row.asset_mint || !/^[1-9][0-9]{0,18}$/.test(row.amount_atoms)) {
+    return json({ error: "funding_leg_transaction_identity_invalid" }, 409);
+  }
+  if (row.asset_mint !== env.SOLANA_USDC_MINT || Date.parse(row.intent_expires_at) <= Date.now() ||
+      !row.reservation_id || row.source_status !== "active" || row.source_scope !== "business" ||
+      !row.source_verified_at || row.source_role_authorized !== 1 ||
+      row.fee_payer_wallet_status !== "active" || row.fee_payer_scope !== "business" ||
+      !row.fee_payer_verified_at || row.fee_payer_role_authorized !== 1 ||
+      !row.fee_reservation_id || !row.fee_ledger_id ||
+      row.fee_reservation_amount !== row.network_fee_budget_lamports) {
+    return json({ error: "funding_leg_wallet_or_reservation_invalid" }, 409);
+  }
+  if (row.leg_kind !== "reserve_replenishment" && row.leg_kind !== "final_payment") {
+    return json({ error: "funding_leg_kind_not_supported" }, 409);
+  }
+  if (row.leg_kind === "reserve_replenishment" &&
+      (!row.destination_wallet_id || row.destination_wallet_status !== "active" ||
+       row.destination_wallet_scope !== "business" || !row.destination_verified_at ||
+       row.destination_role_authorized !== 1 || row.destination_address !== row.destination_wallet_address)) {
+    return json({ error: "funding_leg_destination_wallet_invalid" }, 409);
+  }
+  if (row.leg_kind === "final_payment" &&
+      (row.destination_address !== row.intent_destination ||
+       row.asset_mint !== row.intent_mint || row.amount_atoms !== row.payment_atoms)) {
+    return json({ error: "funding_leg_intent_identity_mismatch" }, 409);
+  }
+  const destinationOwner = row.leg_kind === "reserve_replenishment"
+    ? row.destination_wallet_address : row.destination_address;
+  if (!destinationOwner) return json({ error: "funding_leg_destination_invalid" }, 409);
+
+  let verified;
+  try {
+    verified = await verifySignedUsdcFundingTransaction(transactionBytes, {
+      mintAddress: row.asset_mint,
+      sourceWalletAddress: row.source_address,
+      destinationOwnerAddress: destinationOwner,
+      feePayerAddress: row.fee_payer_address,
+      amountAtoms: row.amount_atoms
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Signed transaction verification failed.";
+    return json({ error: "signed_funding_transaction_invalid", reason }, 409);
+  }
+  if (verified.messageSha256 !== body.messageSha256) {
+    return json({ error: "signed_transaction_message_changed" }, 409);
+  }
+  if (row.transaction_hash && row.transaction_hash !== verified.signature) {
+    return json({ error: "funding_leg_signature_already_bound" }, 409);
+  }
+  if (row.leg_status === "confirmed" && row.transaction_hash === verified.signature) {
+    return json({ intentId, fundingLegId: legId, status: "confirmed", confirmed: true, reused: true });
+  }
+  if (row.leg_status === "ambiguous") {
+    return json({ intentId, fundingLegId: legId, status: "ambiguous", confirmed: false,
+      note: "This funding leg is held for owner review and cannot be rebroadcast automatically." }, 409);
+  }
+  const isRetry = row.leg_status === "submitted" && row.transaction_hash === verified.signature;
+  if (row.transaction_hash && !isRetry) {
+    return json({ error: "funding_leg_already_submitted", status: row.leg_status }, 409);
+  }
+
+  if (!isRetry) {
+    const preflight = await prepareFundingLegTransaction(request, env, intentId, legId);
+    if (!preflight.ok) return preflight;
+  } else if (row.fee_ledger_status !== "submitted" || !row.fee_ledger_id) {
+    return json({ error: "submitted_fee_ledger_invalid" }, 409);
+  }
+
+  const connection = new Connection(env.SOLANA_RPC_URL, "finalized");
+  // On retries, inspect the recorded signature before checking blockhash lifetime.
+  // A transaction may have finalized even after its recent blockhash expires.
+  if (isRetry) {
+    try {
+      const status = await connection.getSignatureStatuses([verified.signature], { searchTransactionHistory: true });
+      const observed = status.value[0];
+      if (observed?.confirmationStatus === "finalized") {
+        return reconcileFundingLegTransaction(request, env, intentId, legId);
+      }
+      if (observed) {
+        return json({ intentId, fundingLegId: legId, status: "submitted", pending: true,
+          transactionSignature: verified.signature,
+          note: "The transaction is already visible on Solana and is awaiting finality." }, 202);
+      }
+    } catch {
+      return json({ intentId, fundingLegId: legId, status: "submitted", pending: true,
+        transactionSignature: verified.signature,
+        note: "Signature lookup failed. The existing transaction remains recorded; retry this same signed payload." }, 503);
+    }
+  }
+
+  let blockhashValid: boolean;
+  let estimatedFee: bigint | null;
+  try {
+    const validity = await connection.isBlockhashValid(verified.recentBlockhash as Blockhash, { commitment: "finalized" });
+    blockhashValid = validity.value;
+    estimatedFee = await verified.transaction.getEstimatedFee(connection);
+  } catch {
+    return json({ error: "solana_rpc_unavailable_before_broadcast" }, 503);
+  }
+  if (!blockhashValid) {
+    return json({ error: "signed_transaction_blockhash_expired",
+      note: "The recorded transaction was not found in signature history and its blockhash has expired. No new transaction was broadcast; the existing reservation remains held for owner recovery." }, 409);
+  }
+  if (estimatedFee === null || estimatedFee < 0n ||
+      estimatedFee > BigInt(row.fee_maximum_fee_lamports)) {
+    return json({ error: "signed_transaction_fee_exceeds_approved_cap" }, 409);
+  }
+
+  if (!isRetry) {
+    const headers = new Headers(request.headers);
+    headers.delete("content-length");
+    headers.set("content-type", "application/json");
+    const recordRequest = new Request(request.url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ signature: verified.signature })
+    });
+    const recorded = await submitFundingLegTransaction(recordRequest, env, intentId, legId);
+    if (!recorded.ok) return recorded;
+  }
+
+  try {
+    const broadcastSignature = await connection.sendRawTransaction(verified.transactionBytes, {
+      skipPreflight: false,
+      preflightCommitment: "confirmed"
+    });
+    if (broadcastSignature !== verified.signature) {
+      return json({ intentId, fundingLegId: legId, status: "submitted",
+        transactionSignature: verified.signature, error: "broadcast_signature_mismatch",
+        note: "The signature is already recorded and reservations remain held for reconciliation." }, 502);
+    }
+    return json({ intentId, fundingLegId: legId, status: "submitted",
+      transactionSignature: verified.signature, broadcast: true,
+      note: "The signed transaction was verified and broadcast. Finalized settlement is still pending." }, 202);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Solana broadcast outcome is uncertain.";
+    return json({ intentId, fundingLegId: legId, status: "submitted",
+      transactionSignature: verified.signature, broadcast: false, outcome: "unknown",
+      retryWithSameSignedTransaction: true, reason,
+      note: "The signature was recorded before broadcast. Do not create a new transaction; retry this exact signed payload or reconcile the recorded signature." }, 502);
+  }
+}
+
+async function reconcileFundingLegTransaction(
+  request: Request, env: Env, intentId: string, legId: string
+): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const businessId = new URL(request.url).searchParams.get("businessId") ?? "";
+  const row = await getFundingLegSettlementRow(env, intentId, legId, businessId);
+  if (!row) return json({ error: "funding_leg_not_found" }, 404);
+  if (row.leg_status === "confirmed") {
+    return json({ intentId, fundingLegId: legId, status: "confirmed", confirmed: true, reused: true });
+  }
+  if (row.leg_status === "ambiguous") {
+    // Ambiguous finalized mismatches are not automatically retried or released.
+    return json({ intentId, fundingLegId: legId, status: "ambiguous", confirmed: false,
+      note: "The finalized transaction did not prove the approved transfer. Reservations remain held for owner review." }, 409);
+  }
+  if (row.leg_status !== "submitted" || !row.transaction_hash) {
+    return json({ error: "funding_leg_not_submitted", status: row.leg_status }, 409);
+  }
+  if (!env.SOLANA_RPC_URL) return json({ error: "solana_rpc_not_configured" }, 503);
+  if (row.intent_action === "conversion_required" || row.leg_kind === "conversion") {
+    return json({ error: "conversion_settlement_not_supported" }, 409);
+  }
+  if (!row.reservation_id || row.source_status !== "active" || row.source_scope !== "business" || !row.source_verified_at || row.source_role_authorized !== 1) {
+    return json({ error: "funding_leg_reservation_or_source_invalid" }, 409);
+  }
+  const destinationOwner = row.leg_kind === "reserve_replenishment"
+    ? row.destination_wallet_address : row.destination_address;
+  if (!destinationOwner || (row.leg_kind === "reserve_replenishment" &&
+      (!row.destination_wallet_id || row.destination_wallet_status !== "active" ||
+       row.destination_wallet_scope !== "business" || !row.destination_verified_at ||
+       row.destination_role_authorized !== 1 || row.destination_address !== row.destination_wallet_address))) {
+    return json({ error: "funding_leg_destination_invalid" }, 409);
+  }
+  if (row.leg_kind === "final_payment" &&
+      (row.destination_address !== row.intent_destination ||
+       row.asset_mint !== row.intent_mint || row.amount_atoms !== row.payment_atoms)) {
+    return json({ error: "funding_leg_intent_identity_mismatch" }, 409);
+  }
+
+  let lookup;
+  try {
+    lookup = await fetchFinalizedSolanaTransaction(env.SOLANA_RPC_URL, row.transaction_hash);
+  } catch {
+    return json({ intentId, fundingLegId: legId, status: "submitted", confirmed: false,
+      pending: true, reason: "Solana RPC is temporarily unavailable. The reservation remains active." }, 503);
+  }
+  if (lookup.state === "pending") {
+    return json({ intentId, fundingLegId: legId, status: "submitted", confirmed: false,
+      pending: true, reason: lookup.reason }, 202);
+  }
+  if (!row.fee_ledger_id || row.fee_ledger_status !== "submitted" ||
+      !row.fee_reservation_id || row.fee_payer_wallet_status !== "active" ||
+      row.fee_payer_scope !== "business" || !row.fee_payer_verified_at ||
+      row.fee_payer_role_authorized !== 1 || row.fee_maximum_fee_lamports !== row.network_fee_lamports) {
+    return json({ error: "funding_leg_fee_ledger_or_reservation_invalid" }, 409);
+  }
+  const feeVerification = verifySolanaNetworkFee(
+    lookup.transaction,
+    row.fee_payer_address ?? "",
+    row.fee_maximum_fee_lamports
+  );
+  const feeLedgerRows = await env.DB.prepare(`
+    SELECT status, maximum_fee_lamports, actual_fee_lamports
+    FROM operation_funding_leg_fees WHERE operation_id = ?
+  `).bind(row.operation_id).all<{
+    status: string; maximum_fee_lamports: string; actual_fee_lamports: string | null;
+  }>();
+  const totalApprovedFeeBudget = (feeLedgerRows.results ?? [])
+    .reduce((sum, fee) => sum + BigInt(fee.maximum_fee_lamports), 0n);
+  const alreadyReconciledFeeTotal = (feeLedgerRows.results ?? [])
+    .filter(fee => fee.status === "reconciled" && fee.actual_fee_lamports !== null)
+    .reduce((sum, fee) => sum + BigInt(fee.actual_fee_lamports!), 0n);
+  const feeBudgetInvalid = totalApprovedFeeBudget !== BigInt(row.network_fee_budget_lamports) ||
+    row.fee_reservation_amount !== row.network_fee_budget_lamports ||
+    (feeVerification.verified &&
+      alreadyReconciledFeeTotal + BigInt(feeVerification.actualFeeLamports) > BigInt(row.network_fee_budget_lamports));
+  if (!feeVerification.verified || feeBudgetInvalid) {
+    const reason = feeVerification.verified
+      ? "Per-leg fee caps, aggregate fee reservation or cumulative fee total do not match the approved transaction budget."
+      : feeVerification.reason;
+    try {
+      await env.DB.batch([
+        env.DB.prepare(`
+          UPDATE operation_funding_legs SET status = 'ambiguous', failure_reason = ?,
+            confirmed_slot = ?, updated_at = datetime('now')
+          WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
+        `).bind(reason, lookup.slot, legId, row.transaction_hash),
+        env.DB.prepare(`
+          UPDATE operation_funding_leg_fees SET status = 'ambiguous', failure_reason = ?,
+            finalized_slot = ?, updated_at = datetime('now')
+          WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
+        `).bind(reason, lookup.slot, row.fee_ledger_id, row.transaction_hash),
+        env.DB.prepare(`
+          UPDATE business_payment_intents SET status = 'ambiguous', updated_at = datetime('now')
+          WHERE id = ? AND status IN ('submitted', 'replenishing')
+        `).bind(intentId)
+      ]);
+    } catch {
+      return json({ error: "funding_leg_fee_ambiguity_record_failed" }, 409);
+    }
+    return json({ intentId, fundingLegId: legId, status: "ambiguous", confirmed: false, reason }, 409);
+  }
+  const actualNetworkFee = feeVerification.actualFeeLamports;
+
+  if (lookup.state === "failed") {
+    try {
+      await env.DB.batch([
+        env.DB.prepare(`
+          UPDATE operation_funding_legs SET status = 'failed', failure_reason = ?, confirmed_slot = ?,
+            updated_at = datetime('now')
+          WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
+        `).bind(lookup.reason, lookup.slot, legId, row.transaction_hash),
+        env.DB.prepare(`
+          UPDATE operation_funding_leg_fees
+          SET actual_fee_lamports = ?, finalized_slot = ?, status = 'reconciled',
+              failure_reason = ?, updated_at = datetime('now')
+          WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
+        `).bind(actualNetworkFee, lookup.slot, lookup.reason, row.fee_ledger_id, row.transaction_hash),
+        env.DB.prepare(`
+          UPDATE reservations SET status = 'released', released_at = datetime('now')
+          WHERE funding_leg_id = ? AND status = 'active'
+        `).bind(legId),
+        env.DB.prepare(`
+          UPDATE operation_funding_leg_fees SET status = 'not_required', updated_at = datetime('now')
+          WHERE operation_id = ? AND status = 'reserved'
+        `).bind(row.operation_id),
+        env.DB.prepare(`
+          UPDATE operation_funding_legs SET status = 'cancelled', failure_reason = 'Another funding leg failed.',
+            updated_at = datetime('now')
+          WHERE operation_id = ? AND status IN ('planned', 'reserved')
+        `).bind(row.operation_id),
+        env.DB.prepare(`
+          UPDATE reservations SET status = 'released', released_at = datetime('now')
+          WHERE operation_id = ? AND status = 'active' AND reservation_source = 'managed'
+            AND funding_leg_id IN (
+              SELECT id FROM operation_funding_legs WHERE operation_id = ? AND status = 'cancelled'
+            )
+        `).bind(row.operation_id, row.operation_id),
+        env.DB.prepare(`
+          UPDATE business_payment_intents
+          SET status = CASE WHEN EXISTS (
+            SELECT 1 FROM operation_funding_leg_fees
+            WHERE operation_id = ? AND status IN ('submitted', 'ambiguous')
+          ) THEN 'ambiguous' ELSE 'failed' END,
+          updated_at = datetime('now')
+          WHERE id = ? AND status IN ('submitted', 'replenishing', 'reserved')
+        `).bind(row.operation_id, intentId),
+        env.DB.prepare(`
+          UPDATE reservations SET status = 'consumed', released_at = datetime('now')
+          WHERE operation_id = ? AND reservation_source = 'managed_fee' AND status = 'active'
+            AND NOT EXISTS (
+              SELECT 1 FROM operation_funding_leg_fees
+              WHERE operation_id = ? AND status IN ('reserved', 'submitted', 'ambiguous')
+            )
+        `).bind(row.operation_id, row.operation_id)
+      ]);
+    } catch {
+      return json({ error: "funding_leg_failure_reconciliation_conflict" }, 409);
+    }
+    return json({ intentId, fundingLegId: legId, status: "failed", confirmed: false,
+      actualNetworkFeeLamports: actualNetworkFee, reason: lookup.reason }, 409);
+  }
+
+  const verification = verifySolanaTokenTransfer(
+    lookup.transaction as SolanaPaymentTransaction,
+    {
+      signature: row.transaction_hash,
+      sourceWalletAddress: row.source_address,
+      destinationOwnerAddress: destinationOwner,
+      mint: row.asset_mint,
+      amountAtoms: row.amount_atoms,
+      decimals: 6
+    }
+  );
+  if (!verification.verified) {
+    try {
+      await env.DB.batch([
+        env.DB.prepare(`
+          UPDATE operation_funding_legs
+          SET status = 'ambiguous', failure_reason = ?, confirmed_slot = ?,
+              updated_at = datetime('now')
+          WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
+        `).bind(verification.reason, lookup.slot, legId, row.transaction_hash),
+        env.DB.prepare(`
+          UPDATE operation_funding_leg_fees
+          SET actual_fee_lamports = ?, finalized_slot = ?, status = 'reconciled',
+              failure_reason = ?, updated_at = datetime('now')
+          WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
+        `).bind(actualNetworkFee, lookup.slot, verification.reason, row.fee_ledger_id, row.transaction_hash),
+        env.DB.prepare(`
+          UPDATE business_payment_intents SET status = 'ambiguous', updated_at = datetime('now')
+          WHERE id = ? AND status IN ('submitted', 'replenishing')
+        `).bind(intentId),
+        env.DB.prepare(`
+          UPDATE reservations SET status = 'consumed', released_at = datetime('now')
+          WHERE operation_id = ? AND reservation_source = 'managed_fee' AND status = 'active'
+            AND NOT EXISTS (
+              SELECT 1 FROM operation_funding_leg_fees
+              WHERE operation_id = ? AND status IN ('reserved', 'submitted', 'ambiguous')
+            )
+        `).bind(row.operation_id, row.operation_id)
+      ]);
+    } catch {
+      return json({ error: "funding_leg_ambiguity_record_failed" }, 409);
+    }
+    return json({ intentId, fundingLegId: legId, status: "ambiguous", confirmed: false,
+      reason: verification.reason,
+      note: "The transaction is finalized but does not prove the approved transfer. Reservations remain held." }, 409);
+  }
+
+  const statements: D1PreparedStatement[] = [
+    env.DB.prepare(`
+      UPDATE operation_funding_legs
+      SET status = 'confirmed', received_output_atoms = ?, confirmed_slot = ?,
+          failure_reason = NULL, updated_at = datetime('now')
+      WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
+    `).bind(verification.amountAtoms ?? row.amount_atoms, lookup.slot, legId, row.transaction_hash),
+    env.DB.prepare(`
+      UPDATE reservations SET status = 'consumed', released_at = datetime('now')
+      WHERE funding_leg_id = ? AND status = 'active'
+    `).bind(legId),
+    env.DB.prepare(`
+      UPDATE operation_funding_leg_fees
+      SET actual_fee_lamports = ?, finalized_slot = ?, status = 'reconciled',
+          failure_reason = NULL, updated_at = datetime('now')
+      WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
+    `).bind(actualNetworkFee, lookup.slot, row.fee_ledger_id, row.transaction_hash),
+    env.DB.prepare(`
+      UPDATE reservations SET status = 'consumed', released_at = datetime('now')
+      WHERE operation_id = ? AND reservation_source = 'managed_fee' AND status = 'active'
+        AND NOT EXISTS (
+          SELECT 1 FROM operation_funding_leg_fees
+          WHERE operation_id = ? AND status IN ('reserved', 'submitted', 'ambiguous')
+        )
+    `).bind(row.operation_id, row.operation_id)
+  ];
+  if (row.leg_kind === "final_payment") {
+    statements.push(env.DB.prepare(`
+      UPDATE business_payment_intents SET status = 'confirmed', updated_at = datetime('now')
+      WHERE id = ? AND business_id = ? AND status = 'submitted'
+    `).bind(intentId, businessId));
+    statements.push(env.DB.prepare(`
+      UPDATE operations SET status = 'completed' WHERE id = ? AND status = 'reserved'
+    `).bind(row.operation_id));
+  }
+  try {
+    await env.DB.batch(statements);
+  } catch {
+    return json({ error: "funding_leg_confirmation_conflict" }, 409);
+  }
+  const finalRow = await getFundingLegSettlementRow(env, intentId, legId, businessId);
+  if (!finalRow || finalRow.leg_status !== "confirmed") {
+    return json({ error: "funding_leg_confirmation_conflict" }, 409);
+  }
+  return json({
+    intentId, fundingLegId: legId, status: "confirmed", confirmed: true,
+    transactionSignature: row.transaction_hash, confirmedSlot: lookup.slot,
+    amountAtoms: verification.amountAtoms,
+    actualNetworkFeeLamports: actualNetworkFee ?? undefined,
+    nextStep: row.leg_kind === "reserve_replenishment"
+      ? "Refresh and verify the payment-wallet USDC balance at finalized commitment before reserving or submitting the final-payment leg."
+      : "Payment transfer and the separately reserved SOL network fee are finalized and reconciled."
+  });
+}
+
+async function listAdminBusinessPaymentIntents(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const businessId = new URL(request.url).searchParams.get("businessId") ?? "";
+  if (!businessId) return json({ error: "business_id_required" }, 400);
+  const rows = await env.DB.prepare(`
+    SELECT i.id, i.operation_id, i.destination, i.mint, i.requested_atoms, i.payment_atoms,
+           i.fee_payer_wallet_id, i.network_fee_lamports, i.network_fee_budget_lamports,
+           i.action, i.status, i.expires_at, i.created_at, i.updated_at
+    FROM business_payment_intents i
+    WHERE i.business_id = ?
+    ORDER BY i.created_at DESC
+    LIMIT 50
+  `).bind(businessId).all<{
+    id: string; operation_id: string; destination: string; mint: string;
+    requested_atoms: string; payment_atoms: string; fee_payer_wallet_id: string;
+    network_fee_lamports: string; network_fee_budget_lamports: string;
+    action: string; status: string; expires_at: string; created_at: string; updated_at: string;
+  }>();
+  const intents = rows.results ?? [];
+  if (!intents.length) return json({ businessId, intents: [] });
+  const placeholders = intents.map(() => "?").join(",");
+  const legs = await env.DB.prepare(`
+    SELECT l.id, l.operation_id, l.leg_index, l.kind, l.source_wallet_id,
+           source_wallet.address AS source_address, l.destination_wallet_id,
+           destination_wallet.address AS destination_wallet_address, l.destination_address,
+           l.asset_mint, l.amount_atoms, l.status, l.transaction_hash,
+           fee.status AS fee_status, fee.actual_fee_lamports, fee.maximum_fee_lamports
+    FROM operation_funding_legs l
+    LEFT JOIN wallets source_wallet ON source_wallet.id = l.source_wallet_id
+    LEFT JOIN wallets destination_wallet ON destination_wallet.id = l.destination_wallet_id
+    LEFT JOIN operation_funding_leg_fees fee ON fee.funding_leg_id = l.id
+    WHERE l.operation_id IN (${placeholders})
+    ORDER BY l.operation_id ASC, l.leg_index ASC
+  `).bind(...intents.map(item => item.operation_id)).all<{
+    id: string; operation_id: string; leg_index: number; kind: string; source_wallet_id: string | null;
+    source_address: string | null; destination_wallet_id: string | null; destination_wallet_address: string | null;
+    destination_address: string | null; asset_mint: string; amount_atoms: string; status: string;
+    transaction_hash: string | null; fee_status: string | null; actual_fee_lamports: string | null;
+    maximum_fee_lamports: string | null;
+  }>();
+  const byOperation = new Map<string, NonNullable<typeof legs.results>>();
+  for (const leg of legs.results ?? []) {
+    const current = byOperation.get(leg.operation_id) ?? [];
+    current.push(leg);
+    byOperation.set(leg.operation_id, current);
+  }
+  return json({
+    businessId,
+    intents: intents.map(item => ({
+      intentId: item.id, operationId: item.operation_id, destination: item.destination,
+      mint: item.mint, requestedAtoms: item.requested_atoms, paymentAtoms: item.payment_atoms,
+      feePayerWalletId: item.fee_payer_wallet_id, networkFeeLamports: item.network_fee_lamports,
+      networkFeeBudgetLamports: item.network_fee_budget_lamports, action: item.action,
+      status: item.status, expiresAt: item.expires_at, createdAt: item.created_at, updatedAt: item.updated_at,
+      fundingLegs: (byOperation.get(item.operation_id) ?? []).map(leg => ({
+        id: leg.id, index: leg.leg_index, kind: leg.kind, sourceWalletId: leg.source_wallet_id,
+        sourceAddress: leg.source_address, destinationWalletId: leg.destination_wallet_id,
+        destinationWalletAddress: leg.destination_wallet_address, destinationAddress: leg.destination_address,
+        assetMint: leg.asset_mint, amountAtoms: leg.amount_atoms, status: leg.status,
+        transactionHash: leg.transaction_hash,
+        networkFee: { status: leg.fee_status, actualLamports: leg.actual_fee_lamports, maximumLamports: leg.maximum_fee_lamports }
+      }))
+    }))
+  });
+}
+
+async function getBusinessPaymentIntent(request: Request, env: Env, intentId: string): Promise<Response> {
+  const agent = await authenticate(request, env.DB);
+  if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
+  const limited = await enforceAgentRateLimit(env, agent.id, "payment_read", 60, 60);
+  if (limited) return limited;
+  const intent = await env.DB.prepare(`
+    SELECT i.id, i.operation_id, i.destination, i.mint, i.requested_atoms, i.payment_atoms,
+           i.fee_payer_wallet_id, i.network_fee_lamports, i.network_fee_budget_lamports, i.action, i.status,
+           i.policy_version, i.expires_at, i.created_at, i.updated_at
+    FROM business_payment_intents i
+    JOIN operations op ON op.id = i.operation_id AND op.business_id = i.business_id
+    WHERE i.id = ? AND i.business_id = ? AND op.agent_id = ?
+    LIMIT 1
+  `).bind(intentId, agent.business_id, agent.id).first<{
+    id: string; operation_id: string; destination: string; mint: string;
+    requested_atoms: string; payment_atoms: string; fee_payer_wallet_id: string;
+    network_fee_lamports: string; network_fee_budget_lamports: string;
+    action: string; status: string; policy_version: number;
+    expires_at: string; created_at: string; updated_at: string;
+  }>();
+  if (!intent) return json({ error: "payment_intent_not_found" }, 404);
+  const [legs, reservations] = await Promise.all([
+    env.DB.prepare(`
+      SELECT l.id, l.leg_index, l.kind, l.source_wallet_id, source_wallet.address AS source_address,
+             l.destination_wallet_id, destination_wallet.address AS destination_wallet_address,
+             l.destination_address, l.asset_mint, l.amount_atoms, l.expected_output_atoms,
+             l.received_output_atoms, l.status, l.transaction_hash, l.submitted_slot,
+             l.confirmed_slot, l.failure_reason, fee.status AS fee_status,
+             fee.maximum_fee_lamports, fee.actual_fee_lamports, fee.transaction_hash AS fee_transaction_hash,
+             fee.finalized_slot AS fee_finalized_slot, fee.failure_reason AS fee_failure_reason,
+             l.created_at, l.updated_at
+      FROM operation_funding_legs l
+      LEFT JOIN operation_funding_leg_fees fee ON fee.funding_leg_id = l.id
+      LEFT JOIN wallets source_wallet ON source_wallet.id = l.source_wallet_id
+      LEFT JOIN wallets destination_wallet ON destination_wallet.id = l.destination_wallet_id
+      WHERE l.operation_id = ? ORDER BY l.leg_index ASC
+    `).bind(intent.operation_id).all(),
+    env.DB.prepare(`
+      SELECT r.id, r.funding_leg_id, r.wallet_balance_id, b.wallet_id, w.address AS wallet_address,
+             r.amount_atoms, r.token, r.status, r.expires_at, r.reservation_source
+      FROM reservations r
+      JOIN wallet_balances b ON b.id = r.wallet_balance_id
+      JOIN wallets w ON w.id = b.wallet_id
+      WHERE r.operation_id = ? ORDER BY r.created_at ASC
+    `).bind(intent.operation_id).all()
+  ]);
+  return json({
+    intentId: intent.id, operationId: intent.operation_id, action: intent.action, status: intent.status,
+    destination: intent.destination, mint: intent.mint, requestedAtoms: intent.requested_atoms,
+    paymentAtoms: intent.payment_atoms, feePayerWalletId: intent.fee_payer_wallet_id,
+    networkFeeLamports: intent.network_fee_lamports,
+    networkFeeBudgetLamports: intent.network_fee_budget_lamports,
+    policyVersion: intent.policy_version,
+    expiresAt: intent.expires_at, createdAt: intent.created_at, updatedAt: intent.updated_at,
+    fundingLegs: (legs.results ?? []).map(row => ({
+      id: row.id, index: row.leg_index, kind: row.kind, sourceWalletId: row.source_wallet_id,
+      sourceAddress: row.source_address, destinationWalletId: row.destination_wallet_id,
+      destinationWalletAddress: row.destination_wallet_address, destinationAddress: row.destination_address,
+      assetMint: row.asset_mint, amountAtoms: row.amount_atoms, expectedOutputAtoms: row.expected_output_atoms,
+      receivedOutputAtoms: row.received_output_atoms, status: row.status, transactionHash: row.transaction_hash,
+      submittedSlot: row.submitted_slot, confirmedSlot: row.confirmed_slot, failureReason: row.failure_reason,
+      networkFee: {
+        status: row.fee_status, maximumLamports: row.maximum_fee_lamports,
+        actualLamports: row.actual_fee_lamports, transactionSignature: row.fee_transaction_hash,
+        finalizedSlot: row.fee_finalized_slot, failureReason: row.fee_failure_reason
+      },
+      createdAt: row.created_at, updatedAt: row.updated_at
+    })),
+    reservations: (reservations.results ?? []).map(row => ({
+      id: row.id, fundingLegId: row.funding_leg_id, walletId: row.wallet_id, walletAddress: row.wallet_address,
+      amountAtoms: row.amount_atoms, token: row.token, status: row.status, expiresAt: row.expires_at,
+      source: row.reservation_source
+    }))
+  });
+}
+async function listBusinessWalletRoles(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const businessId = new URL(request.url).searchParams.get("businessId");
+  if (!businessId) return json({ error: "business_id_required" }, 400);
+  const rows = await env.DB.prepare(`
+    SELECT r.wallet_id, r.role, r.enabled, r.priority,
+           r.minimum_remaining_atoms, r.maximum_transfer_atoms,
+           r.created_at, r.updated_at
+    FROM wallet_role_assignments r
+    JOIN wallets w ON w.id = r.wallet_id AND w.business_id = r.business_id
+    WHERE r.business_id = ?
+    ORDER BY r.role ASC, r.priority ASC, r.wallet_id ASC
+  `).bind(businessId).all<{
+    wallet_id: string; role: string; enabled: number; priority: number;
+    minimum_remaining_atoms: string; maximum_transfer_atoms: string | null;
+    created_at: string; updated_at: string;
+  }>();
+  return json({
+    businessId,
+    roles: (rows.results ?? []).map(row => ({
+      walletId: row.wallet_id, role: row.role, enabled: row.enabled === 1,
+      priority: row.priority, minimumRemainingAtoms: row.minimum_remaining_atoms,
+      maximumTransferAtoms: row.maximum_transfer_atoms,
+      createdAt: row.created_at, updatedAt: row.updated_at
+    }))
+  });
+}
+
+async function setBusinessWalletRole(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const body = await readJson(request);
+  if (!body) return json({ error: "invalid_json" }, 400);
+  const { businessId, walletId, role } = body;
+  const validRoles = ["payment", "reserve", "operating", "receiving", "api_payment"];
+  const enabled = body.enabled === undefined ? true : body.enabled;
+  const priority = body.priority === undefined ? 100 : body.priority;
+  const minimumRemainingAtoms = body.minimumRemainingAtoms === undefined ? "0" : body.minimumRemainingAtoms;
+  const maximumTransferAtoms = body.maximumTransferAtoms === undefined ? null : body.maximumTransferAtoms;
+  if (
+    typeof businessId !== "string" || typeof walletId !== "string" ||
+    typeof role !== "string" || !validRoles.includes(role) ||
+    typeof enabled !== "boolean" ||
+    !Number.isSafeInteger(priority) || (priority as number) < 0 || (priority as number) > 1_000_000 ||
+    typeof minimumRemainingAtoms !== "string" ||
+    !(minimumRemainingAtoms === "0" || isSqliteAtomString(minimumRemainingAtoms)) ||
+    (maximumTransferAtoms !== null && (typeof maximumTransferAtoms !== "string" || !isSqliteAtomString(maximumTransferAtoms)))
+  ) return json({ error: "invalid_request", message: "Provide a valid business wallet, role, enabled flag and atom limits within the database accounting range." }, 400);
+  if (role !== "reserve" && (minimumRemainingAtoms !== "0" || maximumTransferAtoms !== null)) {
+    return json({ error: "reserve_limits_only_apply_to_reserve_wallets" }, 400);
+  }
+
+  const wallet = await env.DB.prepare(`
+    SELECT id, purpose, ownership_verified_at FROM wallets
+    WHERE id = ? AND business_id = ? AND scope = 'business'
+      AND network = 'solana' AND status = 'active'
+    LIMIT 1
+  `).bind(walletId, businessId).first<{ id: string; purpose: string; ownership_verified_at: string | null }>();
+  if (!wallet) return json({ error: "active_business_wallet_not_found" }, 404);
+
+  if (role === "payment" && enabled) {
+    const existingPayment = await env.DB.prepare(
+      "SELECT wallet_id FROM wallet_role_assignments WHERE business_id = ? AND role = 'payment' AND enabled = 1 LIMIT 1"
+    ).bind(businessId).first<{ wallet_id: string }>();
+    if (existingPayment && existingPayment.wallet_id !== walletId) {
+      return json({ error: "payment_wallet_already_assigned", message: "Disable the current payment-wallet assignment before selecting another." }, 409);
+    }
+  }
+
+  if (enabled && !wallet.ownership_verified_at) {
+    return json({ error: "wallet_ownership_not_verified", message: "Verify control of this wallet address before enabling a business role." }, 409);
+  }
+
+  // Keep the current x402 integration contract intact while legacy purpose is in use.
+  if ((role === "api_payment") !== (wallet.purpose === "api_payment")) {
+    return json({ error: "wallet_purpose_role_mismatch", message: "The API-payment role must match the existing api_payment wallet purpose. Other roles require an operating-purpose business wallet." }, 409);
+  }
+  try {
+    await env.DB.prepare(`
+      INSERT INTO wallet_role_assignments (
+        business_id, wallet_id, role, enabled, priority,
+        minimum_remaining_atoms, maximum_transfer_atoms, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(wallet_id, role) DO UPDATE SET
+        enabled = excluded.enabled, priority = excluded.priority,
+        minimum_remaining_atoms = excluded.minimum_remaining_atoms,
+        maximum_transfer_atoms = excluded.maximum_transfer_atoms,
+        updated_at = datetime('now')
+    `).bind(businessId, walletId, role, enabled ? 1 : 0, priority as number,
+      minimumRemainingAtoms, maximumTransferAtoms).run();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("idx_wallet_roles_one_payment_per_business") || message.includes("UNIQUE constraint failed: wallet_role_assignments.business_id")) {
+      return json({ error: "payment_wallet_already_assigned", message: "Disable the current payment-wallet assignment before selecting another." }, 409);
+    }
+    if (message.includes("api_payment_role_must_be_exclusive")) return json({ error: "api_payment_role_must_be_exclusive" }, 409);
+    return json({ error: "wallet_role_assignment_failed" }, 409);
+  }
+  return json({ businessId, walletId, role, enabled, priority, minimumRemainingAtoms, maximumTransferAtoms });
+}
+
+
+function encodeBase64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_");
+}
+
+async function enforceWalletOwnershipRateLimit(env: Env, walletId: string, action: string, limit: number): Promise<Response | null> {
+  const windowSeconds = 600;
+  const windowKey = Math.floor(Date.now() / (windowSeconds * 1000));
+  const bucketKey = "wallet-ownership:" + action + ":" + walletId;
+  await env.DB.prepare("INSERT INTO api_rate_limits (bucket_key, window_key, request_count) VALUES (?, ?, 1) ON CONFLICT(bucket_key) DO UPDATE SET request_count = CASE WHEN api_rate_limits.window_key = excluded.window_key THEN api_rate_limits.request_count + 1 ELSE 1 END, window_key = excluded.window_key, updated_at = datetime('now')")
+    .bind(bucketKey, windowKey).run();
+  const row = await env.DB.prepare("SELECT request_count FROM api_rate_limits WHERE bucket_key = ? AND window_key = ?")
+    .bind(bucketKey, windowKey).first<{ request_count: number }>();
+  if (!row || row.request_count <= limit) return null;
+  const retryAfter = Math.max(1, (windowKey + 1) * windowSeconds - Math.floor(Date.now() / 1000));
+  return new Response(JSON.stringify({ error: "rate_limited", retryAfterSeconds: retryAfter }), {
+    status: 429,
+    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "retry-after": String(retryAfter) }
+  });
+}
+
+async function createWalletOwnershipChallenge(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const body = await readJson(request);
+  if (!body || typeof body.businessId !== "string" || typeof body.walletId !== "string" || body.businessId.length > 128 || body.walletId.length > 128) return json({ error: "invalid_request" }, 400);
+  const origin = request.headers.get("origin");
+  if (!origin || !isAllowedAdminOrigin(origin, new URL(request.url).origin, env.ADMIN_ALLOWED_ORIGINS)) return json({ error: "origin_not_allowed" }, 403);
+  const wallet = await env.DB.prepare("SELECT id, address, network FROM wallets WHERE id = ? AND business_id = ? AND scope = 'business' AND status = 'active' LIMIT 1")
+    .bind(body.walletId, body.businessId).first<{ id: string; address: string; network: string }>();
+  if (!wallet) return json({ error: "active_business_wallet_not_found" }, 404);
+  if (wallet.network !== "solana") return json({ error: "unsupported_wallet_network" }, 400);
+  const rateLimit = await enforceWalletOwnershipRateLimit(env, wallet.id, "challenge", 5);
+  if (rateLimit) return rateLimit;
+
+  await env.DB.prepare("UPDATE wallet_ownership_challenges SET consumed_at = datetime('now') WHERE wallet_id = ? AND consumed_at IS NULL").bind(wallet.id).run();
+
+  const nonce = crypto.getRandomValues(new Uint8Array(32));
+  const nonceText = encodeBase64Url(nonce);
+  const challengeId = crypto.randomUUID();
+  const issuedAt = new Date();
+  const expiresAt = new Date(issuedAt.getTime() + 5 * 60 * 1000);
+  const issuedText = issuedAt.toISOString();
+  const expiresText = expiresAt.toISOString();
+  const message = [
+    "NERITH WALLET OWNERSHIP PROOF",
+    "Origin: " + origin,
+    "Business ID: " + body.businessId,
+    "Wallet address: " + wallet.address,
+    "Network: solana:mainnet-beta",
+    "Nonce: " + nonceText,
+    "Issued at: " + issuedText,
+    "Expires at: " + expiresText,
+    "",
+    "This signature proves control of this wallet address only.",
+    "It does not authorize spending or grant agent execution permission."
+  ].join(String.fromCharCode(10));
+
+  await env.DB.prepare("INSERT INTO wallet_ownership_challenges (id, business_id, wallet_id, address, origin, network, message, nonce_hash, issued_at, expires_at) VALUES (?, ?, ?, ?, ?, 'solana:mainnet-beta', ?, ?, ?, ?)")
+    .bind(challengeId, body.businessId, wallet.id, wallet.address, origin, message, await sha256(nonceText), issuedText, expiresText).run();
+  return json({ challengeId, walletId: wallet.id, address: wallet.address, message, expiresAt: expiresText });
+}
+
+async function verifyWalletOwnership(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const body = await readJson(request);
+  if (!body || typeof body.businessId !== "string" || typeof body.walletId !== "string" ||
+      typeof body.challengeId !== "string" || typeof body.signature !== "string" ||
+      body.businessId.length > 128 || body.walletId.length > 128 || body.challengeId.length > 64 || body.signature.length > 256) return json({ error: "invalid_request" }, 400);
+  const origin = request.headers.get("origin");
+  if (!origin || !isAllowedAdminOrigin(origin, new URL(request.url).origin, env.ADMIN_ALLOWED_ORIGINS)) return json({ error: "origin_not_allowed" }, 403);
+  const rateLimit = await enforceWalletOwnershipRateLimit(env, body.walletId, "verify", 10);
+  if (rateLimit) return rateLimit;
+
+  const challenge = await env.DB.prepare("SELECT c.id, c.address, c.origin, c.network, c.message, c.nonce_hash, c.expires_at, w.address AS current_address FROM wallet_ownership_challenges c JOIN wallets w ON w.id = c.wallet_id AND w.business_id = c.business_id WHERE c.id = ? AND c.business_id = ? AND c.wallet_id = ? AND c.consumed_at IS NULL AND julianday(c.expires_at) > julianday('now') AND w.scope = 'business' AND w.status = 'active' AND w.network = 'solana' LIMIT 1")
+    .bind(body.challengeId, body.businessId, body.walletId).first<{ id: string; address: string; origin: string; network: string; message: string; nonce_hash: string; expires_at: string; current_address: string }>();
+  if (!challenge) return json({ error: "challenge_expired_or_consumed" }, 409);
+  if (challenge.origin !== origin) return json({ error: "challenge_origin_mismatch" }, 403);
+  if (challenge.network !== "solana:mainnet-beta" || challenge.address !== challenge.current_address) return json({ error: "challenge_wallet_mismatch" }, 409);
+  const nonceLine = challenge.message.split(String.fromCharCode(10)).find(line => line.startsWith("Nonce: "));
+  if (!nonceLine || await sha256(nonceLine.slice(7)) !== challenge.nonce_hash) return json({ error: "challenge_integrity_failure" }, 409);
+  if (!(await verifySolanaMessageSignature(challenge.address, challenge.message, body.signature))) return json({ error: "invalid_wallet_signature" }, 400);
+
+  const verifiedAt = new Date().toISOString();
+  const signatureHash = await sha256(body.signature);
+  const results = await env.DB.batch([
+    env.DB.prepare("UPDATE wallet_ownership_challenges SET consumed_at = ?, verified_at = ?, signature_hash = ? WHERE id = ? AND business_id = ? AND wallet_id = ? AND consumed_at IS NULL AND julianday(expires_at) > julianday('now')")
+      .bind(verifiedAt, verifiedAt, signatureHash, challenge.id, body.businessId, body.walletId),
+    env.DB.prepare("UPDATE wallets SET ownership_verified_at = ?, ownership_verified_origin = ? WHERE id = ? AND business_id = ? AND address = ? AND scope = 'business' AND status = 'active' AND network = 'solana' AND EXISTS (SELECT 1 FROM wallet_ownership_challenges c WHERE c.id = ? AND c.verified_at = ? AND c.consumed_at = ?)")
+      .bind(verifiedAt, origin, body.walletId, body.businessId, challenge.address, challenge.id, verifiedAt, verifiedAt)
+  ]);
+  if (Number(results[0]?.meta?.changes ?? 0) !== 1 || Number(results[1]?.meta?.changes ?? 0) !== 1) return json({ error: "challenge_already_used_or_expired" }, 409);
+  return json({ verified: true, walletId: body.walletId, address: challenge.address, ownershipVerifiedAt: verifiedAt, ownershipVerifiedOrigin: origin, authority: "address_control_only" });
 }
 
 async function upsertBalanceSnapshot(request: Request, env: Env): Promise<Response> {
@@ -2215,7 +4039,7 @@ async function verifyX402Settlement(
       [receipt.transaction, {
         commitment: "finalized",
         encoding: "jsonParsed",
-        maxSupportedTransactionVersion: 0
+        maxSupportedTransactionVersion: 1
       }]
     );
   } catch {
@@ -2557,6 +4381,105 @@ async function proxyHermes(
   }
 
   return new Response(responseBody, { status: upstream.status, headers: responseHeaders });
+}
+
+async function requestAdminX402DemoQuote(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const body = await readJson(request);
+  if (!body || typeof body.businessId !== "string" ||
+      typeof body.operatingWalletAddress !== "string" ||
+      typeof body.paymentWalletAddress !== "string" ||
+      typeof body.sourceAmount !== "string") {
+    return json({ error: "invalid_request", message: "Provide businessId, operatingWalletAddress, paymentWalletAddress and sourceAmount." }, 400);
+  }
+  const { businessId, operatingWalletAddress, paymentWalletAddress, sourceAmount } = body;
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(operatingWalletAddress) ||
+      !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(paymentWalletAddress)) {
+    return json({ error: "invalid_wallet_address" }, 400);
+  }
+  let sourceAtoms: bigint;
+  try { sourceAtoms = parseTokenAmount(sourceAmount, 9); }
+  catch (error) { return json({ error: "invalid_source_amount", message: error instanceof Error ? error.message : "Invalid SOL amount" }, 400); }
+  if (sourceAtoms <= 0n || sourceAtoms > 1_000_000_000n) {
+    return json({ error: "source_amount_out_of_range", message: "The demo quote is limited to a maximum of 1 SOL." }, 400);
+  }
+
+  const agent = await env.DB.prepare(`
+    SELECT a.id, a.business_id, a.status, a.can_use_business_treasury
+    FROM agents a
+    WHERE a.business_id = ? AND a.status = 'active'
+      AND EXISTS (
+        SELECT 1 FROM wallets w
+        WHERE w.business_id = a.business_id AND w.network = 'solana'
+          AND w.address = ? AND w.status = 'active' AND w.purpose = 'operating'
+          AND w.ownership_verified_at IS NOT NULL
+          AND (w.scope = 'business' OR (w.scope = 'agent' AND w.agent_id = a.id))
+      )
+    ORDER BY a.id LIMIT 1
+  `).bind(businessId, operatingWalletAddress).first<AgentRow>();
+  if (!agent) return json({ error: "active_agent_not_found" }, 404);
+  const limited = await enforceAgentRateLimit(env, agent.id, "x402_demo_quote", 4, 600);
+  if (limited) return limited;
+
+  const operatingWallet = await env.DB.prepare(`
+    SELECT w.id AS wallet_id, b.confirmed_atoms, b.reserved_atoms, b.observed_at
+    FROM wallets w
+    JOIN wallet_balances b ON b.wallet_id = w.id AND b.token = 'SOL'
+    WHERE w.business_id = ? AND w.network = 'solana' AND w.address = ?
+      AND w.status = 'active' AND w.purpose = 'operating'
+      AND w.ownership_verified_at IS NOT NULL
+      AND (w.scope = 'business' OR (w.scope = 'agent' AND w.agent_id = ?))
+    LIMIT 1
+  `).bind(businessId, operatingWalletAddress, agent.id).first<{
+    wallet_id: string; confirmed_atoms: string; reserved_atoms: string; observed_at: string;
+  }>();
+  if (!operatingWallet) return json({ error: "operating_wallet_not_authorized", message: "Choose an ownership-verified operating wallet assigned to the selected agent." }, 403);
+  const operatingAgeMs = Date.now() - Date.parse(operatingWallet.observed_at);
+  const operatingAvailable = BigInt(operatingWallet.confirmed_atoms) - BigInt(operatingWallet.reserved_atoms);
+  if (!Number.isFinite(operatingAgeMs) || operatingAgeMs < 0 || operatingAgeMs > 5 * 60 * 1000) {
+    return json({ error: "operating_balance_stale", message: "Refresh the operating wallet's Solana balance before requesting a quote." }, 409);
+  }
+  if (operatingAvailable < sourceAtoms) {
+    return json({ error: "insufficient_operating_sol", message: "The operating wallet does not have enough available SOL for this quote size." }, 409);
+  }
+
+  const paymentWallet = await env.DB.prepare(`
+    SELECT b.confirmed_atoms, b.reserved_atoms, b.observed_at
+    FROM wallets w
+    JOIN wallet_balances b ON b.wallet_id = w.id AND b.token = 'USDC'
+    WHERE w.business_id = ? AND w.network = 'solana' AND w.address = ?
+      AND w.scope = 'business' AND w.purpose = 'api_payment' AND w.status = 'active'
+      AND w.ownership_verified_at IS NOT NULL
+    LIMIT 1
+  `).bind(businessId, paymentWalletAddress).first<{
+    confirmed_atoms: string; reserved_atoms: string; observed_at: string;
+  }>();
+  if (!paymentWallet) return json({ error: "api_payment_wallet_not_configured", message: "Register and verify a separate x402 API fee reserve wallet." }, 409);
+  const paymentAgeMs = Date.now() - Date.parse(paymentWallet.observed_at);
+  const paymentAvailable = BigInt(paymentWallet.confirmed_atoms) - BigInt(paymentWallet.reserved_atoms);
+  if (!Number.isFinite(paymentAgeMs) || paymentAgeMs < 0 || paymentAgeMs > 5 * 60 * 1000 || paymentAvailable < 10_000n) {
+    return json({
+      error: "api_payment_reserve_unavailable",
+      message: "The x402 fee reserve needs a fresh balance of at least 0.01 USDC.",
+      minimumReserveUSDC: "0.01"
+    }, 409);
+  }
+
+  const payload = {
+    input: { token: SOL_MINT, amount: sourceAtoms.toString(), chainKey: "sol" },
+    output: { token: USDC_MINT, chainKey: "sol" },
+    userAddress: operatingWalletAddress,
+    slippageBps: 50
+  };
+  const x402Context: X402ProxyContext = {
+    env,
+    agent,
+    paymentWalletAddress,
+    requestHash: await sha256("admin-x402-demo\n" + agent.id + "\n" + paymentWalletAddress + "\n" + JSON.stringify(payload))
+  };
+  return proxyHermes(request, "/v1/swap/quote", payload, {
+    "X-NERITH-X402-DEMO": "true"
+  }, x402Context);
 }
 
 async function requestSwapQuote(request: Request, env: Env): Promise<Response> {
@@ -3092,6 +5015,14 @@ async function releaseOperation(request: Request, env: Env, operationId: string)
     return json({ error: "operation_not_releasable", status: operation.status }, 409);
   }
 
+  const pendingFunding = await env.DB.prepare(`
+    SELECT COUNT(*) AS count FROM operation_funding_legs
+    WHERE operation_id = ? AND status IN ('submitted', 'ambiguous')
+  `).bind(operationId).first<{ count: number }>();
+  if ((pendingFunding?.count ?? 0) > 0) {
+    return json({ error: "operation_has_submitted_or_ambiguous_funding_legs" }, 409);
+  }
+
   const operationClaim = await env.DB.prepare(
     "UPDATE operations SET status = 'released' WHERE id = ? AND agent_id = ? AND status = ?"
   ).bind(operationId, agent.id, operation.status).run();
@@ -3099,13 +5030,30 @@ async function releaseOperation(request: Request, env: Env, operationId: string)
     return json({ error: "operation_state_changed" }, 409);
   }
 
+  await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE operation_funding_leg_fees SET status = 'not_required', updated_at = datetime('now')
+      WHERE operation_id = ? AND status = 'reserved'
+    `).bind(operationId),
+    env.DB.prepare(`
+      UPDATE operation_funding_legs SET status = 'cancelled', failure_reason = 'Operation released before submission.',
+        updated_at = datetime('now')
+      WHERE operation_id = ? AND status IN ('planned', 'reserved', 'awaiting_signature', 'authorized_for_execution')
+    `).bind(operationId),
+    env.DB.prepare(`
+      UPDATE business_payment_intents SET status = 'cancelled', updated_at = datetime('now')
+      WHERE operation_id = ? AND status IN ('policy_checked', 'reserved', 'replenishing', 'awaiting_signature')
+    `).bind(operationId)
+  ]);
+
   const reservations = await env.DB.prepare(
-    "SELECT id, wallet_balance_id, amount_atoms, token FROM reservations WHERE operation_id = ? AND status = 'active'"
+    "SELECT id, wallet_balance_id, amount_atoms, token, reservation_source FROM reservations WHERE operation_id = ? AND status = 'active'"
   ).bind(operationId).all<{
     id: string;
     wallet_balance_id: string;
     amount_atoms: string;
     token: string;
+    reservation_source: string;
   }>();
 
   const processed: Array<{ id: string; wallet_balance_id: string; amount_atoms: string; token: string; debited: boolean }> = [];
@@ -3115,13 +5063,14 @@ async function releaseOperation(request: Request, env: Env, operationId: string)
     ).bind(reservation.id).run();
     if ((claim.meta?.changes ?? 0) !== 1) continue;
 
-    const debit = await env.DB.prepare(`
-      UPDATE wallet_balances
-      SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?
-      WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
-    `).bind(reservation.amount_atoms, reservation.wallet_balance_id, reservation.amount_atoms).run();
+    if ((reservation.reservation_source !== "managed" && reservation.reservation_source !== "managed_fee")) {
+      const debit = await env.DB.prepare(`
+        UPDATE wallet_balances
+        SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?
+        WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
+      `).bind(reservation.amount_atoms, reservation.wallet_balance_id, reservation.amount_atoms).run();
 
-    if ((debit.meta?.changes ?? 0) !== 1) {
+      if ((debit.meta?.changes ?? 0) !== 1) {
       await env.DB.prepare(
         "UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = 'released'"
       ).bind(reservation.id).run();
@@ -3140,10 +5089,13 @@ async function releaseOperation(request: Request, env: Env, operationId: string)
         "UPDATE operations SET status = ? WHERE id = ? AND status = 'released'"
       ).bind(operation.status, operationId).run();
       return json({ error: "reservation_ledger_mismatch", message: "No reservations were released." }, 409);
+      }
     }
 
     processed.push({ ...reservation, debited: true });
   }
+
+  await env.DB.prepare("UPDATE business_payment_intents SET status = 'cancelled' WHERE operation_id = ? AND status IN ('reserved', 'replenishing', 'awaiting_owner_approval', 'awaiting_signature')").bind(operationId).run();
 
   const released = processed.map((item) => ({
     amount: formatTokenAmount(BigInt(item.amount_atoms), item.token === "SOL" ? 9 : 6),
@@ -3167,6 +5119,10 @@ async function completeOperation(request: Request, env: Env, operationId: string
     "SELECT id, status FROM operations WHERE id = ? AND agent_id = ?"
   ).bind(operationId, agent.id).first<{ id: string; status: string }>();
   if (!operation) return json({ error: "operation_not_found" }, 404);
+  const paymentIntent = await env.DB.prepare("SELECT id, status FROM business_payment_intents WHERE operation_id = ? LIMIT 1")
+    .bind(operationId).first<{ id: string; status: string }>();
+  if (paymentIntent) return json({ error: "payment_confirmation_required", paymentIntentId: paymentIntent.id, paymentStatus: paymentIntent.status }, 409);
+
   if (operation.status !== "reserved" && operation.status !== "conversion_settled") {
     return json({ error: "operation_not_completable", status: operation.status }, 409);
   }
@@ -3177,12 +5133,13 @@ async function completeOperation(request: Request, env: Env, operationId: string
   if ((claimOperation.meta?.changes ?? 0) !== 1) return json({ error: "operation_state_changed" }, 409);
 
   const reservations = await env.DB.prepare(
-    "SELECT id, wallet_balance_id, amount_atoms, token FROM reservations WHERE operation_id = ? AND status = 'active'"
+    "SELECT id, wallet_balance_id, amount_atoms, token, reservation_source FROM reservations WHERE operation_id = ? AND status = 'active'"
   ).bind(operationId).all<{
     id: string;
     wallet_balance_id: string;
     amount_atoms: string;
     token: string;
+    reservation_source: string;
   }>();
 
   const processed: Array<{ id: string; wallet_balance_id: string; amount_atoms: string }> = [];
@@ -3192,13 +5149,14 @@ async function completeOperation(request: Request, env: Env, operationId: string
     ).bind(reservation.id).run();
     if ((claim.meta?.changes ?? 0) !== 1) continue;
 
-    const debit = await env.DB.prepare(`
-      UPDATE wallet_balances
-      SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?, observed_at = datetime('now', '-10 minutes')
-      WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
-    `).bind(reservation.amount_atoms, reservation.wallet_balance_id, reservation.amount_atoms).run();
+    if ((reservation.reservation_source !== "managed" && reservation.reservation_source !== "managed_fee")) {
+      const debit = await env.DB.prepare(`
+        UPDATE wallet_balances
+        SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?, observed_at = datetime('now', '-10 minutes')
+        WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
+      `).bind(reservation.amount_atoms, reservation.wallet_balance_id, reservation.amount_atoms).run();
 
-    if ((debit.meta?.changes ?? 0) !== 1) {
+      if ((debit.meta?.changes ?? 0) !== 1) {
       await env.DB.prepare(
         "UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = 'consumed'"
       ).bind(reservation.id).run();
@@ -3214,6 +5172,7 @@ async function completeOperation(request: Request, env: Env, operationId: string
         "UPDATE operations SET status = ? WHERE id = ? AND status = 'completed'"
       ).bind(operation.status, operationId).run();
       return json({ error: "reservation_ledger_mismatch" }, 409);
+      }
     }
     processed.push({ id: reservation.id, wallet_balance_id: reservation.wallet_balance_id, amount_atoms: reservation.amount_atoms });
   }
@@ -3286,6 +5245,14 @@ async function expireReservations(env: Env): Promise<{ expired: number; skipped:
         'reserved', 'awaiting_conversion', 'preparing_conversion',
         'conversion_submitted', 'conversion_settled', 'conversion_settled_shortfall', 'conversion_unverified'
       )
+      AND NOT EXISTS (
+        SELECT 1 FROM business_payment_intents payment_intent
+        WHERE payment_intent.operation_id = o.id AND payment_intent.status = 'ambiguous'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM operation_funding_legs pending_leg
+        WHERE pending_leg.operation_id = o.id AND pending_leg.status IN ('submitted', 'ambiguous')
+      )
     ORDER BY o.created_at ASC
     LIMIT 100
   `).all<{ id: string; business_id: string; status: string }>();
@@ -3309,12 +5276,29 @@ async function expireReservations(env: Env): Promise<{ expired: number; skipped:
       continue;
     }
 
+    await env.DB.batch([
+      env.DB.prepare(`
+        UPDATE operation_funding_leg_fees SET status = 'not_required', updated_at = datetime('now')
+        WHERE operation_id = ? AND status = 'reserved'
+      `).bind(operation.id),
+      env.DB.prepare(`
+        UPDATE operation_funding_legs SET status = 'expired', failure_reason = 'Operation expired before submission.',
+          updated_at = datetime('now')
+        WHERE operation_id = ? AND status IN ('planned', 'reserved', 'awaiting_signature', 'authorized_for_execution')
+      `).bind(operation.id),
+      env.DB.prepare(`
+        UPDATE business_payment_intents SET status = 'expired', updated_at = datetime('now')
+        WHERE operation_id = ? AND status IN ('policy_checked', 'reserved', 'replenishing', 'awaiting_signature')
+      `).bind(operation.id)
+    ]);
+
     const reservations = await env.DB.prepare(
-      "SELECT id, wallet_balance_id, amount_atoms FROM reservations WHERE operation_id = ? AND status = 'active'"
+      "SELECT id, wallet_balance_id, amount_atoms, reservation_source FROM reservations WHERE operation_id = ? AND status = 'active'"
     ).bind(operation.id).all<{
       id: string;
       wallet_balance_id: string;
       amount_atoms: string;
+      reservation_source: string;
     }>();
 
     const processed: Array<{ id: string; wallet_balance_id: string; amount_atoms: string; debited: boolean }> = [];
@@ -3325,19 +5309,19 @@ async function expireReservations(env: Env): Promise<{ expired: number; skipped:
       ).bind(reservation.id).run();
       if ((claim.meta?.changes ?? 0) !== 1) continue;
 
-      const debit = await env.DB.prepare(`
-        UPDATE wallet_balances
-        SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?
-        WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
-      `).bind(reservation.amount_atoms, reservation.wallet_balance_id, reservation.amount_atoms).run();
-
-      if ((debit.meta?.changes ?? 0) !== 1) {
-        await env.DB.prepare(
-          "UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = 'expired'"
-        ).bind(reservation.id).run();
-        failed = true;
-        break;
+      if (reservation.reservation_source !== "managed" && reservation.reservation_source !== "managed_fee") {
+        const debit = await env.DB.prepare(
+          "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)"
+        ).bind(reservation.amount_atoms, reservation.wallet_balance_id, reservation.amount_atoms).run();
+        if ((debit.meta?.changes ?? 0) !== 1) {
+          await env.DB.prepare(
+            "UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = 'expired'"
+          ).bind(reservation.id).run();
+          failed = true;
+          break;
+        }
       }
+      // Managed rows were decremented by their D1 trigger; legacy rows above.
       processed.push({ ...reservation, debited: true });
     }
 
@@ -3356,6 +5340,7 @@ async function expireReservations(env: Env): Promise<{ expired: number; skipped:
       skipped++;
       continue;
     }
+    await env.DB.prepare("UPDATE business_payment_intents SET status = 'expired' WHERE operation_id = ? AND status IN ('reserved', 'replenishing', 'awaiting_owner_approval', 'awaiting_signature')").bind(operation.id).run();
 
     await notifyBusiness(
       env,
@@ -3540,11 +5525,7 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
       transaction = await solanaRpc<TransactionResult | null>(
         env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com",
         "getTransaction",
-        [operation.transaction_hash, {
-          commitment: "finalized",
-          encoding: "jsonParsed",
-          maxSupportedTransactionVersion: 0
-        }]
+        [operation.transaction_hash, FINALIZED_TRANSACTION_READ_OPTIONS]
       );
     } catch {
       return json({ error: "transaction_verification_unavailable" }, 502);
@@ -3631,12 +5612,13 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
 
   if (operation.target_reservation_id) {
     const targetReservation = await env.DB.prepare(
-      "SELECT id, wallet_balance_id, amount_atoms, status FROM reservations WHERE id = ?"
+      "SELECT id, wallet_balance_id, amount_atoms, status, reservation_source FROM reservations WHERE id = ?"
     ).bind(operation.target_reservation_id).first<{
       id: string;
       wallet_balance_id: string;
       amount_atoms: string;
       status: string;
+      reservation_source: string;
     }>();
 
     if (targetReservation?.status === "active" && effectiveStatus === "failed") {
@@ -3644,14 +5626,16 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
         "UPDATE reservations SET status = 'released', released_at = datetime('now') WHERE id = ? AND status = 'active'"
       ).bind(targetReservation.id).run();
       if ((claimTarget.meta?.changes ?? 0) === 1) {
-        const debitTarget = await env.DB.prepare(
-          "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)"
-        ).bind(targetReservation.amount_atoms, targetReservation.wallet_balance_id, targetReservation.amount_atoms).run();
-        if ((debitTarget.meta?.changes ?? 0) !== 1) {
+        if ((targetReservation.reservation_source !== "managed" && targetReservation.reservation_source !== "managed_fee")) {
+          const debitTarget = await env.DB.prepare(
+            "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)"
+          ).bind(targetReservation.amount_atoms, targetReservation.wallet_balance_id, targetReservation.amount_atoms).run();
+          if ((debitTarget.meta?.changes ?? 0) !== 1) {
           await env.DB.prepare(
             "UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = 'released'"
           ).bind(targetReservation.id).run();
           return json({ error: "target_reservation_ledger_mismatch" }, 409);
+          }
         }
       }
     } else if (targetReservation?.status === "active") {
@@ -4408,6 +6392,7 @@ export default {
     await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE expires_at <= datetime('now')").run();
     await env.DB.prepare("DELETE FROM telegram_processed_updates WHERE processed_at < datetime('now', '-30 days')").run();
     await env.DB.prepare("DELETE FROM api_rate_limits WHERE updated_at < datetime('now', '-2 days')").run();
+    await env.DB.prepare("DELETE FROM wallet_ownership_challenges WHERE expires_at < datetime('now', '-1 day') OR consumed_at < datetime('now', '-1 day')").run();
     await env.DB.prepare(`
       DELETE FROM x402_payment_challenges
       WHERE status = 'expired' AND created_at < datetime('now', '-30 days')
@@ -4434,6 +6419,7 @@ export default {
           "cache-control": "public, max-age=300",
           "x-content-type-options": "nosniff",
           "referrer-policy": "no-referrer",
+          "cross-origin-opener-policy": "same-origin-allow-popups",
           "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
         }
       });
@@ -4467,6 +6453,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/v1/admin/operations") return getAdminBusinessOperations(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/forecast") return getAdminBusinessForecast(request, env);
     if ((request.method === "GET" || request.method === "POST") && url.pathname === "/v1/admin/x402/budgets") return manageX402Budgets(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/admin/x402/demo/quote") return requestAdminX402DemoQuote(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/x402/reconcile") return reconcileX402PaymentAdmin(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/bootstrap") return bootstrapBusiness(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/agents") return provisionAgent(request, env);
@@ -4485,6 +6472,33 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/admin/telegram/link-codes") return createTelegramLinkCode(request, env);
     if (request.method === "POST" && url.pathname === "/v1/telegram/webhook") return telegramWebhook(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/wallets") return listBusinessWallets(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/admin/wallet-roles") return listBusinessWalletRoles(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/admin/payment-policy") return getBusinessPaymentPolicy(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/admin/payment-policy") return setBusinessPaymentPolicy(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/payments/prepare") return createBusinessPaymentIntent(request, env);
+    const finalPaymentPrepareRoute = url.pathname.match(/^\/v1\/admin\/payment-intents\/([a-zA-Z0-9_-]+)\/prepare-final-payment$/);
+    if (request.method === "POST" && finalPaymentPrepareRoute) {
+      return prepareFinalPaymentAfterReplenishment(request, env, finalPaymentPrepareRoute[1]);
+    }
+    const fundingLegRoute = url.pathname.match(/^\/v1\/admin\/payment-intents\/([a-zA-Z0-9_-]+)\/funding-legs\/([a-zA-Z0-9_-]+)\/(prepare|submit-signed|submit|reconcile)$/);
+    if (request.method === "POST" && fundingLegRoute && fundingLegRoute[3] === "prepare") {
+      return prepareFundingLegTransaction(request, env, fundingLegRoute[1], fundingLegRoute[2]);
+    }
+    if (request.method === "POST" && fundingLegRoute && fundingLegRoute[3] === "submit-signed") {
+      return submitSignedFundingLegTransaction(request, env, fundingLegRoute[1], fundingLegRoute[2]);
+    }
+    if (request.method === "POST" && fundingLegRoute && fundingLegRoute[3] === "submit") {
+      return submitFundingLegTransaction(request, env, fundingLegRoute[1], fundingLegRoute[2]);
+    }
+    if (request.method === "POST" && fundingLegRoute && fundingLegRoute[3] === "reconcile") {
+      return reconcileFundingLegTransaction(request, env, fundingLegRoute[1], fundingLegRoute[2]);
+    }
+    if (request.method === "GET" && url.pathname === "/v1/admin/payment-intents") return listAdminBusinessPaymentIntents(request, env);
+    const paymentIntentMatch = url.pathname.match(/^\/v1\/payments\/([a-zA-Z0-9_-]+)$/);
+    if (request.method === "GET" && paymentIntentMatch) return getBusinessPaymentIntent(request, env, paymentIntentMatch[1]);
+    if (request.method === "POST" && url.pathname === "/v1/admin/wallet-roles") return setBusinessWalletRole(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/admin/wallet-ownership/challenge") return createWalletOwnershipChallenge(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/admin/wallet-ownership/verify") return verifyWalletOwnership(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/wallets") return registerWallet(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/balances") return upsertBalanceSnapshot(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/balances/sync") return syncSolanaBalances(request, env);
@@ -4509,6 +6523,26 @@ export default {
     if (request.method === "POST" && releaseMatch) return releaseOperation(request, env, releaseMatch[1]);
     const operationMatch = url.pathname.match(/^\/v1\/operations\/([a-zA-Z0-9_-]+)$/);
     if (request.method === "GET" && operationMatch) return getOperation(request, env, operationMatch[1]);
+    if (request.method === "GET" && url.pathname === "/assets/okx-wallet-connector.js") {
+      return new Response(okxWalletConnectorJs, {
+        headers: {
+          "content-type": "text/javascript; charset=utf-8",
+          "cache-control": "public, max-age=300",
+          "x-content-type-options": "nosniff",
+          "referrer-policy": "no-referrer"
+        }
+      });
+    }
+    if (request.method === "GET" && url.pathname === "/assets/jupiter-mobile-connector.js") {
+      return new Response(jupiterMobileConnectorJs, {
+        headers: {
+          "content-type": "text/javascript; charset=utf-8",
+          "cache-control": "public, max-age=300",
+          "x-content-type-options": "nosniff",
+          "referrer-policy": "no-referrer"
+        }
+      });
+    }
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/app" || url.pathname === "/control" || url.pathname === "/dashboard")) {
       const page = url.pathname === "/app" ? dashboardHtml : url.pathname === "/control" ? controlHtml : url.pathname === "/dashboard" ? businessDashboardHtml : landingHtml;
       return new Response(page, {
@@ -4517,7 +6551,7 @@ export default {
           "cache-control": "no-store",
           "x-content-type-options": "nosniff",
           "referrer-policy": "no-referrer",
-          "content-security-policy": "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"
+          "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; font-src 'self' https://fonts.gstatic.com https://fonts.reown.com; connect-src 'self' https://*.okx.com https://*.okx.pro wss://*.okx.com wss://*.okx.pro https://rpc.walletconnect.com https://rpc.walletconnect.org https://relay.walletconnect.com https://relay.walletconnect.org wss://relay.walletconnect.com wss://relay.walletconnect.org https://pulse.walletconnect.com https://pulse.walletconnect.org https://api.web3modal.com https://api.web3modal.org https://keys.walletconnect.com https://keys.walletconnect.org https://notify.walletconnect.com https://notify.walletconnect.org https://echo.walletconnect.com https://echo.walletconnect.org https://push.walletconnect.com https://push.walletconnect.org https://*.reown.com https://api.reown.com https://explorer-api.walletconnect.com https://verify.walletconnect.com https://verify.walletconnect.org; frame-src 'self' https://verify.walletconnect.com https://verify.walletconnect.org https://secure.walletconnect.com https://secure.walletconnect.org; worker-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'"
         }
       });
     }

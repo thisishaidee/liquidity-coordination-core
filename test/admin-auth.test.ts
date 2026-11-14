@@ -12,11 +12,78 @@ describe("business-scoped admin route classification", () => {
     expect(describeAdminRoute("POST", "/v1/admin/telegram/permissions", new URLSearchParams("businessId=biz_a"), { businessId: "biz_b" })).toEqual({ kind: "invalid" });
   });
 
+  it("requires a business-scoped owner session for the Swap.io x402 demo quote", () => {
+    expect(describeAdminRoute("POST", "/v1/admin/x402/demo/quote", new URLSearchParams(), {
+      operatingWalletAddress: "wallet"
+    })).toEqual({ kind: "invalid" });
+    expect(describeAdminRoute("POST", "/v1/admin/x402/demo/quote", new URLSearchParams(), {
+      businessId: "biz_a", operatingWalletAddress: "wallet", paymentWalletAddress: "wallet"
+    })).toEqual({ kind: "business", businessId: "biz_a" });
+    expect(describeAdminRoute("GET", "/v1/admin/x402/demo/quote", new URLSearchParams("businessId=biz_a"), null))
+      .toEqual({ kind: "invalid" });
+  });
+
+  it("requires an explicit business scope for funding-leg settlement writes", () => {
+    const path = "/v1/admin/payment-intents/bpi_123/funding-legs/leg_456/submit-signed";
+    expect(describeAdminRoute("POST", path, new URLSearchParams(), { signature: "untrusted" }))
+      .toEqual({ kind: "invalid" });
+    expect(describeAdminRoute("POST", path, new URLSearchParams("businessId=biz_a"), { signature: "untrusted" }))
+      .toEqual({ kind: "business", businessId: "biz_a" });
+    expect(describeAdminRoute("POST", "/v1/admin/payment-intents/bpi_123/funding-legs/leg_456/prepare", new URLSearchParams("businessId=biz_a"), {}))
+      .toEqual({ kind: "business", businessId: "biz_a" });
+    expect(describeAdminRoute("POST", "/v1/admin/payment-intents/bpi_123/funding-legs/leg_456/submit", new URLSearchParams("businessId=biz_a"), { signature: "untrusted" }))
+      .toEqual({ kind: "business", businessId: "biz_a" });
+    expect(describeAdminRoute("GET", path, new URLSearchParams("businessId=biz_a"), null))
+      .toEqual({ kind: "invalid" });
+    expect(describeAdminRoute("POST", "/v1/admin/payment-intents/bpi_123/funding-legs/leg_456/unknown", new URLSearchParams("businessId=biz_a"), {}))
+      .toEqual({ kind: "invalid" });
+  });
+
+  it("allows only business-scoped reads for the payment-intent inbox", () => {
+    expect(describeAdminRoute("GET", "/v1/admin/payment-intents", new URLSearchParams("businessId=biz_a"), null))
+      .toEqual({ kind: "business", businessId: "biz_a" });
+    expect(describeAdminRoute("GET", "/v1/admin/payment-intents", new URLSearchParams(), null))
+      .toEqual({ kind: "invalid" });
+    expect(describeAdminRoute("POST", "/v1/admin/payment-intents", new URLSearchParams("businessId=biz_a"), {}))
+      .toEqual({ kind: "invalid" });
+  });
+
+  it("requires business-scoped POST for final-payment preparation", () => {
+    const path = "/v1/admin/payment-intents/bpi_123/prepare-final-payment";
+    expect(describeAdminRoute("POST", path, new URLSearchParams("businessId=biz_a"), null))
+      .toEqual({ kind: "business", businessId: "biz_a" });
+    expect(describeAdminRoute("POST", path, new URLSearchParams(), null))
+      .toEqual({ kind: "invalid" });
+    expect(describeAdminRoute("GET", path, new URLSearchParams("businessId=biz_a"), null))
+      .toEqual({ kind: "invalid" });
+  });
+
   it("binds resource-id actions to server-resolved ownership", () => {
     expect(describeAdminRoute("POST", "/v1/admin/agents/agt_123/disable", new URLSearchParams(), null)).toEqual({ kind: "business", businessId: null, resource: { table: "agents", id: "agt_123" } });
     expect(describeAdminRoute("POST", "/v1/admin/wallets/wal_123/disable", new URLSearchParams(), null)).toEqual({ kind: "business", businessId: null, resource: { table: "wallets", id: "wal_123" } });
     expect(describeAdminRoute("POST", "/v1/admin/balances", new URLSearchParams(), { walletId: "wal_123" })).toEqual({ kind: "business", businessId: null, resource: { table: "wallets", id: "wal_123" } });
     expect(describeAdminRoute("POST", "/v1/admin/x402/reconcile", new URLSearchParams(), { reservationId: "x4r_123" })).toEqual({ kind: "business", businessId: null, resource: { table: "x402_payment_reservations", id: "x4r_123" } });
+  });
+
+  it("binds wallet-role writes to the owning business wallet", () => {
+    expect(describeAdminRoute("GET", "/v1/admin/wallet-roles", new URLSearchParams("businessId=biz_a"), null))
+      .toEqual({ kind: "business", businessId: "biz_a" });
+    expect(describeAdminRoute("GET", "/v1/admin/wallet-roles", new URLSearchParams(), null))
+      .toEqual({ kind: "invalid" });
+    expect(describeAdminRoute("POST", "/v1/admin/wallet-roles", new URLSearchParams(), {
+      businessId: "biz_a", walletId: "wal_123", role: "reserve"
+    })).toEqual({ kind: "business", businessId: "biz_a", resource: { table: "wallets", id: "wal_123" } });
+  });
+
+  it("binds wallet ownership challenge and verification to the registered wallet business", () => {
+    for (const path of ["/v1/admin/wallet-ownership/challenge", "/v1/admin/wallet-ownership/verify"]) {
+      expect(describeAdminRoute("POST", path, new URLSearchParams(), {
+        businessId: "biz_a", walletId: "wal_123"
+      })).toEqual({ kind: "business", businessId: "biz_a", resource: { table: "wallets", id: "wal_123" } });
+      expect(describeAdminRoute("POST", path, new URLSearchParams(), {
+        businessId: "biz_a"
+      })).toEqual({ kind: "invalid" });
+    }
   });
 
   it("isolates platform-wide routes behind the bootstrap token", () => {

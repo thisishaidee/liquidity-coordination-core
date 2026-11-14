@@ -57,6 +57,17 @@ async function call(path: string, env: TestEnv, headers: HeadersInit = {}) {
 }
 
 describe("admin dashboard read endpoints", () => {
+  it("lists payment intents only inside the authenticated business session", async () => {
+    const { env, queries } = makeEnv({ cookieSessionValid: true, sessionBusinessId: "biz_1" });
+    const response = await call("/v1/admin/payment-intents?businessId=biz_1", env, sessionHeaders);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ businessId: "biz_1", intents: [] });
+    expect(queries.some(query => query.sql.includes("FROM business_payment_intents"))).toBe(true);
+
+    const crossBusiness = await call("/v1/admin/payment-intents?businessId=biz_2", env, sessionHeaders);
+    expect(crossBusiness.status).toBe(401);
+  });
+
   it("requires an admin session before checking business identifiers", async () => {
     const { env } = makeEnv();
     const response = await call("/v1/admin/operations", env);
@@ -696,6 +707,28 @@ it("returns approval, execution and verified settlement as separate operation st
 describe("browser page script syntax", () => {
   it("parses the inline scripts served for the landing page and business dashboard", async () => {
     const { env } = makeEnv();
+    const connectorResponse = await worker.fetch(new Request("https://nerith.test/assets/okx-wallet-connector.js"), env);
+    expect(connectorResponse.status).toBe(200);
+    const connectorJs = await connectorResponse.text();
+    expect(connectorJs).toContain("NERITHOKX");
+    expect(connectorJs).toContain("signTransaction");
+    expect(() => new Function(connectorJs)).not.toThrow();
+    const jupiterResponse = await worker.fetch(new Request("https://nerith.test/assets/jupiter-mobile-connector.js"), env);
+    expect(jupiterResponse.status).toBe(200);
+    const jupiterJs = await jupiterResponse.text();
+    expect(jupiterJs).toContain("NERITHJUPITER");
+    expect(jupiterJs).toContain("NERITHSOLANA");
+    expect(jupiterJs).toContain("solana:signTransaction");
+    expect(jupiterJs).toContain("expected USDC transfer-authority signature");
+    expect(jupiterJs).toContain("Wallet Standard account");
+    expect(jupiterJs).toContain("13a7a3c0065f86dab70a544edc8ed07d");
+    expect(jupiterJs).toContain("prepareX402Payment");
+    expect(jupiterJs).toContain("signPreparedX402Payment");
+    expect(jupiterJs).toContain("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+    expect(jupiterJs).toContain("The active Jupiter Mobile session does not match the registered x402 payment wallet.");
+    expect(jupiterJs).toContain("The x402 payment wallet must be distinct from Swap.io recipient and facilitator fee payer.");
+    expect(jupiterJs).not.toContain("createAssociatedTokenAccountIdempotentInstruction");
+    expect(() => new Function(jupiterJs)).not.toThrow();
     for (const path of ["/", "/dashboard", "/control"]) {
       const response = await worker.fetch(new Request("https://nerith.test" + path), env);
       const html = await response.text();
@@ -720,6 +753,59 @@ describe("browser page script syntax", () => {
         expect(html).toContain("invalid_forecast_response");
         expect(html).toContain("invalid_operations_response");
         expect(html).toContain("catch(error) { state.loadErrors[label]=true;failed.push({label,error}); }");
+        expect(html).toContain('id="walletChooser"');
+        expect(html).toContain('id="connectX402Reserve"');
+        expect(html).toContain('purpose.value="api_payment"');
+        expect(html).toContain("A closed Wallet Standard adapter must not block other wallet providers.");
+        expect(html).toContain("Retry ownership check");
+        expect(html).toContain("Connect the wallet that owns this exact address");
+        expect(html).toContain("const connectedAddress=await connectSolanaWallet()");
+        expect(html).toContain("connectedAddress!==button.dataset.address");
+        expect(html).toContain("Wallet connected. Approve the ownership message in the wallet app.");
+        expect(html).toContain("if(!injected&&window.NERITHOKX?.connect)return await window.NERITHOKX.connect()");
+        expect(html).toContain("Start the OKX App Connect handoff before awaiting Wallet Standard adapters.");
+        const connectFunctionStart=html.indexOf("async function connectSolanaWallet");
+        const connectFunctionEnd=html.indexOf("async function signOwnershipChallenge",connectFunctionStart);
+        const connectFunction=html.slice(connectFunctionStart,connectFunctionEnd);
+        expect(connectFunction.indexOf("if(!injected&&window.NERITHOKX?.connect)")<connectFunction.indexOf("for(const wallet of standardSolanaWallets)")).toBe(true);
+        expect(html).toContain("pendingExistingWalletVerification={button,walletId:button.dataset.verifyWallet,address:button.dataset.address,help}");
+        expect(html).toContain('const connectedAddress=await connectSolanaWallet(wallet==="browser"?"":wallet)');
+        expect(html).toContain("Choose the wallet that owns this exact address.");
+         expect(html).toContain("async function signOwnershipChallenge(address,message,preferredWallet=\"\")");
+         expect(html).toContain('if(preferredWallet==="jupiter"){');
+         expect(html).toContain('return await window.NERITHJUPITER.signMessage(message,address);');
+         expect(html).toContain('if(preferredWallet==="okx"){');
+         expect(html).toContain("verifyWalletOwnershipWithWallet(pending.walletId,pending.address,pending.button,wallet)");
+        expect(html).toContain("if(window.NERITHJUPITER.connected&&window.NERITHJUPITER.getAddress?.())return window.NERITHJUPITER.getAddress();");
+        expect(html).toContain("const existingWallet=state.wallets.find(wallet=>");
+        expect(html).toContain("Reusing its existing record; no duplicate will be created.");
+        expect(html).toContain("Use a separate Solana address for ");
+        for (const wallet of ["okx", "phantom", "solflare", "backpack", "jupiter", "browser"]) expect(html).toContain('data-wallet-choice="' + wallet + '"');
+        expect(html).not.toContain("jup.ag/wallet");
+        expect(html).toContain('id="jupiterWalletMount"');
+        expect(html).toContain('src="/assets/jupiter-mobile-connector.js"');
+        expect(html).toContain("window.NERITHJUPITER?.connect");
+        expect(html).toContain("window.NERITHJUPITER.signMessage");
+        expect(html).toContain("window.NERITHSOLANA");
+        expect(html).toContain("getX402WalletSigner");
+        expect(html).toContain("prepareX402Payment");
+        expect(html).toContain("signPreparedX402Payment");
+        expect(html).toContain('id="x402DemoPanel"');
+        expect(html).toContain('id="x402SyncBalances"');
+        expect(html).toContain('id="x402GetQuote"');
+        expect(html).toContain('id="x402PayQuote"');
+        expect(html).toContain('/v1/admin/x402/demo/quote');
+        expect(html).toContain('X-PAYMENT');
+        expect(html).toContain('no swap is executed');
+        expect(html).toContain("prepareWalletOwnershipChallenge");
+        expect(html).toContain("walletOwnershipChallenges.get(walletId)");
+        expect(html).toContain('button.textContent="Preparing verification…"');
+        expect(html).toContain("The signing request is not ready yet.");
+        expect(html).toContain("phantom.app/ul/browse/");
+        expect(html).toContain("solflare.com/ul/v1/browse/");
+        expect(html).toContain("backpack.app/ul/v1/browse/");
+        expect(html).toContain("Sign ownership message");
+        expect(html).toContain("window.NERITHOKX");
       }
     }
   });

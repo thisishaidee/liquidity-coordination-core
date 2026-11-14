@@ -5,20 +5,29 @@
   "type": "module",
   "scripts": {
     "dev": "npm run build:dashboard && wrangler dev",
-    "test": "vitest run",
+    "test": "npm run build:business-dashboard && vitest run",
     "test:watch": "vitest",
     "typecheck": "npm run build:dashboard && tsc --noEmit",
     "deploy": "npm run build:dashboard && wrangler deploy",
     "build:dashboard": "node scripts/embed-dashboard.mjs && npm run build:landing && npm run build:control && npm run build:business-dashboard && npm run build:pixel-field",
     "build:landing": "node scripts/embed-landing.mjs",
     "build:control": "node scripts/embed-control.mjs",
-    "build:business-dashboard": "node scripts/embed-business-dashboard.mjs",
-    "build:pixel-field": "node scripts/embed-pixel-field.mjs"
+    "build:business-dashboard": "npm run install:jupiter-wallet && node scripts/embed-business-dashboard.mjs",
+    "build:pixel-field": "node scripts/embed-pixel-field.mjs",
+    "install:jupiter-wallet": "npm --prefix wallet-connect install --no-audit --no-fund"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261110.1",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4",
-    "wrangler": "^4.45.0"
+    "wrangler": "^4.45.0",
+    "esbuild": "^0.25.12"
+  },
+  "dependencies": {
+    "@solana-program/token": "0.18.0",
+    "@solana/web3.js": "3.2.1",
+    "@solana/kit": "8.6.0",
+    "@okxconnect/solana-provider": "1.9.1",
+    "@okxconnect/universal-provider": "1.9.1"
   }
 }
