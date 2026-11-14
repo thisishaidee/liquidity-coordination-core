@@ -2051,7 +2051,7 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
       INSERT INTO operations
         (id, business_id, agent_id, task_id, network, token, amount_atoms, purpose,
          status, action, available_atoms, shortfall_atoms, source_wallet_id)
-      VALUES (?, ?, ?, 'solana', 'USDC', ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, 'solana', 'USDC', ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       operationId, agent.business_id, agent.id, taskId, requestedAtoms.toString(),
       purpose, operationStatus, paymentAction, decision.paymentWalletAvailableAtoms.toString(),
@@ -5106,6 +5106,9 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/telegram/webhook") return telegramWebhook(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/wallets") return listBusinessWallets(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/wallet-roles") return listBusinessWalletRoles(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/admin/payment-policy") return getBusinessPaymentPolicy(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/admin/payment-policy") return setBusinessPaymentPolicy(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/payments/prepare") return createBusinessPaymentIntent(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/wallet-roles") return setBusinessWalletRole(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/wallet-ownership/challenge") return createWalletOwnershipChallenge(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/wallet-ownership/verify") return verifyWalletOwnership(request, env);
