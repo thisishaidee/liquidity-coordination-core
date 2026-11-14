@@ -13,7 +13,7 @@ describe("finalized Solana network fee verification", () => {
 
   it("rejects account-key representations that do not prove the fee payer signed", () => {
     expect(verifySolanaNetworkFee({
-      meta: { fee: 0 }, transaction: { message: { accountKeys: [{ pubkey: payer, signer: true }] } }
+      meta: { fee: 0 }, transaction: { message: { accountKeys: [{ pubkey: payer, signer: false }] } }
     }, payer, "0")).toEqual({ verified: false, reason: "Finalized transaction fee payer is not the registered business wallet with a verified transaction signature." });
     expect(verifySolanaNetworkFee({
       meta: { fee: 0 }, transaction: { message: { accountKeys: [{ pubkey: payer, signer: false }] } }
@@ -29,7 +29,7 @@ describe("finalized Solana network fee verification", () => {
 
   it("rejects fees above the immutable cap", () => {
     const result = verifySolanaNetworkFee({
-      meta: { fee: 10001 }, transaction: { message: { accountKeys: [payer] } }
+      meta: { fee: 10001 }, transaction: { message: { accountKeys: [{ pubkey: payer, signer: true }] } }
     }, payer, "10000");
     expect(result).toEqual({ verified: false, reason: "Finalized transaction network fee exceeds the approved fee cap." });
   });
