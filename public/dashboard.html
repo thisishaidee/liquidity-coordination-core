@@ -925,11 +925,21 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       if (amount <= 0n || amount > 10000n) {
         throw new Error("The quoted fee exceeds NERITH's 0.01 USDC per-payment safety cap. No payment was signed.");
       }
-      pendingX402Demo = { body, requirement };
+      const connector = window.NERITHJUPITER;
+      if (!connector || typeof connector.prepareX402Payment !== "function") {
+        throw new Error("Connect Jupiter Mobile to the selected x402 fee wallet before preparing payment.");
+      }
+      if (connector.getAddress() !== body.paymentWalletAddress) {
+        throw new Error("Jupiter Mobile is connected to a different account. Reconnect using the selected x402 fee wallet.");
+      }
+      $("x402DemoStatus").textContent = "HTTP 402 received. Preparing the exact USDC transfer before the approval tap…";
+      const prepared = await connector.prepareX402Payment(requirement, body.paymentWalletAddress);
+      pendingX402Demo = { body, requirement, preparationId: prepared.preparationId };
+      const secondsLeft = Math.max(1, Math.floor((prepared.expiresAt - Date.now()) / 1000));
       $("x402DemoFee").textContent = "Payment required: " + formatAtoms(amount, 6, 6) + " USDC";
-      $("x402DemoFeeNote").textContent = "This pays for the quote API call only. It does not execute a swap or move SOL.";
+      $("x402DemoFeeNote").textContent = "Payment transaction prepared. Approve within about " + secondsLeft + " seconds. This pays for the quote API call only; it does not execute a swap or move SOL.";
       $("x402DemoPayment").hidden = false;
-      $("x402DemoStatus").textContent = "HTTP 402 received and the exact payment challenge was stored by NERITH. Review the fee, then choose whether to sign.";
+      $("x402DemoStatus").textContent = "HTTP 402 received, challenge stored, and payment transaction prebuilt. No USDC has been spent. Tap to approve when ready.";
     } catch (error) {
       $("x402DemoStatus").textContent = "Quote challenge failed: " + String(error.message || error);
     } finally {
