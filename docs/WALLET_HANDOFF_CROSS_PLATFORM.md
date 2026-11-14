@@ -2,7 +2,7 @@
 
 ## Status
 
-Architecture requirement only. The current branch has server-side wallet ownership verification and payment settlement endpoints, but it does not yet implement or verify transaction-signing handoff on Android, iOS, desktop or Telegram Mini Apps. Do not advertise any wallet/platform combination as supported until its full sign-and-return flow has passed a device test.
+The current branch implements Wallet Standard discovery for the dashboard's off-chain ownership challenge, with legacy injected-provider fallback. This is not transaction signing. The branch has server-side payment settlement endpoints, but it does not yet build an unsigned funding transaction or implement a complete sign-and-return transaction flow on Android, iOS, desktop or Telegram Mini Apps. Do not advertise any wallet/platform combination as transaction-signing supported until its full sign-and-return flow has passed a device test.
 
 ## Platform requirement
 
