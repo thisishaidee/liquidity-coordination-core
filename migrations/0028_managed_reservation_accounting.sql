@@ -55,8 +55,6 @@ BEGIN
             )
           )
           AND CAST(NEW.amount_atoms AS INTEGER) <= COALESCE(CAST(source_role.maximum_transfer_atoms AS INTEGER), 9223372036854775807)
-          AND CAST(b.confirmed_atoms AS INTEGER) - CAST(b.reserved_atoms AS INTEGER) - CAST(NEW.amount_atoms AS INTEGER)
-              >= CAST(source_role.minimum_remaining_atoms AS INTEGER)
       )
       AND (
         leg.kind = 'final_payment'
@@ -82,7 +80,33 @@ BEGIN
   SET reserved_atoms = CAST(reserved_atoms AS INTEGER) + CAST(NEW.amount_atoms AS INTEGER)
   WHERE id = NEW.wallet_balance_id
     AND CAST(confirmed_atoms AS INTEGER) - CAST(reserved_atoms AS INTEGER) >= CAST(NEW.amount_atoms AS INTEGER)
-    AND CAST(reserved_atoms AS INTEGER) <= 9223372036854775807 - CAST(NEW.amount_atoms AS INTEGER);
+    AND CAST(reserved_atoms AS INTEGER) <= 9223372036854775807 - CAST(NEW.amount_atoms AS INTEGER)
+    AND EXISTS (
+      SELECT 1
+      FROM wallets source_wallet
+      JOIN operation_funding_legs leg ON leg.id = NEW.funding_leg_id
+      JOIN wallet_role_assignments source_role
+        ON source_role.business_id = source_wallet.business_id
+        AND source_role.wallet_id = source_wallet.id
+        AND source_role.enabled = 1
+        AND source_role.role IN ('reserve', 'operating')
+      WHERE source_wallet.id = wallet_balances.wallet_id
+        AND leg.source_wallet_id = source_wallet.id
+        AND leg.kind IN ('reserve_replenishment', 'conversion')
+        AND CAST(NEW.amount_atoms AS INTEGER) <= COALESCE(CAST(source_role.maximum_transfer_atoms AS INTEGER), 9223372036854775807)
+        AND CAST(confirmed_atoms AS INTEGER) - CAST(reserved_atoms AS INTEGER) - CAST(NEW.amount_atoms AS INTEGER)
+            >= CAST(source_role.minimum_remaining_atoms AS INTEGER)
+        AND (
+          source_role.role = 'reserve'
+          OR NOT EXISTS (
+            SELECT 1 FROM wallet_role_assignments stricter_reserve
+            WHERE stricter_reserve.business_id = source_wallet.business_id
+              AND stricter_reserve.wallet_id = source_wallet.id
+              AND stricter_reserve.role = 'reserve'
+              AND stricter_reserve.enabled = 1
+          )
+        )
+    );
   SELECT CASE WHEN changes() <> 1
     THEN RAISE(ABORT, 'managed_reservation_insufficient_balance')
   END;
