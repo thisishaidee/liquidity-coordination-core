@@ -7,19 +7,22 @@ describe("finalized Solana network fee verification", () => {
   it("accepts the registered fee payer when the actual fee is within the hold", () => {
     expect(verifySolanaNetworkFee({
       meta: { fee: 5000 },
-      transaction: { message: { accountKeys: [{ pubkey: payer }] } }
+      transaction: { message: { accountKeys: [{ pubkey: payer, signer: true }] } }
     }, payer, "10000")).toEqual({ verified: true, actualFeeLamports: "5000" });
   });
 
-  it("accepts parsed and legacy string account-key representations", () => {
+  it("rejects account-key representations that do not prove the fee payer signed", () => {
     expect(verifySolanaNetworkFee({
-      meta: { fee: 0 }, transaction: { message: { accountKeys: [payer] } }
-    }, payer, "0")).toEqual({ verified: true, actualFeeLamports: "0" });
+      meta: { fee: 0 }, transaction: { message: { accountKeys: [{ pubkey: payer, signer: true }] } }
+    }, payer, "0")).toEqual({ verified: false, reason: "Finalized transaction fee payer is not the registered business wallet with a verified transaction signature." });
+    expect(verifySolanaNetworkFee({
+      meta: { fee: 0 }, transaction: { message: { accountKeys: [{ pubkey: payer, signer: false }] } }
+    }, payer, "0").verified).toBe(false);
   });
 
   it("rejects a different fee payer", () => {
     const result = verifySolanaNetworkFee({
-      meta: { fee: 5000 }, transaction: { message: { accountKeys: ["OtherPayer"] } }
+      meta: { fee: 5000 }, transaction: { message: { accountKeys: [{ pubkey: "OtherPayer", signer: true }] } }
     }, payer, "10000");
     expect(result.verified).toBe(false);
   });
