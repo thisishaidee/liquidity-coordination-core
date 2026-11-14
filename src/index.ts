@@ -6428,7 +6428,7 @@ export default {
           "cache-control": "no-store",
           "x-content-type-options": "nosniff",
           "referrer-policy": "no-referrer",
-          "content-security-policy": "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"
+          "content-security-policy": "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self' https://*.okx.com https://*.okx.pro wss://*.okx.com wss://*.okx.pro https://relay.walletconnect.com wss://relay.walletconnect.com https://rpc.walletconnect.com; base-uri 'none'; frame-ancestors 'none'"
         }
       });
     }
