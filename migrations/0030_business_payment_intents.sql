@@ -107,3 +107,50 @@ BEGIN
     WHERE p.business_id = NEW.business_id AND p.version = NEW.policy_version
   ) THEN RAISE(ABORT, 'business_payment_policy_version_changed') END;
 END;
+
+
+-- Re-check mutable policy constraints at the database boundary. The daily
+-- aggregate is serialized with intent insertion, preventing concurrent
+-- requests from both spending the same remaining daily allowance.
+CREATE TRIGGER IF NOT EXISTS trg_business_payment_intent_policy_guard
+BEFORE INSERT ON business_payment_intents
+BEGIN
+  SELECT CASE WHEN NEW.requested_atoms IS NULL
+    OR NEW.requested_atoms = ''
+    OR NEW.requested_atoms GLOB '*[^0-9]*'
+    OR substr(NEW.requested_atoms, 1, 1) = '0'
+    OR length(NEW.requested_atoms) > 19
+    OR (length(NEW.requested_atoms) = 19 AND NEW.requested_atoms > '9223372036854775807')
+    OR NEW.payment_atoms IS NULL
+    OR NEW.payment_atoms = ''
+    OR NEW.payment_atoms GLOB '*[^0-9]*'
+    OR substr(NEW.payment_atoms, 1, 1) = '0'
+    OR length(NEW.payment_atoms) > 19
+    OR (length(NEW.payment_atoms) = 19 AND NEW.payment_atoms > '9223372036854775807')
+    OR CAST(NEW.payment_atoms AS INTEGER) > CAST(NEW.requested_atoms AS INTEGER)
+    THEN RAISE(ABORT, 'business_payment_amount_invalid') END;
+
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM business_payment_policies p
+    WHERE p.business_id = NEW.business_id
+      AND EXISTS (SELECT 1 FROM json_each(p.allowed_mints) WHERE value = NEW.mint)
+      AND EXISTS (SELECT 1 FROM json_each(p.allowed_destinations) WHERE value = NEW.destination)
+      AND EXISTS (SELECT 1 FROM json_each(p.allowed_fee_payer_wallet_ids) WHERE value = NEW.fee_payer_wallet_id)
+      AND CAST(NEW.payment_atoms AS INTEGER) <= CAST(p.max_transaction_atoms AS INTEGER)
+      AND CAST(NEW.network_fee_lamports AS INTEGER) <= CAST(p.max_network_fee_lamports AS INTEGER)
+  ) THEN RAISE(ABORT, 'business_payment_policy_constraint_failed') END;
+
+  SELECT CASE WHEN (
+    SELECT COALESCE(SUM(CAST(payment_atoms AS INTEGER)), 0)
+    FROM business_payment_intents existing
+    WHERE existing.business_id = NEW.business_id
+      AND existing.created_at >= date('now')
+      AND existing.status IN (
+        'reserved', 'replenishing', 'awaiting_owner_approval',
+        'awaiting_signature', 'submitted', 'confirmed', 'ambiguous'
+      )
+  ) > (
+    SELECT CAST(p.max_daily_atoms AS INTEGER) - CAST(NEW.payment_atoms AS INTEGER)
+    FROM business_payment_policies p WHERE p.business_id = NEW.business_id
+  ) THEN RAISE(ABORT, 'business_payment_daily_limit_exceeded') END;
+END;
