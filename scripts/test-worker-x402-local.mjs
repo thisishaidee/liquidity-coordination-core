@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -78,7 +78,18 @@ async function waitForWorker(child, getLogs) {
 let worker;
 let workerLog = "";
 try {
-  runWrangler(["d1", "migrations", "apply", "liquidity-coordination", "--local"], "applyLocalD1Migrations");
+  const migrationFiles = (await readdir("migrations"))
+    .filter(file => /^\\d{4}_[a-z0-9_-]+\\.sql$/i.test(file))
+    .sort();
+  if (migrationFiles.length !== 24) {
+    throw new Error("Expected 24 ordered D1 migration files; found " + migrationFiles.length);
+  }
+  for (const file of migrationFiles) {
+    runWrangler(
+      ["d1", "execute", "liquidity-coordination", "--local", "--file", join("migrations", file)],
+      "applyLocalMigration:" + file
+    );
+  }
 
   worker = spawn("npx", ["wrangler", "dev", "--local", "--port", "8787", "--ip", "127.0.0.1"], {
     stdio: ["ignore", "pipe", "pipe"],
