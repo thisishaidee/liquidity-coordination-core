@@ -1871,7 +1871,7 @@ async function enforceWalletOwnershipRateLimit(env: Env, walletId: string, actio
 async function createWalletOwnershipChallenge(request: Request, env: Env): Promise<Response> {
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
   const body = await readJson(request);
-  if (!body || typeof body.businessId !== "string" || typeof body.walletId !== "string") return json({ error: "invalid_request" }, 400);
+  if (!body || typeof body.businessId !== "string" || typeof body.walletId !== "string" || body.businessId.length > 128 || body.walletId.length > 128) return json({ error: "invalid_request" }, 400);
   const origin = request.headers.get("origin");
   if (!origin || !isAllowedAdminOrigin(origin, new URL(request.url).origin, env.ADMIN_ALLOWED_ORIGINS)) return json({ error: "origin_not_allowed" }, 403);
   const wallet = await env.DB.prepare("SELECT id, address, network FROM wallets WHERE id = ? AND business_id = ? AND scope = 'business' AND status = 'active' LIMIT 1")
@@ -1914,7 +1914,7 @@ async function verifyWalletOwnership(request: Request, env: Env): Promise<Respon
   const body = await readJson(request);
   if (!body || typeof body.businessId !== "string" || typeof body.walletId !== "string" ||
       typeof body.challengeId !== "string" || typeof body.signature !== "string" ||
-      body.challengeId.length > 64 || body.signature.length > 256) return json({ error: "invalid_request" }, 400);
+      body.businessId.length > 128 || body.walletId.length > 128 || body.challengeId.length > 64 || body.signature.length > 256) return json({ error: "invalid_request" }, 400);
   const origin = request.headers.get("origin");
   if (!origin || !isAllowedAdminOrigin(origin, new URL(request.url).origin, env.ADMIN_ALLOWED_ORIGINS)) return json({ error: "origin_not_allowed" }, 403);
   const rateLimit = await enforceWalletOwnershipRateLimit(env, body.walletId, "verify", 10);
