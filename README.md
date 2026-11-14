@@ -35,7 +35,7 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 | POST | `/v1/admin/agents/:id/rotate-key` | Rotate an agent API key immediately |
 | POST | `/v1/admin/agents/:id/disable` | Disable an agent credential |
 | POST | `/v1/admin/wallets/:id/disable` | Revoke a wallet after its active reservations clear |
-| POST | `/v1/admin/wallets` | Register an authorized Solana wallet |
+| POST | `/v1/admin/wallets` | Register an authorized Solana wallet |\n| GET | `/v1/admin/wallet-roles?businessId=...` | List business-scoped wallet roles |\n| POST | `/v1/admin/wallet-roles` | Assign or update a business wallet role and its reserve limits |
 | POST | `/v1/admin/balances` | Record a controlled manual balance snapshot |
 | POST | `/v1/admin/balances/sync` | Refresh registered wallet balances from Solana RPC |
 | POST | `/v1/admin/reservations/expire` | Platform-token-only manual sweep of expired reservations |
