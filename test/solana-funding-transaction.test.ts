@@ -80,7 +80,7 @@ async function mockConnection(options: {
   const connection = {
     getAccountInfo,
     getLatestBlockhash: vi.fn(async () => ({ blockhash: BLOCKHASH, lastValidBlockHeight: 99 })),
-    getFeeForMessage: vi.fn(async () => options.fee === undefined ? 5_000 : options.fee),
+    getFeeForMessage: vi.fn(async () => ({ value: options.fee === undefined ? 5_000 : options.fee })),
     getBalance: vi.fn(async () => options.feePayerBalance ?? 1_000_000)
   } as unknown as Connection;
   return { connection, sourceAta, destinationAta, getAccountInfo };
