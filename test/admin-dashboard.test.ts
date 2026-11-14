@@ -788,7 +788,12 @@ describe("browser page script syntax", () => {
          expect(html).toContain('provider.signMessage(new TextEncoder().encode(message),"utf8")');
          expect(html).toContain("The connected OKX account does not match this registered wallet.");
          expect(html).toContain("verifyWalletOwnershipWithWallet(pending.walletId,pending.address,pending.button,wallet)");
-        expect(html).toContain("if(window.NERITHJUPITER.connected&&window.NERITHJUPITER.getAddress?.())return window.NERITHJUPITER.getAddress();");
+        expect(html).toContain('async function connectSolanaWallet(preferredWallet="",expectedAddress="")');
+        expect(html).toContain("return await window.NERITHJUPITER.connect(expectedAddress);");
+        expect(html).toContain('connectSolanaWallet(wallet==="browser"?"":wallet,pending.address)');
+        expect(html).toContain("await adapter.disconnect();");
+        expect(html).toContain("Jupiter Mobile reconnected as ");
+
         expect(html).toContain("const existingWallet=state.wallets.find(wallet=>");
         expect(html).toContain("Reusing its existing record; no duplicate will be created.");
         expect(html).toContain("Use a separate Solana address for ");
