@@ -1788,6 +1788,9 @@ async function setBusinessWalletRole(request: Request, env: Env): Promise<Respon
     typeof minimumRemainingAtoms !== "string" || !atomsPattern.test(minimumRemainingAtoms) ||
     (maximumTransferAtoms !== null && (typeof maximumTransferAtoms !== "string" || !atomsPattern.test(maximumTransferAtoms) || maximumTransferAtoms === "0"))
   ) return json({ error: "invalid_request", message: "Provide a valid business wallet, role, enabled flag and integer token-atom limits." }, 400);
+  if (role !== "reserve" && (minimumRemainingAtoms !== "0" || maximumTransferAtoms !== null)) {
+    return json({ error: "reserve_limits_only_apply_to_reserve_wallets" }, 400);
+  }
 
   const wallet = await env.DB.prepare(`
     SELECT id, purpose FROM wallets
@@ -1796,6 +1799,15 @@ async function setBusinessWalletRole(request: Request, env: Env): Promise<Respon
     LIMIT 1
   `).bind(walletId, businessId).first<{ id: string; purpose: string }>();
   if (!wallet) return json({ error: "active_business_wallet_not_found" }, 404);
+
+  if (role === "payment" && enabled) {
+    const existingPayment = await env.DB.prepare(
+      "SELECT wallet_id FROM wallet_role_assignments WHERE business_id = ? AND role = 'payment' AND enabled = 1 LIMIT 1"
+    ).bind(businessId).first<{ wallet_id: string }>();
+    if (existingPayment && existingPayment.wallet_id !== walletId) {
+      return json({ error: "payment_wallet_already_assigned", message: "Disable the current payment-wallet assignment before selecting another." }, 409);
+    }
+  }
 
   // Keep the current x402 integration contract intact while legacy purpose is in use.
   if ((role === "api_payment") !== (wallet.purpose === "api_payment")) {
@@ -1816,7 +1828,7 @@ async function setBusinessWalletRole(request: Request, env: Env): Promise<Respon
       minimumRemainingAtoms, maximumTransferAtoms).run();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("idx_wallet_roles_one_payment_per_business")) {
+    if (message.includes("idx_wallet_roles_one_payment_per_business") || message.includes("UNIQUE constraint failed: wallet_role_assignments.business_id")) {
       return json({ error: "payment_wallet_already_assigned", message: "Disable the current payment-wallet assignment before selecting another." }, 409);
     }
     if (message.includes("api_payment_role_must_be_exclusive")) return json({ error: "api_payment_role_must_be_exclusive" }, 409);
