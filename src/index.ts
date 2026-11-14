@@ -21,7 +21,8 @@ import { fetchFinalizedSolanaTransaction } from "./solana-finalized-transaction"
 import { verifySolanaTokenTransfer, type SolanaPaymentTransaction } from "./payment-settlement";
 import { verifySolanaNetworkFee } from "./solana-network-fee";
 import { FINALIZED_TRANSACTION_READ_OPTIONS } from "./solana-rpc-options";
-import { buildUsdcFundingTransaction } from "./solana-funding-transaction";
+import { buildUsdcFundingTransaction, verifySignedUsdcFundingTransaction } from "./solana-funding-transaction";
+import { Connection } from "@solana/web3.js";
 import { fetchFinalizedSplTokenBalance } from "./solana-finalized-balance";
 
 interface Env {
@@ -2784,6 +2785,151 @@ async function submitFundingLegTransaction(
   }
   return json({ intentId, fundingLegId: legId, status: "submitted", transactionSignature: body.signature,
     note: "Signature recorded. NERITH has not yet verified finality or payment settlement." }, 202);
+}
+
+async function submitSignedFundingLegTransaction(
+  request: Request, env: Env, intentId: string, legId: string
+): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const businessId = new URL(request.url).searchParams.get("businessId") ?? "";
+  if (!businessId || !env.SOLANA_RPC_URL) return json({ error: "business_id_or_solana_rpc_required" }, 400);
+  const body = await readJson(request);
+  if (!body || typeof body.transactionBase64 !== "string" ||
+      body.transactionBase64.length > 22_000 ||
+      !/^[A-Za-z0-9+/]+={0,2}$/.test(body.transactionBase64) ||
+      typeof body.messageSha256 !== "string" || !/^[a-f0-9]{64}$/.test(body.messageSha256)) {
+    return json({ error: "invalid_signed_transaction_payload" }, 400);
+  }
+  let transactionBytes: Uint8Array;
+  try {
+    const binary = atob(body.transactionBase64);
+    if (binary.length < 100 || binary.length > 16_384) return json({ error: "signed_transaction_size_invalid" }, 400);
+    transactionBytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) transactionBytes[index] = binary.charCodeAt(index);
+  } catch {
+    return json({ error: "signed_transaction_base64_invalid" }, 400);
+  }
+
+  const row = await getFundingLegSettlementRow(env, intentId, legId, businessId);
+  if (!row) return json({ error: "funding_leg_not_found" }, 404);
+  if (row.intent_action === "conversion_required" || row.leg_kind === "conversion") {
+    return json({ error: "conversion_settlement_not_supported" }, 409);
+  }
+  if (!row.fee_payer_address || !row.fee_maximum_fee_lamports ||
+      !row.source_address || !row.asset_mint || !/^[1-9][0-9]{0,18}$/.test(row.amount_atoms)) {
+    return json({ error: "funding_leg_transaction_identity_invalid" }, 409);
+  }
+  const destinationOwner = row.leg_kind === "reserve_replenishment"
+    ? row.destination_wallet_address : row.destination_address;
+  if (!destinationOwner) return json({ error: "funding_leg_destination_invalid" }, 409);
+
+  let verified;
+  try {
+    verified = await verifySignedUsdcFundingTransaction(transactionBytes, {
+      mintAddress: row.asset_mint,
+      sourceWalletAddress: row.source_address,
+      destinationOwnerAddress: destinationOwner,
+      feePayerAddress: row.fee_payer_address,
+      amountAtoms: row.amount_atoms
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Signed transaction verification failed.";
+    return json({ error: "signed_funding_transaction_invalid", reason }, 409);
+  }
+  if (verified.messageSha256 !== body.messageSha256) {
+    return json({ error: "signed_transaction_message_changed" }, 409);
+  }
+  if (row.transaction_hash && row.transaction_hash !== verified.signature) {
+    return json({ error: "funding_leg_signature_already_bound" }, 409);
+  }
+  if (row.leg_status === "confirmed" && row.transaction_hash === verified.signature) {
+    return json({ intentId, fundingLegId: legId, status: "confirmed", confirmed: true, reused: true });
+  }
+  if (row.leg_status === "ambiguous") {
+    return json({ intentId, fundingLegId: legId, status: "ambiguous", confirmed: false,
+      note: "This funding leg is held for owner review and cannot be rebroadcast automatically." }, 409);
+  }
+  const isRetry = row.leg_status === "submitted" && row.transaction_hash === verified.signature;
+  if (row.transaction_hash && !isRetry) {
+    return json({ error: "funding_leg_already_submitted", status: row.leg_status }, 409);
+  }
+
+  if (!isRetry) {
+    const preflight = await prepareFundingLegTransaction(request, env, intentId, legId);
+    if (!preflight.ok) return preflight;
+  } else if (row.fee_ledger_status !== "submitted" || !row.fee_ledger_id) {
+    return json({ error: "submitted_fee_ledger_invalid" }, 409);
+  }
+
+  const connection = new Connection(env.SOLANA_RPC_URL, "finalized");
+  let blockhashValid: boolean;
+  let estimatedFee: number | null;
+  try {
+    const validity = await connection.isBlockhashValid(verified.recentBlockhash, "finalized");
+    blockhashValid = validity.value;
+    estimatedFee = await verified.transaction.getEstimatedFee(connection);
+  } catch {
+    return json({ error: "solana_rpc_unavailable_before_broadcast" }, 503);
+  }
+  if (!blockhashValid) {
+    return json({ error: "signed_transaction_blockhash_expired",
+      note: "No transaction was broadcast. The existing reservation remains held; prepare a fresh transaction through the owner recovery flow." }, 409);
+  }
+  if (estimatedFee === null || !Number.isSafeInteger(estimatedFee) || estimatedFee < 0 ||
+      BigInt(estimatedFee) > BigInt(row.fee_maximum_fee_lamports)) {
+    return json({ error: "signed_transaction_fee_exceeds_approved_cap" }, 409);
+  }
+
+  if (isRetry) {
+    try {
+      const status = await connection.getSignatureStatuses([verified.signature]);
+      const observed = status.value[0];
+      if (observed?.confirmationStatus === "finalized") {
+        return reconcileFundingLegTransaction(request, env, intentId, legId);
+      }
+      if (observed) {
+        return json({ intentId, fundingLegId: legId, status: "submitted", pending: true,
+          transactionSignature: verified.signature,
+          note: "The transaction is already visible on Solana and is awaiting finality." }, 202);
+      }
+    } catch {
+      return json({ intentId, fundingLegId: legId, status: "submitted", pending: true,
+        transactionSignature: verified.signature,
+        note: "Signature lookup failed. The existing transaction remains recorded; retry this same signed payload." }, 503);
+    }
+  } else {
+    const headers = new Headers(request.headers);
+    headers.delete("content-length");
+    headers.set("content-type", "application/json");
+    const recordRequest = new Request(request.url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ signature: verified.signature })
+    });
+    const recorded = await submitFundingLegTransaction(recordRequest, env, intentId, legId);
+    if (!recorded.ok) return recorded;
+  }
+
+  try {
+    const broadcastSignature = await connection.sendRawTransaction(verified.transactionBytes, {
+      skipPreflight: false,
+      preflightCommitment: "confirmed"
+    });
+    if (broadcastSignature !== verified.signature) {
+      return json({ intentId, fundingLegId: legId, status: "submitted",
+        transactionSignature: verified.signature, error: "broadcast_signature_mismatch",
+        note: "The signature is already recorded and reservations remain held for reconciliation." }, 502);
+    }
+    return json({ intentId, fundingLegId: legId, status: "submitted",
+      transactionSignature: verified.signature, broadcast: true,
+      note: "The signed transaction was verified and broadcast. Finalized settlement is still pending." }, 202);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Solana broadcast outcome is uncertain.";
+    return json({ intentId, fundingLegId: legId, status: "submitted",
+      transactionSignature: verified.signature, broadcast: false, outcome: "unknown",
+      retryWithSameSignedTransaction: true, reason,
+      note: "The signature was recorded before broadcast. Do not create a new transaction; retry this exact signed payload or reconcile the recorded signature." }, 502);
+  }
 }
 
 async function reconcileFundingLegTransaction(
