@@ -82,7 +82,7 @@ try {
   const migrationFiles = (await readdir("migrations"))
     .filter(file => /^\d{4}_[a-z0-9_-]+\.sql$/i.test(file))
     .sort();
-  if (migrationFiles.length !== 31) {
+  if (migrationFiles.length !== 32) {
     throw new Error("Expected 32 ordered D1 migration files; found " + migrationFiles.length);
   }
   const migrationSql = (await Promise.all(
