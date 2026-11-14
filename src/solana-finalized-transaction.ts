@@ -1,3 +1,5 @@
+import { FINALIZED_TRANSACTION_READ_OPTIONS } from "./solana-rpc-options";
+
 export type SolanaRpcSignatureStatus = {
   confirmationStatus?: "processed" | "confirmed" | "finalized" | null;
   confirmations?: number | null;
@@ -63,11 +65,7 @@ export async function fetchFinalizedSolanaTransaction(
   const transaction = await rpc<Record<string, unknown> | null>(
     endpoint,
     "getTransaction",
-    [signature, {
-      commitment: "finalized",
-      encoding: "jsonParsed",
-      maxSupportedTransactionVersion: 1
-    }],
+    [signature, FINALIZED_TRANSACTION_READ_OPTIONS],
     fetcher
   );
   if (!transaction) {
