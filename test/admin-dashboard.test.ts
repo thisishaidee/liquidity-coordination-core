@@ -717,6 +717,10 @@ describe("browser page script syntax", () => {
     const jupiterJs = await jupiterResponse.text();
     expect(jupiterJs).toContain("NERITHJUPITER");
     expect(jupiterJs).toContain("13a7a3c0065f86dab70a544edc8ed07d");
+    expect(jupiterJs).toContain("createX402PaymentHeader");
+    expect(jupiterJs).toContain("createTransferCheckedInstruction");
+    expect(jupiterJs).toContain("The active Jupiter Mobile session does not match the registered x402 payment wallet.");
+    expect(jupiterJs).not.toContain("createAssociatedTokenAccountIdempotentInstruction");
     expect(() => new Function(jupiterJs)).not.toThrow();
     for (const path of ["/", "/dashboard", "/control"]) {
       const response = await worker.fetch(new Request("https://nerith.test" + path), env);
@@ -757,9 +761,6 @@ describe("browser page script syntax", () => {
         expect(html).toContain('/v1/admin/x402/demo/quote');
         expect(html).toContain('X-PAYMENT');
         expect(html).toContain('no swap is executed');
-        expect(html).toContain("createTransferCheckedInstruction");
-        expect(html).toContain("The active Jupiter Mobile session does not match the registered x402 payment wallet.");
-        expect(html).not.toContain("createAssociatedTokenAccountIdempotentInstruction");
         expect(html).toContain("prepareWalletOwnershipChallenge");
         expect(html).toContain("walletOwnershipChallenges.get(walletId)");
         expect(html).toContain('button.textContent="Preparing verification…"');
