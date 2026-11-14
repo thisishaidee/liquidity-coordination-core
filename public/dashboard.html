@@ -122,9 +122,9 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
           <div class="panel-head"><div><div class="panel-title" id="x402DemoTitle">Swap.io x402 proof run</div><div class="panel-subtitle">One real paid quote request · no swap is executed</div></div></div>
           <p class="wallet-role-help">NERITH requests a SOL-to-USDC quote. Swap.io returns the exact USDC fee in a 402 challenge. Your dedicated API fee wallet signs that micropayment; the quote and Solscan receipt are returned after settlement.</p>
           <div class="grid content-grid">
-            <label>Operating wallet<select id="x402OperatingWallet" class="input"></select></label>
-            <label>x402 fee wallet<select id="x402PaymentWallet" class="input"></select></label>
-            <label>Quote size (SOL)<input id="x402SourceAmount" class="input" inputmode="decimal" value="0.1" /></label>
+            <label class="wallet-purpose-label">Operating wallet<select id="x402OperatingWallet" class="input"></select></label>
+            <label class="wallet-purpose-label">x402 fee wallet<select id="x402PaymentWallet" class="input"></select></label>
+            <label class="wallet-purpose-label">Quote size (SOL)<input id="x402SourceAmount" class="input" inputmode="decimal" value="0.1" /></label>
           </div>
           <div class="actions" style="margin-top:12px"><button type="button" class="btn" id="x402SyncBalances">Sync on-chain balances</button><button type="button" class="btn primary" id="x402GetQuote" disabled>Request 402 quote</button></div>
           <div id="x402DemoStatus" class="wallet-role-help" role="status" aria-live="polite" style="margin-top:10px">Verify an operating wallet and register a separate x402 fee reserve wallet to begin.</div>
@@ -950,7 +950,21 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       const paymentHeader = await connector.createX402PaymentHeader(pending.requirement, paymentAddress);
       $("x402DemoStatus").textContent = "Payment signed. Sending the paid request to Swap.io through NERITH…";
       const result = await requestX402Demo(pending.body, paymentHeader);
+      if (result.status === 202 || result.data?.error === "x402_settlement_pending") {
+        pendingX402Demo = null;
+        $("x402DemoPayment").hidden = true;
+        $("x402DemoStatus").textContent = "The payment was submitted, but Solana settlement is still being verified. Do not retry or sign another payment. Reservation: " + String(result.data.paymentReservationId || "pending");
+        return;
+      }
+      if (result.status === 502 || result.status === 504) {
+        pendingX402Demo = null;
+        $("x402DemoPayment").hidden = true;
+        $("x402DemoStatus").textContent = "The payment result is ambiguous or needs reconciliation. Do not retry. Check the x402 reservation before taking another action.";
+        return;
+      }
       if (result.status !== 200 || !Array.isArray(result.data.quotes)) {
+        pendingX402Demo = null;
+        $("x402DemoPayment").hidden = true;
         throw new Error(result.data.message || result.data.error || ("Paid quote request returned HTTP " + result.status));
       }
       if (!result.receipt) throw new Error("Swap.io returned quotes without a settlement receipt. NERITH will not mark the call as paid.");
