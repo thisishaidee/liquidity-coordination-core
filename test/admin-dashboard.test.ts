@@ -712,6 +712,12 @@ describe("browser page script syntax", () => {
     const connectorJs = await connectorResponse.text();
     expect(connectorJs).toContain("NERITHOKX");
     expect(() => new Function(connectorJs)).not.toThrow();
+    const jupiterResponse = await worker.fetch(new Request("https://nerith.test/assets/jupiter-mobile-connector.js"), env);
+    expect(jupiterResponse.status).toBe(200);
+    const jupiterJs = await jupiterResponse.text();
+    expect(jupiterJs).toContain("NERITHJUPITER");
+    expect(jupiterJs).toContain("13a7a3c0065f86dab70a544edc8ed07d");
+    expect(() => new Function(jupiterJs)).not.toThrow();
     for (const path of ["/", "/dashboard", "/control"]) {
       const response = await worker.fetch(new Request("https://nerith.test" + path), env);
       const html = await response.text();
@@ -738,9 +744,11 @@ describe("browser page script syntax", () => {
         expect(html).toContain("catch(error) { state.loadErrors[label]=true;failed.push({label,error}); }");
         expect(html).toContain('id="walletChooser"');
         for (const wallet of ["okx", "phantom", "solflare", "backpack", "jupiter", "browser"]) expect(html).toContain('data-wallet-choice="' + wallet + '"');
-        expect(html).toContain("jup.ag/wallet");
-        expect(html).toContain('[...standardSolanaWallets].some(item=>/jupiter/i.test(item.name||""))');
-        expect(html).toContain('[...standardSolanaWallets].find(item=>/jupiter/i.test(item.name||""))');
+        expect(html).not.toContain("jup.ag/wallet");
+        expect(html).toContain('id="jupiterWalletMount"');
+        expect(html).toContain('src="/assets/jupiter-mobile-connector.js"');
+        expect(html).toContain("window.NERITHJUPITER?.connect");
+        expect(html).toContain("window.NERITHJUPITER?.signMessage");
         expect(html).toContain("phantom.app/ul/browse/");
         expect(html).toContain("solflare.com/ul/v1/browse/");
         expect(html).toContain("backpack.app/ul/v1/browse/");
