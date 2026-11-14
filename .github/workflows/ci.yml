@@ -31,6 +31,27 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  hermes-unpaid-402:
+    # External network probe only on pull requests. No Cloudflare or wallet secrets.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Capture an unpaid Swap.io Hermes quote challenge
+        run: node scripts/test-hermes-402.mjs
+      - name: Upload raw Hermes response and validation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-unpaid-402-evidence
+          path: artifacts/hermes-402/
+          if-no-files-found: warn
+          retention-days: 14
+
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: verify
