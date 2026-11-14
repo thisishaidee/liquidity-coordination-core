@@ -355,8 +355,9 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     for(const wallet of standardSolanaWallets) {
       const account=(wallet.accounts||[]).find(item=>item.address===address&&supportsSolanaMainnet(item.chains));
       const signFeature=wallet.features?.["solana:signTransaction"];
-      const versions=signFeature?.supportedTransactionVersions||[];
-      if(account&&typeof signFeature?.signTransaction==="function"&&versions.includes("legacy")) {
+      const versions=signFeature?.supportedTransactionVersions;
+      const supportsLegacy=Array.isArray(versions)?versions.includes("legacy"):Boolean(versions?.has?.("legacy"));
+      if(account&&typeof signFeature?.signTransaction==="function"&&supportsLegacy) {
         return {kind:"standard",label:wallet.name||"Solana wallet",wallet,account};
       }
     }
