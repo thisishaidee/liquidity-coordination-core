@@ -198,6 +198,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   if(window.NERITHOKX?.initialize)window.NERITHOKX.initialize().catch(()=>{});
   const state = { businessId: "", role: "", workspace: null, agents: [], wallets: [], walletRoles: [], telegram: [], forecast: null, operations: [], paymentIntents: [], nextCursor: null, operationStatus: "", loadErrors: {} };
   let pendingWalletVerification=null;
+  let pendingExistingWalletVerification=null;
   let pendingX402Demo=null;
   const walletOwnershipChallenges=new Map();
   const parseDecimalAtoms = (value, decimals=6) => {
@@ -1124,6 +1125,48 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       window.location.assign(links[wallet]);
       return;
     }
+    if(pendingExistingWalletVerification){
+      const pending=pendingExistingWalletVerification;
+      if(wallet==="phantom"||wallet==="solflare"||wallet==="backpack"){
+        pendingExistingWalletVerification=null;
+        $("walletChooser").hidden=true;
+        $("connectBusinessWallet").setAttribute("aria-expanded","false");
+        $("walletChooserHelp").textContent="Opening "+wallet.charAt(0).toUpperCase()+wallet.slice(1)+". Return to this dashboard inside that wallet and retry ownership verification.";
+        const target=encodeURIComponent(currentUrl);
+        const ref=encodeURIComponent(origin);
+        const links={
+          phantom:"https://phantom.app/ul/browse/"+target+"?ref="+ref,
+          solflare:"https://solflare.com/ul/v1/browse/"+target+"?ref="+ref,
+          backpack:"https://backpack.app/ul/v1/browse/"+target+"?ref="+ref
+        };
+        window.location.assign(links[wallet]);
+        return;
+      }
+      $("walletChooser").hidden=true;
+      $("connectBusinessWallet").setAttribute("aria-expanded","false");
+      pending.button.disabled=true;
+      pending.button.textContent="Opening wallet…";
+      if(pending.help)pending.help.textContent="Connecting to "+(wallet==="browser"?"the wallet in this browser":wallet==="jupiter"?"Jupiter Mobile":"OKX Wallet")+" for this exact registered address…";
+      try{
+        const connectedAddress=await connectSolanaWallet(wallet==="browser"?"":wallet);
+        if(connectedAddress!==pending.address){
+          throw new Error("The connected wallet is "+connectedAddress+", but this registered wallet is "+pending.address+". Switch to the wallet that owns this exact address and retry.");
+        }
+        await prepareWalletOwnershipChallenge(pending.walletId,pending.address);
+        if(pending.help)pending.help.textContent="Wallet connected. Approve the ownership message in the wallet app. No transaction or network fee is involved.";
+        await verifyWalletOwnershipWithWallet(pending.walletId,pending.address,pending.button);
+        if(pending.help)pending.help.textContent="Address control verified. You can now assign a business role below.";
+      }catch(error){
+        const message=String(error.message||error);
+        pending.button.textContent="Retry ownership check";
+        if(pending.help)pending.help.textContent="Verification did not complete: "+message;
+        showError("Wallet ownership verification failed: "+message);
+      }finally{
+        pending.button.disabled=false;
+        pendingExistingWalletVerification=null;
+      }
+      return;
+    }
     if(wallet==="jupiter"){
       $("walletChooser").hidden=true;
       $("connectBusinessWallet").setAttribute("aria-expanded","false");
@@ -1147,24 +1190,12 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     if(!["owner","admin"].includes(state.role)){showError("Only workspace owners and admins can verify wallet ownership.");return;}
     const card=button.closest(".wallet-card");
     const help=card?.querySelector(".wallet-role-help");
-    const original=button.textContent;
-    button.disabled=true;button.textContent="Opening wallet…";
-    if(help)help.textContent="Connect the wallet that owns this exact address, then approve the ownership message in the wallet app. No funds will move.";
-    try{
-      const connectedAddress=await connectSolanaWallet();
-      if(connectedAddress!==button.dataset.address){
-        throw new Error("The connected wallet is "+connectedAddress+", but this business wallet is "+button.dataset.address+". Switch to the wallet that owns the registered address and retry.");
-      }
-      if(help)help.textContent="Wallet connected. Approve the ownership message in the wallet app. This is a message signature only; no transaction or network fee is involved.";
-      await verifyWalletOwnershipWithWallet(button.dataset.verifyWallet,button.dataset.address,button);
-      if(help)help.textContent="Address control verified. You can now assign a business role below.";
-    }
-    catch(error){
-      const message=String(error.message||error);
-      button.textContent="Retry ownership check";
-      if(help)help.textContent="Verification did not complete: "+message+". If no wallet opened, open this dashboard inside the wallet app that owns this address, then retry.";
-      showError("Wallet ownership verification failed: "+message);
-    }finally{if(button.isConnected){button.disabled=false;if(button.textContent==="Opening wallet…")button.textContent=original;}}
+    pendingExistingWalletVerification={button,walletId:button.dataset.verifyWallet,address:button.dataset.address,help};
+    $("walletChooser").hidden=false;
+    $("connectBusinessWallet").setAttribute("aria-expanded","true");
+    $("walletChooserHelp").textContent="Choose the wallet that owns this exact address. Select Jupiter Mobile to connect through its secure wallet handoff, then approve the ownership message.";
+    if(help)help.textContent="Choose the wallet that controls this exact address. Jupiter Mobile is supported; no transaction or network fee is involved.";
+    return;
   });
   document.addEventListener("click",async event=>{
     const button=event.target.closest("[data-disable-wallet-role]");
