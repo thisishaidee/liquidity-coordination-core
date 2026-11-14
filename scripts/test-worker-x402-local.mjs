@@ -404,6 +404,46 @@ try {
   const finalPaymentReleased = queryD1(`SELECT reserved_atoms FROM wallet_balances WHERE id = '${managedPaymentBalanceId}'`, "verifyFinalPaymentReservationRelease");
   if (finalPaymentReleased[0]?.reserved_atoms !== "0") throw new Error("Final payment reservation did not release its balance hold.");
 
+  const businessPaymentIntentId = "bpi_" + randomBytes(16).toString("hex");
+  const duplicatePaymentIntentId = "bpi_" + randomBytes(16).toString("hex");
+  const duplicatePaymentOperationId = "op_" + randomBytes(16).toString("hex");
+  queryD1(`INSERT INTO business_payment_policies
+    (business_id, allowed_mints, allowed_destinations, allowed_conversion_mints, max_transaction_atoms, max_network_fee_lamports, allowed_fee_payer_wallet_ids, max_daily_atoms, max_balance_age_seconds, max_intent_lifetime_seconds, max_slippage_bps, allow_conversion, allow_partial_payment)
+    VALUES ('${businessId}', json_array('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'), json_array('7dN4k3Jm2pQx8sW6vR1aT5uH9cF2eG4iL7oP6bK8mZq'), json_array(), '100000000', '5000', json_array('${managedPaymentWalletId}'), '500000000', 300, 900, 50, 0, 0)`, "insertBusinessPaymentPolicy");
+  queryD1(`INSERT INTO business_payment_intents
+    (id, business_id, operation_id, idempotency_key, destination, mint, requested_atoms, payment_atoms, fee_payer_wallet_id, network_fee_lamports, action, status, policy_version, policy_snapshot, expires_at)
+    VALUES ('${businessPaymentIntentId}', '${businessId}', '${managedGateOperationId}', 'business-idem-12345678', '7dN4k3Jm2pQx8sW6vR1aT5uH9cF2eG4iL7oP6bK8mZq', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '1000000', '1000000', '${managedPaymentWalletId}', '5000', 'replenish_then_pay', 'policy_checked', 1, '{}', datetime('now', '+15 minutes'))`, "insertBusinessPaymentIntent");
+  queryD1(`INSERT INTO operations
+    (id, business_id, agent_id, task_id, network, token, amount_atoms, purpose, status, action, available_atoms, shortfall_atoms)
+    VALUES ('${duplicatePaymentOperationId}', '${businessId}', '${agentId}', 'duplicate-business-payment-intent', 'solana', 'USDC', '1000000', 'payment', 'policy_checked', 'direct_payment', '1000000', '0')`, "insertDuplicateIntentOperation");
+  let duplicateBusinessIdempotencyRejected = false;
+  try {
+    queryD1(`INSERT INTO business_payment_intents
+      (id, business_id, operation_id, idempotency_key, destination, mint, requested_atoms, payment_atoms, fee_payer_wallet_id, network_fee_lamports, action, status, policy_version, policy_snapshot, expires_at)
+      VALUES ('${duplicatePaymentIntentId}', '${businessId}', '${duplicatePaymentOperationId}', 'business-idem-12345678', '7dN4k3Jm2pQx8sW6vR1aT5uH9cF2eG4iL7oP6bK8mZq', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '1000000', '1000000', '${managedPaymentWalletId}', '5000', 'direct_payment', 'policy_checked', 1, '{}', datetime('now', '+15 minutes'))`, "rejectDuplicateBusinessPaymentIdempotency");
+  } catch (error) {
+    duplicateBusinessIdempotencyRejected = String(error).includes("UNIQUE constraint failed: business_payment_intents.business_id, business_payment_intents.idempotency_key");
+    if (!duplicateBusinessIdempotencyRejected) throw error;
+  }
+  queryD1(`UPDATE business_payment_intents SET status = 'reserved' WHERE id = '${businessPaymentIntentId}'`, "advanceBusinessPaymentIntent");
+  let invalidPaymentIntentTransitionRejected = false;
+  try {
+    queryD1(`UPDATE business_payment_intents SET status = 'policy_checked' WHERE id = '${businessPaymentIntentId}'`, "rejectBusinessPaymentIntentRegression");
+  } catch (error) {
+    invalidPaymentIntentTransitionRejected = String(error).includes("invalid_business_payment_intent_transition");
+    if (!invalidPaymentIntentTransitionRejected) throw error;
+  }
+  let businessPaymentIntentIdentityImmutable = false;
+  try {
+    queryD1(`UPDATE business_payment_intents SET destination = 'another-destination' WHERE id = '${businessPaymentIntentId}'`, "rejectBusinessPaymentIntentIdentityMutation");
+  } catch (error) {
+    businessPaymentIntentIdentityImmutable = String(error).includes("business_payment_intent_identity_immutable");
+    if (!businessPaymentIntentIdentityImmutable) throw error;
+  }
+  const businessPaymentIntentCount = queryD1(`SELECT COUNT(*) AS count FROM business_payment_intents WHERE business_id = '${businessId}' AND idempotency_key = 'business-idem-12345678'`, "verifyBusinessPaymentIdempotency");
+  if (!duplicateBusinessIdempotencyRejected || !invalidPaymentIntentTransitionRejected || !businessPaymentIntentIdentityImmutable || Number(businessPaymentIntentCount[0]?.count) !== 1) {
+    throw new Error("Business payment intent uniqueness or immutable state guards failed.");
+  }
   output.steps.managedReservationBehavior = {
     initialReservationAtoms: reservedAfterInsert[0].reserved_atoms,
     rejectedOverReservation: insufficientManagedReservationRejected,
@@ -421,7 +461,10 @@ try {
     prematureFinalPaymentReservationRejected,
     finalPaymentReservationRequiresReservedState,
     finalPaymentAllowedAfterFundingConfirmed: finalPaymentLegState[0]?.status === "reserved",
-    finalPaymentReservationReleased: finalPaymentReleased[0]?.reserved_atoms === "0"
+    finalPaymentReservationReleased: finalPaymentReleased[0]?.reserved_atoms === "0",
+    duplicateBusinessIdempotencyRejected,
+    invalidPaymentIntentTransitionRejected,
+    businessPaymentIntentIdentityImmutable
   };
 
 
