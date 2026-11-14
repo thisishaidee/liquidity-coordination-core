@@ -26,6 +26,7 @@ await mkdir(evidenceDir, { recursive: true });
 function runWrangler(args, label) {
   const result = spawnSync("npx", ["wrangler", ...args], {
     encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
     timeout: 120_000,
     env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" }
   });
