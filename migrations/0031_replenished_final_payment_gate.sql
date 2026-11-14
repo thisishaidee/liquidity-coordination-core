@@ -30,3 +30,11 @@ WHEN NEW.reservation_source = 'managed'
 BEGIN
   SELECT RAISE(ABORT, 'final_payment_intent_not_ready');
 END;
+
+-- A funding leg can have only one active managed source reservation. This
+-- makes concurrent final-payment preparation attempts fail atomically.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_active_managed_reservation_per_funding_leg
+  ON reservations(funding_leg_id)
+  WHERE funding_leg_id IS NOT NULL
+    AND reservation_source = 'managed'
+    AND status = 'active';
