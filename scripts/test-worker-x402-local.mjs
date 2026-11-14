@@ -167,6 +167,10 @@ try {
     authorization: "Bearer " + apiKey,
     "content-type": "application/json"
   };
+  const incomingPaymentHeaderPresent = Object.keys(authHeaders)
+    .some(name => name.toLowerCase() === "x-payment");
+  output.steps.incomingPaymentHeaderCheck = { present: incomingPaymentHeaderPresent };
+  if (incomingPaymentHeaderPresent) throw new Error("Test request unexpectedly contains X-PAYMENT.");
 
   const liquidityResponse = await fetch(baseUrl + "/v1/liquidity/requests", {
     method: "POST",
@@ -210,7 +214,7 @@ try {
 
   output.steps.workerQuoteRelay = {
     upstream: "CI-gated fixture replay of the actual live Hermes 402 response captured by Track 1",
-    incomingRequestHadPaymentHeader: false,
+    incomingRequestHadPaymentHeader: incomingPaymentHeaderPresent,
     request: quoteRequest,
     status: quoteResponse.status,
     statusText: quoteResponse.statusText,
