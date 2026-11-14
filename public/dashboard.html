@@ -787,6 +787,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
         status.innerHTML='Wallet registered. Tap <button type="button" class="btn primary" id="signNewWalletOwnership">Sign ownership message</button> to confirm address control. This signature does not move funds.';
         return;
       }
+      await prepareWalletOwnershipChallenge(registered.walletId,address);
       status.textContent="Wallet registered. Sign the ownership message in your wallet to finish verification…";
       await verifyWalletOwnershipWithWallet(registered.walletId,address,button);
       status.textContent="Wallet connected and ownership verified. You can now assign its business role below.";
