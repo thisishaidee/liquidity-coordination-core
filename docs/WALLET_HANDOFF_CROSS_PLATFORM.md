@@ -2,7 +2,7 @@
 
 ## Status
 
-The current branch implements Wallet Standard discovery for the dashboard's off-chain ownership challenge, with legacy injected-provider fallback. It now builds unsigned USDC funding transactions and exposes a signed-transaction verification/broadcast endpoint. The browser UI has not yet wired the complete wallet sign-and-return flow, and no Android, iOS, desktop or Telegram Mini App device test has passed. Do not advertise any wallet/platform combination as transaction-signing supported until its full sign-and-return flow has passed a device test.
+The current branch implements Wallet Standard discovery for ownership challenges and the business Payments dashboard. The dashboard now prepares unsigned checked-USDC transfers, sequentially requests `solana:signTransaction` signatures from each required mainnet account, and submits the signed bytes plus the prepared message digest to the Worker. The Worker verifies the exact transaction and broadcasts only after validation. The finalized RPC reconciliation remains separate. No Android, iOS, desktop or Telegram Mini App device test has passed. Do not advertise any wallet/platform combination as device-verified until its full sign-and-return flow has passed a device test.
 
 ## Platform requirement
 
@@ -17,7 +17,7 @@ Wallet handoff is platform-neutral. Android is an early test target because the 
 
 ## Adapter contract
 
-The UI should depend on one small provider interface rather than wallet-brand-specific page logic:
+The UI currently uses the Wallet Standard interface rather than wallet-brand-specific page logic. Additional WalletConnect and platform deep-link adapters remain future work:
 
 - Discover providers available in the current runtime.
 - Connect and return the public key plus network/cluster.
