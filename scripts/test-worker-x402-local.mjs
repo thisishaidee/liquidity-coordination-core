@@ -452,6 +452,39 @@ try {
   if (!duplicateBusinessIdempotencyRejected || !invalidPaymentIntentTransitionRejected || !businessPaymentIntentIdentityImmutable || Number(businessPaymentIntentCount[0]?.count) !== 1) {
     throw new Error("Business payment intent uniqueness or immutable state guards failed.");
   }
+  queryD1(`UPDATE wallet_role_assignments SET minimum_remaining_atoms = '500000', maximum_transfer_atoms = '600000' WHERE wallet_id = '${managedSecondReserveWalletId}' AND role = 'reserve'`, "applyManagedReserveLimits");
+  const limitedLegIds = ["leg_" + randomBytes(16).toString("hex"), "leg_" + randomBytes(16).toString("hex"), "leg_" + randomBytes(16).toString("hex")];
+  const limitedReservationIds = ["res_" + randomBytes(16).toString("hex"), "res_" + randomBytes(16).toString("hex"), "res_" + randomBytes(16).toString("hex")];
+  const limitedAmounts = ["700000", "600000", "500000"];
+  for (let index = 0; index < limitedLegIds.length; index++) {
+    queryD1(`INSERT INTO operation_funding_legs
+      (id, operation_id, leg_index, kind, source_wallet_id, destination_wallet_id, destination_address, asset_mint, amount_atoms)
+      VALUES ('${limitedLegIds[index]}', '${managedOperationId}', ${7 + index}, 'reserve_replenishment', '${managedSecondReserveWalletId}', '${managedPaymentWalletId}', '${managedPaymentAddress}', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '${limitedAmounts[index]}')`, "insertReserveLimitFundingLeg" + index);
+  }
+  let reserveTransferCapRejected = false;
+  try {
+    queryD1(`INSERT INTO reservations (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
+      VALUES ('${limitedReservationIds[0]}', '${managedOperationId}', '${managedSecondReserveBalanceId}', '700000', 'USDC', 'active', datetime('now', '+15 minutes'), '${limitedLegIds[0]}', 'managed')`, "rejectReserveTransferAboveCap");
+  } catch (error) {
+    reserveTransferCapRejected = String(error).includes("managed_reservation_wallet_not_authorized");
+    if (!reserveTransferCapRejected) throw error;
+  }
+  let reserveFloorRejected = false;
+  try {
+    queryD1(`INSERT INTO reservations (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
+      VALUES ('${limitedReservationIds[1]}', '${managedOperationId}', '${managedSecondReserveBalanceId}', '600000', 'USDC', 'active', datetime('now', '+15 minutes'), '${limitedLegIds[1]}', 'managed')`, "rejectReserveFloorBreach");
+  } catch (error) {
+    reserveFloorRejected = String(error).includes("managed_reservation_wallet_not_authorized");
+    if (!reserveFloorRejected) throw error;
+  }
+  queryD1(`INSERT INTO reservations (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
+    VALUES ('${limitedReservationIds[2]}', '${managedOperationId}', '${managedSecondReserveBalanceId}', '500000', 'USDC', 'active', datetime('now', '+15 minutes'), '${limitedLegIds[2]}', 'managed')`, "reserveWithinFloorAndCap");
+  queryD1(`UPDATE reservations SET status = 'released', released_at = datetime('now') WHERE id = '${limitedReservationIds[2]}'`, "releaseReserveLimitTestHold");
+  queryD1(`UPDATE wallet_role_assignments SET minimum_remaining_atoms = '0', maximum_transfer_atoms = NULL WHERE wallet_id = '${managedSecondReserveWalletId}' AND role = 'reserve'`, "restoreManagedReserveLimits");
+  const reserveLimitBalance = queryD1(`SELECT reserved_atoms FROM wallet_balances WHERE id = '${managedSecondReserveBalanceId}'`, "verifyReserveLimitRelease");
+  if (!reserveTransferCapRejected || !reserveFloorRejected || reserveLimitBalance[0]?.reserved_atoms !== "0") {
+    throw new Error("Managed reserve floor or transfer cap enforcement failed.");
+  }
   output.steps.managedReservationBehavior = {
     initialReservationAtoms: reservedAfterInsert[0].reserved_atoms,
     rejectedOverReservation: insufficientManagedReservationRejected,
@@ -470,6 +503,8 @@ try {
     finalPaymentReservationRequiresReservedState,
     finalPaymentAllowedAfterFundingConfirmed: finalPaymentLegState[0]?.status === "reserved",
     finalPaymentReservationReleased: finalPaymentReleased[0]?.reserved_atoms === "0",
+    reserveTransferCapRejected,
+    reserveFloorRejected,
     duplicateBusinessIdempotencyRejected,
     invalidPaymentIntentTransitionRejected,
     businessPaymentIntentIdentityImmutable
@@ -532,6 +567,8 @@ try {
       directFeeReservation[0].reservation_source !== "managed_fee" || directFeeReservation[0].reserved_atoms !== "5000") {
     throw new Error("Direct payment did not reserve the approved SOL network fee.");
   }
+  const directFeeReservationCount = queryD1(`SELECT COUNT(*) AS count FROM reservations WHERE operation_id = '${directPaymentBody.operationId}' AND token = 'SOL' AND reservation_source = 'managed_fee'`, "verifyFeeReservationIdempotency");
+  if (Number(directFeeReservationCount[0]?.count) !== 1) throw new Error("Idempotent replay duplicated the SOL fee reservation.");
   const directReplayResponse = await fetch(baseUrl + "/v1/payments/prepare", {
     method: "POST", headers: paymentAuthHeaders, body: JSON.stringify(directPaymentPayload)
   });
