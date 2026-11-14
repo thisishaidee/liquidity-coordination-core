@@ -95,7 +95,7 @@ const checks = {
   positiveAtomicUsdcAmount: Boolean(
     solanaUsdc &&
     typeof solanaUsdc.maxAmountRequired === "string" &&
-    /^\\d{1,18}$/.test(solanaUsdc.maxAmountRequired) &&
+    /^[0-9]{1,18}$/.test(solanaUsdc.maxAmountRequired) &&
     BigInt(solanaUsdc.maxAmountRequired) > 0n
   ),
   expectedResource: solanaUsdc?.resource === endpoint,
