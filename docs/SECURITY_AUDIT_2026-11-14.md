@@ -28,7 +28,7 @@ The candidate has meaningful security controls: business-scoped admin sessions, 
 ### F-01 — Retry path could reject a transaction that had already finalized
 
 **Severity:** High operational risk  
-**Status:** Fixed in this branch; CI pending
+**Status:** Fixed in this branch; automated regression coverage and CI passed (14 November 2026)
 
 The signed-funding retry path previously checked recent-blockhash validity before looking up the already-recorded transaction signature. A valid transaction can finalize and then have its recent blockhash expire. In that case the retry path could return an expired-blockhash error without reconciling the finalized transaction, leaving the funding leg and its reservations stuck in submitted state.
 
