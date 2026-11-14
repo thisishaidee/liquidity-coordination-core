@@ -1740,6 +1740,91 @@ async function listBusinessWallets(request: Request, env: Env): Promise<Response
   return json({ businessId, wallets: [...wallets.values()] });
 }
 
+
+async function listBusinessWalletRoles(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const businessId = new URL(request.url).searchParams.get("businessId");
+  if (!businessId) return json({ error: "business_id_required" }, 400);
+  const rows = await env.DB.prepare(`
+    SELECT r.wallet_id, r.role, r.enabled, r.priority,
+           r.minimum_remaining_atoms, r.maximum_transfer_atoms,
+           r.created_at, r.updated_at
+    FROM wallet_role_assignments r
+    JOIN wallets w ON w.id = r.wallet_id AND w.business_id = r.business_id
+    WHERE r.business_id = ?
+    ORDER BY r.role ASC, r.priority ASC, r.wallet_id ASC
+  `).bind(businessId).all<{
+    wallet_id: string; role: string; enabled: number; priority: number;
+    minimum_remaining_atoms: string; maximum_transfer_atoms: string | null;
+    created_at: string; updated_at: string;
+  }>();
+  return json({
+    businessId,
+    roles: (rows.results ?? []).map(row => ({
+      walletId: row.wallet_id, role: row.role, enabled: row.enabled === 1,
+      priority: row.priority, minimumRemainingAtoms: row.minimum_remaining_atoms,
+      maximumTransferAtoms: row.maximum_transfer_atoms,
+      createdAt: row.created_at, updatedAt: row.updated_at
+    }))
+  });
+}
+
+async function setBusinessWalletRole(request: Request, env: Env): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const body = await readJson(request);
+  if (!body) return json({ error: "invalid_json" }, 400);
+  const { businessId, walletId, role } = body;
+  const validRoles = ["payment", "reserve", "operating", "receiving", "api_payment"];
+  const enabled = body.enabled === undefined ? true : body.enabled;
+  const priority = body.priority === undefined ? 100 : body.priority;
+  const minimumRemainingAtoms = body.minimumRemainingAtoms === undefined ? "0" : body.minimumRemainingAtoms;
+  const maximumTransferAtoms = body.maximumTransferAtoms === undefined ? null : body.maximumTransferAtoms;
+  const atomsPattern = /^(0|[1-9][0-9]{0,77})$/;
+  if (
+    typeof businessId !== "string" || typeof walletId !== "string" ||
+    typeof role !== "string" || !validRoles.includes(role) ||
+    typeof enabled !== "boolean" ||
+    !Number.isSafeInteger(priority) || (priority as number) < 0 || (priority as number) > 1_000_000 ||
+    typeof minimumRemainingAtoms !== "string" || !atomsPattern.test(minimumRemainingAtoms) ||
+    (maximumTransferAtoms !== null && (typeof maximumTransferAtoms !== "string" || !atomsPattern.test(maximumTransferAtoms) || maximumTransferAtoms === "0"))
+  ) return json({ error: "invalid_request", message: "Provide a valid business wallet, role, enabled flag and integer token-atom limits." }, 400);
+
+  const wallet = await env.DB.prepare(`
+    SELECT id, purpose FROM wallets
+    WHERE id = ? AND business_id = ? AND scope = 'business'
+      AND network = 'solana' AND status = 'active'
+    LIMIT 1
+  `).bind(walletId, businessId).first<{ id: string; purpose: string }>();
+  if (!wallet) return json({ error: "active_business_wallet_not_found" }, 404);
+
+  // Keep the current x402 integration contract intact while legacy purpose is in use.
+  if ((role === "api_payment") !== (wallet.purpose === "api_payment")) {
+    return json({ error: "wallet_purpose_role_mismatch", message: "The API-payment role must match the existing api_payment wallet purpose. Other roles require an operating-purpose business wallet." }, 409);
+  }
+  try {
+    await env.DB.prepare(`
+      INSERT INTO wallet_role_assignments (
+        business_id, wallet_id, role, enabled, priority,
+        minimum_remaining_atoms, maximum_transfer_atoms, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(wallet_id, role) DO UPDATE SET
+        enabled = excluded.enabled, priority = excluded.priority,
+        minimum_remaining_atoms = excluded.minimum_remaining_atoms,
+        maximum_transfer_atoms = excluded.maximum_transfer_atoms,
+        updated_at = datetime('now')
+    `).bind(businessId, walletId, role, enabled ? 1 : 0, priority as number,
+      minimumRemainingAtoms, maximumTransferAtoms).run();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("idx_wallet_roles_one_payment_per_business")) {
+      return json({ error: "payment_wallet_already_assigned", message: "Disable the current payment-wallet assignment before selecting another." }, 409);
+    }
+    if (message.includes("api_payment_role_must_be_exclusive")) return json({ error: "api_payment_role_must_be_exclusive" }, 409);
+    return json({ error: "wallet_role_assignment_failed" }, 409);
+  }
+  return json({ businessId, walletId, role, enabled, priority, minimumRemainingAtoms, maximumTransferAtoms });
+}
+
 async function upsertBalanceSnapshot(request: Request, env: Env): Promise<Response> {
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
   const body = await readJson(request);
@@ -4485,6 +4570,8 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/admin/telegram/link-codes") return createTelegramLinkCode(request, env);
     if (request.method === "POST" && url.pathname === "/v1/telegram/webhook") return telegramWebhook(request, env);
     if (request.method === "GET" && url.pathname === "/v1/admin/wallets") return listBusinessWallets(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/admin/wallet-roles") return listBusinessWalletRoles(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/admin/wallet-roles") return setBusinessWalletRole(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/wallets") return registerWallet(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/balances") return upsertBalanceSnapshot(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/balances/sync") return syncSolanaBalances(request, env);
