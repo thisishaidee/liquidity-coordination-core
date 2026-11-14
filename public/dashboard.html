@@ -402,7 +402,12 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       }
     }
     const provider=getInjectedSolanaProvider();
-    if(!provider)throw new Error("No compatible Solana wallet was detected. Open NERITH inside your OKX, Phantom, Solflare or Backpack wallet browser, or use an available Wallet Standard wallet such as Jupiter Wallet.");
+    if(!provider){
+      // The OKX universal connector is also available when the dashboard is not
+      // running inside OKX's injected DApp browser.
+      if(window.NERITHOKX?.connect)return await window.NERITHOKX.connect();
+      throw new Error("No compatible Solana wallet was detected. Open NERITH inside your wallet app, or connect through the OKX wallet handoff.");
+    }
     const connected=await provider.connect();
     const address=connected?.publicKey?.toString?.()||provider.publicKey?.toString?.()||"";
     if(!address)throw new Error("The wallet connected but did not return a public address.");
@@ -881,9 +886,20 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     try{
       const address=await connectSolanaWallet(preferredWallet);
       const purpose=$("walletPurpose").value;
-      status.textContent="Registering "+(purpose==="api_payment"?"the isolated x402 fee wallet":"the operating wallet")+"…";
-      const registered=await apiWrite("/v1/admin/wallets",{businessId:state.businessId,network:"solana",address,scope:"business",purpose});
-      registeredWalletId=registered.walletId;
+      const existingWallet=state.wallets.find(wallet=>
+        wallet.address===address&&wallet.scope==="business"&&wallet.network==="solana"&&wallet.status==="active"
+      );
+      if(existingWallet){
+        if(existingWallet.purpose!==purpose){
+          throw new Error("This address is already registered for "+existingWallet.purpose+". Use a separate Solana address for "+(purpose==="api_payment"?"the x402 fee reserve":"operating liquidity")+"; NERITH will not change an existing wallet's purpose.");
+        }
+        registeredWalletId=existingWallet.walletId;
+        status.textContent="This wallet is already registered. Reusing its existing record; no duplicate will be created.";
+      }else{
+        status.textContent="Registering "+(purpose==="api_payment"?"the isolated x402 fee wallet":"the operating wallet")+"…";
+        const registered=await apiWrite("/v1/admin/wallets",{businessId:state.businessId,network:"solana",address,scope:"business",purpose});
+        registeredWalletId=registered.walletId;
+      }
       if(preferredWallet==="okx"||preferredWallet==="jupiter"){
         await prepareWalletOwnershipChallenge(registered.walletId,address);
         pendingWalletVerification={walletId:registered.walletId,address};
