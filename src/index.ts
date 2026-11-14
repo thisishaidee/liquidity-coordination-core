@@ -20,6 +20,7 @@ import { evaluatePaymentIntentPolicy, type PaymentIntent, type PaymentPolicy, ty
 import { fetchFinalizedSolanaTransaction } from "./solana-finalized-transaction";
 import { verifySolanaTokenTransfer, type SolanaPaymentTransaction } from "./payment-settlement";
 import { verifySolanaNetworkFee } from "./solana-network-fee";
+import { fetchFinalizedSplTokenBalance } from "./solana-finalized-balance";
 
 interface Env {
   DB: D1Database;
@@ -2193,6 +2194,146 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
   }, 201);
 }
 
+
+async function prepareFinalPaymentAfterReplenishment(
+  request: Request, env: Env, intentId: string
+): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const businessId = new URL(request.url).searchParams.get("businessId") ?? "";
+  if (!businessId) return json({ error: "business_id_required" }, 400);
+  if (!env.SOLANA_RPC_URL) return json({ error: "solana_rpc_not_configured" }, 503);
+
+  const row = await env.DB.prepare(`
+    SELECT i.id AS intent_id, i.status AS intent_status, i.action, i.expires_at,
+           i.payment_atoms, i.mint, op.id AS operation_id,
+           final_leg.id AS final_leg_id, final_leg.status AS final_leg_status,
+           payment_wallet.id AS payment_wallet_id, payment_wallet.address AS payment_wallet_address,
+           payment_wallet.status AS payment_wallet_status, payment_wallet.scope AS payment_wallet_scope,
+           payment_wallet.ownership_verified_at,
+           balance.id AS balance_id, balance.reserved_atoms,
+           EXISTS (
+             SELECT 1 FROM wallet_role_assignments role
+             WHERE role.business_id = i.business_id AND role.wallet_id = payment_wallet.id
+               AND role.role = 'payment' AND role.enabled = 1
+           ) AS payment_role_authorized,
+           (SELECT COUNT(*) FROM operation_funding_legs funding
+            WHERE funding.operation_id = op.id AND funding.kind = 'reserve_replenishment') AS reserve_leg_count,
+           (SELECT COUNT(*) FROM operation_funding_legs funding
+            WHERE funding.operation_id = op.id AND funding.kind = 'reserve_replenishment'
+              AND funding.status = 'confirmed') AS confirmed_reserve_leg_count,
+           (SELECT COUNT(*) FROM operation_funding_legs funding
+            WHERE funding.operation_id = op.id AND funding.kind = 'conversion') AS conversion_leg_count
+    FROM business_payment_intents i
+    JOIN operations op ON op.id = i.operation_id AND op.business_id = i.business_id
+    JOIN operation_funding_legs final_leg ON final_leg.operation_id = op.id AND final_leg.kind = 'final_payment'
+    JOIN wallets payment_wallet ON payment_wallet.id = final_leg.source_wallet_id
+    JOIN wallet_balances balance ON balance.wallet_id = payment_wallet.id AND balance.token = 'USDC'
+    WHERE i.id = ? AND i.business_id = ?
+    LIMIT 1
+  `).bind(intentId, businessId).first<{
+    intent_id: string; intent_status: string; action: string; expires_at: string;
+    payment_atoms: string; mint: string; operation_id: string;
+    final_leg_id: string; final_leg_status: string;
+    payment_wallet_id: string; payment_wallet_address: string;
+    payment_wallet_status: string; payment_wallet_scope: string;
+    ownership_verified_at: string | null; balance_id: string; reserved_atoms: string;
+    payment_role_authorized: number; reserve_leg_count: number;
+    confirmed_reserve_leg_count: number; conversion_leg_count: number;
+  }>();
+  if (!row) return json({ error: "payment_intent_not_found" }, 404);
+  if (row.action !== "replenish_then_pay" || row.intent_status !== "replenishing") {
+    return json({ error: "payment_intent_not_waiting_for_replenishment", status: row.intent_status }, 409);
+  }
+  if (Date.parse(row.expires_at) <= Date.now()) return json({ error: "payment_intent_expired" }, 409);
+  if (row.reserve_leg_count < 1 || row.confirmed_reserve_leg_count !== row.reserve_leg_count || row.conversion_leg_count > 0) {
+    return json({
+      error: "reserve_replenishment_not_fully_confirmed",
+      confirmedReserveLegs: row.confirmed_reserve_leg_count,
+      totalReserveLegs: row.reserve_leg_count
+    }, 409);
+  }
+  if (row.final_leg_status !== "planned" || row.payment_wallet_status !== "active" ||
+      row.payment_wallet_scope !== "business" || !row.ownership_verified_at ||
+      row.payment_role_authorized !== 1) {
+    return json({ error: "final_payment_wallet_or_leg_not_authorized" }, 409);
+  }
+
+  const mint = env.SOLANA_USDC_MINT ?? "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  if (row.mint !== mint) return json({ error: "final_payment_mint_not_supported" }, 409);
+  let balance: { amountAtoms: string; commitment: "finalized" };
+  try {
+    balance = await fetchFinalizedSplTokenBalance(
+      env.SOLANA_RPC_URL, row.payment_wallet_address, mint, 6
+    );
+  } catch {
+    return json({
+      intentId,
+      status: "replenishing",
+      pending: true,
+      error: "finalized_payment_wallet_balance_unavailable",
+      message: "Reserve transfers are confirmed, but NERITH could not obtain a finalized payment-wallet balance. No final-payment reservation was created."
+    }, 503);
+  }
+
+  const reservationId = "res_" + crypto.randomUUID().replaceAll("-", "");
+  const statements: D1PreparedStatement[] = [
+    env.DB.prepare(`
+      UPDATE wallet_balances
+      SET confirmed_atoms = ?, observed_at = datetime('now'), source = 'solana_rpc_finalized'
+      WHERE id = ? AND wallet_id = ? AND token = 'USDC'
+    `).bind(balance.amountAtoms, row.balance_id, row.payment_wallet_id),
+    env.DB.prepare(`
+      UPDATE reservations SET status = 'released', released_at = datetime('now')
+      WHERE operation_id = ? AND wallet_balance_id = ? AND funding_leg_id IS NULL
+        AND reservation_source = 'managed' AND status = 'active'
+    `).bind(row.operation_id, row.balance_id),
+    env.DB.prepare(`
+      UPDATE operation_funding_legs SET status = 'reserved', updated_at = datetime('now')
+      WHERE id = ? AND operation_id = ? AND kind = 'final_payment' AND status = 'planned'
+    `).bind(row.final_leg_id, row.operation_id),
+    env.DB.prepare(`
+      INSERT INTO reservations
+        (id, operation_id, wallet_balance_id, amount_atoms, token, status,
+         expires_at, funding_leg_id, reservation_source)
+      VALUES (?, ?, ?, ?, 'USDC', 'active', ?, ?, 'managed')
+    `).bind(reservationId, row.operation_id, row.balance_id, row.payment_atoms, row.expires_at, row.final_leg_id),
+    env.DB.prepare(`
+      UPDATE business_payment_intents SET status = 'awaiting_signature', updated_at = datetime('now')
+      WHERE id = ? AND business_id = ? AND status = 'replenishing'
+    `).bind(intentId, businessId)
+  ];
+  try {
+    const results = await env.DB.batch(statements);
+    for (const index of [0, 2, 3, 4]) {
+      if ((results[index]?.meta?.changes ?? 0) !== 1) {
+        return json({ error: "final_payment_preparation_conflict" }, 409);
+      }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes("managed_reservation_insufficient_balance")) {
+      return json({
+        error: "finalized_payment_wallet_balance_insufficient",
+        finalizedBalanceAtoms: balance.amountAtoms,
+        requiredPaymentAtoms: row.payment_atoms,
+        message: "Finalized USDC balance is insufficient after preserving existing active reservations and wallet reserve floors."
+      }, 409);
+    }
+    return json({ error: "final_payment_preparation_conflict" }, 409);
+  }
+
+  return json({
+    intentId,
+    status: "awaiting_signature",
+    finalPaymentLegId: row.final_leg_id,
+    paymentWalletId: row.payment_wallet_id,
+    finalizedUSDCBalanceAtoms: balance.amountAtoms,
+    paymentAtoms: row.payment_atoms,
+    reservationId,
+    commitment: balance.commitment,
+    note: "Every reserve transfer is finalized and verified. The payment wallet balance was refreshed at finalized commitment and the final-payment amount is now reserved. No transaction has been signed or broadcast."
+  }, 200);
+}
 
 type FundingLegSettlementRow = {
   leg_id: string; leg_status: string; leg_kind: string; transaction_hash: string | null;
@@ -5569,6 +5710,10 @@ export default {
     if (request.method === "GET" && url.pathname === "/v1/admin/payment-policy") return getBusinessPaymentPolicy(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/payment-policy") return setBusinessPaymentPolicy(request, env);
     if (request.method === "POST" && url.pathname === "/v1/payments/prepare") return createBusinessPaymentIntent(request, env);
+    const finalPaymentPrepareRoute = url.pathname.match(/^\/v1\/admin\/payment-intents\/([a-zA-Z0-9_-]+)\/prepare-final-payment$/);
+    if (request.method === "POST" && finalPaymentPrepareRoute) {
+      return prepareFinalPaymentAfterReplenishment(request, env, finalPaymentPrepareRoute[1]);
+    }
     const fundingLegRoute = url.pathname.match(/^\/v1\/admin\/payment-intents\/([a-zA-Z0-9_-]+)\/funding-legs\/([a-zA-Z0-9_-]+)\/(submit|reconcile)$/);
     if (request.method === "POST" && fundingLegRoute && fundingLegRoute[3] === "submit") {
       return submitFundingLegTransaction(request, env, fundingLegRoute[1], fundingLegRoute[2]);
