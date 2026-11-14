@@ -121,6 +121,25 @@ describe("verifySolanaTokenTransfer", () => {
     expect(verifySolanaTokenTransfer(tx, expected).reason).toContain("unapproved top-level");
   });
 
+  it("accepts an associated-token account created for the approved recipient", () => {
+    const tx = fixture();
+    tx.meta!.preTokenBalances = tx.meta!.preTokenBalances!.filter(row => row.accountIndex !== 3);
+    tx.transaction!.message!.instructions!.unshift({
+      program: "spl-associated-token-account",
+      parsed: { type: "createIdempotent", info: { account: DESTINATION_ATA, wallet: DESTINATION, mint: MINT } }
+    });
+    tx.meta!.innerInstructions = [{ instructions: [
+      { program: "system", parsed: { type: "createAccount", info: { source: SOURCE, newAccount: DESTINATION_ATA, lamports: 2039280, space: 165, owner: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" } } },
+      { program: "spl-token", parsed: { type: "initializeAccount3", info: { account: DESTINATION_ATA, mint: MINT, owner: DESTINATION } } }
+    ] }];
+    expect(verifySolanaTokenTransfer(tx, expected).verified).toBe(true);
+  });
+
+  it("rejects unapproved inner program instructions", () => {
+    const tx = fixture();
+    tx.meta!.innerInstructions = [{ instructions: [{ program: "unknown-program", parsed: { type: "execute", info: {} } }] }];
+    expect(verifySolanaTokenTransfer(tx, expected).reason).toContain("unapproved inner");
+  });
   it("rejects a failed or non-finalized transaction", () => {
     const failed = fixture();
     failed.meta!.err = { InstructionError: [0, "Custom"] };
