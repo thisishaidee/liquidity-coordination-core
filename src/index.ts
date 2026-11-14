@@ -2079,6 +2079,7 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
     )
   ];
 
+  const reservationDetails: Array<{ id: string; fundingLegId: string | null; walletId: string; token: string; amountAtoms: string }> = [];
   if (decision.action !== "conversion_required" && BigInt(networkFeeLamports) > 0n) {
     const feePayerWalletRow = (walletRows.results ?? []).find(row =>
       row.wallet_id === feePayerWalletId && row.token === "SOL" &&
@@ -2093,7 +2094,6 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
     `).bind(feeReservationId, operationId, feePayerWalletRow.balance_id, networkFeeLamports, expiresAt.toISOString()));
     reservationDetails.push({ id: feeReservationId, fundingLegId: null, walletId: feePayerWalletId, token: "SOL", amountAtoms: networkFeeLamports });
   }
-  const reservationDetails: Array<{ id: string; fundingLegId: string | null; walletId: string; token: string; amountAtoms: string }> = [];
   const fundingLegDetails: Array<{ id: string; kind: string; sourceWalletId: string; destinationWalletId: string | null; amountAtoms: string; status: string }> = [];
   for (const [index, planLeg] of replenishmentLegs.entries()) {
     const sourceRow = (walletRows.results ?? []).find(row =>
