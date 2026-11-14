@@ -493,6 +493,8 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     const ready = operating.length > 0 && payment.length > 0 && ["owner", "admin"].includes(state.role);
     const button = $("x402GetQuote");
     if (button) button.disabled = !ready;
+    const syncButton = $("x402SyncBalances");
+    if (syncButton) syncButton.disabled = !["owner", "admin"].includes(state.role);
     const status = $("x402DemoStatus");
     if (status) {
       if (!["owner", "admin"].includes(state.role)) status.textContent = "Only workspace owners and admins can run a paid proof request.";
