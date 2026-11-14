@@ -24,3 +24,11 @@ CREATE INDEX IF NOT EXISTS idx_wallet_ownership_challenges_wallet_created
 CREATE INDEX IF NOT EXISTS idx_wallet_ownership_challenges_expiry
   ON wallet_ownership_challenges(expires_at)
   WHERE consumed_at IS NULL;
+
+-- Legacy backfilled liquidity roles are not eligible for future autonomous
+-- funding until the wallet owner proves address control. Keep the dedicated
+-- API-payment classification intact for the existing x402 client flow.
+UPDATE wallet_role_assignments
+SET enabled = 0, updated_at = datetime('now')
+WHERE role <> 'api_payment'
+  AND wallet_id IN (SELECT id FROM wallets WHERE ownership_verified_at IS NULL);
