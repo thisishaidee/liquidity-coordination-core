@@ -48,6 +48,11 @@ export function describeAdminRoute(
     return { kind: "business", businessId, resource: { table: "wallets", id: body.walletId } };
   }
 
+  const fundingLegMatch = pathname.match(/^\/v1\/admin\/payment-intents\/([a-zA-Z0-9_-]+)\/funding-legs\/([a-zA-Z0-9_-]+)\/(submit|reconcile)$/);
+  if (method === "POST" && fundingLegMatch) {
+    return businessId ? { kind: "business", businessId } : { kind: "invalid" };
+  }
+
   const walletMatch = pathname.match(/^\/v1\/admin\/wallets\/([a-zA-Z0-9_-]+)\/disable$/);
   if (method === "POST" && walletMatch) {
     return { kind: "business", businessId, resource: { table: "wallets", id: walletMatch[1] } };
