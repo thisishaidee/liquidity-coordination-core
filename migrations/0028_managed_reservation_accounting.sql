@@ -2,7 +2,7 @@
 -- multi-wallet reservations. Existing paths retain their manual accounting.
 ALTER TABLE reservations
 ADD COLUMN reservation_source TEXT NOT NULL DEFAULT 'legacy'
-CHECK (reservation_source IN ('legacy', 'managed'));
+CHECK (reservation_source IN ('legacy', 'managed', 'managed_fee'));
 
 -- Managed reservations update the aggregate balance inside the same D1 batch
 -- that inserts the reservation row. Any insufficient leg aborts the statement
@@ -75,7 +75,7 @@ END;
 -- status leaves active. A mismatch aborts the state change.
 CREATE TRIGGER IF NOT EXISTS trg_managed_reservation_release_balance
 AFTER UPDATE OF status ON reservations
-WHEN OLD.reservation_source = 'managed'
+WHEN OLD.reservation_source IN ('managed', 'managed_fee')
   AND OLD.status = 'active'
   AND NEW.status IN ('released', 'consumed', 'expired')
 BEGIN
@@ -91,7 +91,7 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS trg_managed_reservation_identity_immutable
 BEFORE UPDATE OF wallet_balance_id, amount_atoms, reservation_source, funding_leg_id ON reservations
-WHEN OLD.reservation_source = 'managed'
+WHEN OLD.reservation_source IN ('managed', 'managed_fee')
   AND (
     NEW.wallet_balance_id IS NOT OLD.wallet_balance_id
     OR NEW.amount_atoms IS NOT OLD.amount_atoms
@@ -104,7 +104,55 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS trg_managed_reservation_active_delete_block
 BEFORE DELETE ON reservations
-WHEN OLD.reservation_source = 'managed'
+WHEN OLD.reservation_source IN ('managed', 'managed_fee')
 BEGIN
   SELECT RAISE(ABORT, 'managed_reservation_must_be_released_before_delete');
+END;
+
+
+-- SOL network-fee holds are linked to the payment intent rather than a
+-- transfer leg. They share the same reservation ledger and atomic accounting.
+CREATE TRIGGER IF NOT EXISTS trg_managed_fee_reservation_reserve_balance
+BEFORE INSERT ON reservations
+WHEN NEW.reservation_source = 'managed_fee' AND NEW.status = 'active'
+BEGIN
+  SELECT CASE WHEN NEW.amount_atoms IS NULL
+    OR NEW.amount_atoms = ''
+    OR NEW.amount_atoms GLOB '*[^0-9]*'
+    OR substr(NEW.amount_atoms, 1, 1) = '0'
+    OR length(NEW.amount_atoms) > 19
+    OR (length(NEW.amount_atoms) = 19 AND NEW.amount_atoms > '9223372036854775807')
+    THEN RAISE(ABORT, 'managed_fee_reservation_amount_invalid') END;
+
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1
+    FROM wallet_balances b
+    JOIN wallets fee_wallet ON fee_wallet.id = b.wallet_id
+    JOIN operations op ON op.id = NEW.operation_id
+    JOIN business_payment_intents payment_intent
+      ON payment_intent.operation_id = op.id
+      AND payment_intent.fee_payer_wallet_id = fee_wallet.id
+    WHERE b.id = NEW.wallet_balance_id
+      AND b.token = 'SOL'
+      AND fee_wallet.business_id = op.business_id
+      AND fee_wallet.scope = 'business'
+      AND fee_wallet.status = 'active'
+      AND fee_wallet.ownership_verified_at IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM wallet_role_assignments fee_role
+        WHERE fee_role.business_id = fee_wallet.business_id
+          AND fee_role.wallet_id = fee_wallet.id
+          AND fee_role.enabled = 1
+          AND fee_role.role IN ('payment', 'operating')
+      )
+  ) THEN RAISE(ABORT, 'managed_fee_wallet_not_authorized') END;
+
+  UPDATE wallet_balances
+  SET reserved_atoms = CAST(reserved_atoms AS INTEGER) + CAST(NEW.amount_atoms AS INTEGER)
+  WHERE id = NEW.wallet_balance_id
+    AND CAST(confirmed_atoms AS INTEGER) - CAST(reserved_atoms AS INTEGER) >= CAST(NEW.amount_atoms AS INTEGER)
+    AND CAST(reserved_atoms AS INTEGER) <= 9223372036854775807 - CAST(NEW.amount_atoms AS INTEGER);
+  SELECT CASE WHEN changes() <> 1
+    THEN RAISE(ABORT, 'managed_fee_reservation_insufficient_balance')
+  END;
 END;
