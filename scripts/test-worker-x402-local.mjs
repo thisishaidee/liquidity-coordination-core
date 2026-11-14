@@ -533,7 +533,7 @@ try {
     throw new Error("Business payment idempotent replay did not return the original intent.");
   }
   const directConflictResponse = await fetch(baseUrl + "/v1/payments/prepare", {
-    method: "POST", headers: authHeaders, body: JSON.stringify({ ...directPaymentPayload, amount: "0.6" })
+    method: "POST", headers: paymentAuthHeaders, body: JSON.stringify({ ...directPaymentPayload, amount: "0.6" })
   });
   if (directConflictResponse.status !== 409) throw new Error("Payment idempotency key accepted a changed request payload.");
 
