@@ -963,7 +963,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
         throw new Error("Jupiter Mobile is connected to a different account. Reconnect using the selected x402 fee wallet.");
       }
       $("x402DemoStatus").textContent = "Opening Jupiter Mobile to approve the exact USDC API fee…";
-      const paymentHeader = await connector.createX402PaymentHeader(pending.requirement, paymentAddress);
+      const paymentHeader = await connector.signPreparedX402Payment(pending.preparationId, paymentAddress);
       paymentSigned = true;
       pendingX402Demo = null;
       $("x402DemoPayment").hidden = true;
