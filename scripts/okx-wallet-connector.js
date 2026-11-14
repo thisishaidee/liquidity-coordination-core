@@ -31,6 +31,7 @@ async function connect() {
   }
   const account = solanaProvider.getAccount(MAINNET_CHAIN);
   if (!account?.address) throw new Error("OKX Wallet connected without returning a Solana address.");
+  window.NERITHOKX_CONNECTED_ADDRESS = account.address;
   return account.address;
 }
 
@@ -50,4 +51,4 @@ async function signMessage(message, expectedAddress) {
   return signature;
 }
 
-window.NERITHOKX = Object.freeze({ initialize, connect, signMessage });
+window.NERITHOKX = Object.freeze({ initialize, connect, signMessage, get connectedAddress() { return window.NERITHOKX_CONNECTED_ADDRESS || ""; } });
