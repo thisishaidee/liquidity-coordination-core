@@ -172,9 +172,7 @@ export function verifySolanaTokenTransfer(
       }
       continue;
     }
-    if (SYSTEM_PROGRAMS.has(program) && type === "createAccount") {
-      continue;
-    }
+    if (SYSTEM_PROGRAMS.has(program)) return fail("Transaction contains an unexpected top-level system instruction.");
     return fail("Transaction contains an unapproved top-level program instruction.");
   }
 
@@ -202,6 +200,38 @@ export function verifySolanaTokenTransfer(
   const destinationIndex = keys.findIndex(key => accountAddress(key) === destinationTokenAccount);
   if (sourceIndex < 0 || destinationIndex < 0) {
     return fail("The source or destination token account is absent from transaction account keys.");
+  }
+
+  for (const instruction of topLevel.filter(item => ASSOCIATED_TOKEN_PROGRAMS.has(programName(item)))) {
+    const info = instruction.parsed?.info ?? {};
+    if (info.account !== destinationTokenAccount) {
+      return fail("Associated token account creation does not target the approved recipient token account.");
+    }
+  }
+
+  for (const instruction of inner) {
+    const program = programName(instruction);
+    const type = instruction.parsed?.type;
+    const info = instruction.parsed?.info ?? {};
+    if (TOKEN_PROGRAMS.has(program) && (type === "transfer" || type === "transferChecked")) continue;
+    if (TOKEN_PROGRAMS.has(program) &&
+        (type === "initializeAccount" || type === "initializeAccount2" || type === "initializeAccount3")) {
+      if (info.account !== destinationTokenAccount || info.mint !== expected.mint ||
+          info.owner !== expected.destinationOwnerAddress) {
+        return fail("Inner token-account initialization does not match the approved recipient and mint.");
+      }
+      continue;
+    }
+    if (SYSTEM_PROGRAMS.has(program) && type === "createAccount") {
+      if (info.newAccount !== destinationTokenAccount || !TOKEN_PROGRAMS.has(String(info.owner)) ||
+          info.space !== 165 || typeof info.lamports !== "number" ||
+          !Number.isSafeInteger(info.lamports) || info.lamports <= 0) {
+        return fail("Inner system account creation is not a valid recipient token-account allocation.");
+      }
+      continue;
+    }
+    if (COMPUTE_BUDGET_PROGRAMS.has(program)) continue;
+    return fail("Transaction contains an unapproved inner program instruction.");
   }
 
   const beforeSource = amountFromBalance(meta.preTokenBalances, sourceIndex, expected.sourceWalletAddress, expected.mint, expected.decimals);
