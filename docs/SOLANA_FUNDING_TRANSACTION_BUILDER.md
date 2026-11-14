@@ -2,7 +2,7 @@
 
 ## Status
 
-The unsigned USDC transaction builder and owner-only prepare endpoint are implemented on the draft branch with unit coverage. The wallet transaction-signing UI, multi-wallet sign/return handoff, signed-transaction broadcast route, and real-wallet device test are not implemented yet.
+The unsigned USDC transaction builder and owner-only prepare endpoint are implemented on the draft branch with unit coverage. The signed-transaction verifier and owner-only Worker broadcast route are now implemented with unit coverage. The wallet transaction-signing UI, multi-wallet sign/return handoff, and real-wallet device test are not implemented yet.
 
 The draft branch pins:
 - `@solana/web3.js` 3.2.1
@@ -50,7 +50,7 @@ An ownership challenge, provider connection, Telegram identity or admin session 
 
 ## Submission and settlement
 
-- The current submit endpoint still accepts a client-broadcast transaction signature; it does not yet accept a signed serialized transaction or compare it to the returned message digest before broadcast. A hardened signed-transaction relay and multi-wallet UI remain release gates.
+- The `POST /v1/admin/payment-intents/:intentId/funding-legs/:legId/submit-signed` endpoint accepts signed serialized bytes plus the prepared message digest. It verifies the exact one-instruction USDC transfer, signer set and cryptographic signatures, confirms the blockhash remains valid, checks the fee cap, records the signature before broadcasting and supports safe retry of the same signed payload. Finalized reconciliation remains separate. The multi-wallet UI and real device handoff remain release gates.
 - After broadcast, store the signature against the funding leg and fee-ledger row atomically. A timeout after broadcast is ambiguous; query the signature before retrying.
 - Existing finalized-RPC reconciliation remains the source of truth: exact SPL transfer, source-owner signer, fee-payer signer, actual fee, fee cap, slot, signature and finalized balance deltas.
 - Reject additional transfers and unapproved instructions.
