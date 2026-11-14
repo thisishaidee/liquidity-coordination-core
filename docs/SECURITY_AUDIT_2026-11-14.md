@@ -64,6 +64,15 @@ The current signing implementation is Wallet Standard-based. WalletConnect-speci
 
 The responsive test suite checks source-level layout contracts and mobile navigation markup. It is not a screenshot or real-device test. Complete a narrow Android viewport walkthrough covering dashboard navigation, payment inbox, long wallet/transaction identifiers, approval controls, loading/error states and the signed-transaction return flow.
 
+### F-07 — CI supply-chain hardening is incomplete
+
+**Severity:** Medium hardening item  
+**Status:** Open; not a blocker for isolated devnet testing
+
+The workflow uses mutable major-version action tags (for example, `actions/checkout@v4`, `actions/setup-node@v4`, and artifact actions) and runs `npm install` rather than enforcing a clean lockfile install with `npm ci`. The current workflow also does not run a dedicated dependency vulnerability audit or static security scanner.
+
+Before production operation, pin third-party actions to reviewed full commit SHAs, use `npm ci` with a committed lockfile, add dependency and static-analysis checks, and define a process for reviewing Dependabot/security alerts. These controls reduce supply-chain risk but do not replace application security testing.
+
 ### F-06 — Production database and deployment gates remain unapplied
 
 **Severity:** Critical release gate  
@@ -83,7 +92,7 @@ Migrations 0025–0032 are part of the candidate branch. They have not been appl
 - The Worker records the transaction signature before broadcast. Broadcast is not represented as settlement.
 - Reconciliation reads the stored signature and requires finalized RPC evidence; uncertain outcomes do not release holds.
 - Aggregate SOL fee reservations are tracked separately from USDC payment reservations. Conversion remains outside this execution path.
-- CI runs typecheck, the test suite, Worker dry-run and isolated Worker/D1 integration. Production deploy is limited to pushes to main.
+- CI runs typecheck, the test suite, Worker dry-run and isolated Worker/D1 integration. Production deploy is limited to pushes to main. CI supply-chain hardening remains an open medium-priority item (F-07).
 
 ## Required pre-production tests
 
