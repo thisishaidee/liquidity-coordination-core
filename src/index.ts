@@ -19,6 +19,7 @@ import { decodeSolanaAddress, verifySolanaMessageSignature } from "./solana-wall
 import { evaluatePaymentIntentPolicy, type PaymentIntent, type PaymentPolicy, type PolicyWalletSnapshot } from "./transaction-policy";
 import { fetchFinalizedSolanaTransaction } from "./solana-finalized-transaction";
 import { verifySolanaTokenTransfer, type SolanaPaymentTransaction } from "./payment-settlement";
+import { verifySolanaNetworkFee } from "./solana-network-fee";
 
 interface Env {
   DB: D1Database;
@@ -2413,21 +2414,20 @@ async function reconcileFundingLegTransaction(
     return json({ intentId, fundingLegId: legId, status: "failed", confirmed: false, reason: lookup.reason }, 409);
   }
 
-  const rpcTransaction = lookup.transaction as SolanaPaymentTransaction & {
-    meta?: { fee?: unknown };
-    transaction?: { message?: { accountKeys?: Array<string | { pubkey?: string }> } };
-  };
-  let actualNetworkFee: number | null = null;
+  let actualNetworkFee: string | null = null;
   if (row.leg_kind === "final_payment") {
-    const fee = rpcTransaction.meta?.fee;
-    const firstKey = rpcTransaction.transaction?.message?.accountKeys?.[0];
-    const feePayerAddress = typeof firstKey === "string" ? firstKey : firstKey?.pubkey;
-    if (!row.fee_payer_address || row.fee_payer_wallet_status !== "active" || !row.fee_payer_verified_at ||
-        !Number.isSafeInteger(fee) || (fee as number) < 0 ||
-        BigInt(fee as number) > BigInt(row.network_fee_lamports) ||
-        feePayerAddress !== row.fee_payer_address ||
-        (BigInt(row.network_fee_lamports) > 0n && !row.fee_reservation_id)) {
-      const reason = "Finalized transaction fee payer or actual network fee does not match the approved fee reservation.";
+    const feeVerification = verifySolanaNetworkFee(
+      lookup.transaction,
+      row.fee_payer_address ?? "",
+      row.network_fee_lamports
+    );
+    const feeInvalid = !feeVerification.verified ||
+      row.fee_payer_wallet_status !== "active" || !row.fee_payer_verified_at ||
+      (BigInt(row.network_fee_lamports) > 0n && !row.fee_reservation_id);
+    if (feeInvalid) {
+      const reason = feeVerification.verified
+        ? "Registered fee wallet is no longer active and verified, or its fee reservation is missing."
+        : feeVerification.reason;
       try {
         await env.DB.batch([
           env.DB.prepare(`
@@ -2445,7 +2445,7 @@ async function reconcileFundingLegTransaction(
       }
       return json({ intentId, fundingLegId: legId, status: "ambiguous", confirmed: false, reason }, 409);
     }
-    actualNetworkFee = fee as number;
+    actualNetworkFee = feeVerification.actualFeeLamports;
   }
   const verification = verifySolanaTokenTransfer(
     lookup.transaction as SolanaPaymentTransaction,
@@ -2520,7 +2520,7 @@ async function reconcileFundingLegTransaction(
     intentId, fundingLegId: legId, status: "confirmed", confirmed: true,
     transactionSignature: row.transaction_hash, confirmedSlot: lookup.slot,
     amountAtoms: verification.amountAtoms,
-    actualNetworkFeeLamports: actualNetworkFee === null ? undefined : String(actualNetworkFee),
+    actualNetworkFeeLamports: actualNetworkFee ?? undefined,
     nextStep: row.leg_kind === "reserve_replenishment"
       ? "Refresh and verify the payment-wallet USDC balance at finalized commitment before reserving or submitting the final-payment leg."
       : "Payment transfer and the separately reserved SOL network fee are finalized and reconciled."
