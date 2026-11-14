@@ -73,6 +73,9 @@ function JupiterMobileBridge() {
             !requirement.payTo || !requirement.extra?.feePayer) {
           throw new Error("Swap.io returned an unsupported or incomplete Solana USDC payment requirement.");
         }
+        if (address === requirement.payTo || address === requirement.extra.feePayer) {
+          throw new Error("The x402 payment wallet must be distinct from Swap.io recipient and facilitator fee payer.");
+        }
         const payer = new PublicKey(address);
         const mint = new PublicKey(requirement.asset);
         const recipient = new PublicKey(requirement.payTo);
