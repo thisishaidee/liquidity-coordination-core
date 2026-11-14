@@ -8,7 +8,7 @@ NERITH is not a wallet, a custody service, a trading terminal, or an autonomous 
 
 ## Agreed next architecture milestone
 
-The next milestone is documented in [AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md](AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md). It specifies multi-wallet payment/reserve roles, deterministic replenishment planning, policy-controlled autonomy, conditional Swap.io conversion, and shared website/Telegram transaction workflows. These are implementation targets, not claims about current production functionality. The current Worker still does not autonomously sign or broadcast transactions, and the existing allocator does not yet execute inter-wallet replenishment.
+The next milestone is documented in [AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md](AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md). Draft PR #51 adds the additive multi-wallet role schema, business-scoped role APIs, a responsive dashboard role-management surface, and deterministic USDC replenishment planning. These changes are branch-only and are not current production functionality until reviewed, merged and deployed with the D1 migration. The planner does not reserve balances or execute inter-wallet replenishment. The Worker still does not autonomously sign or broadcast transactions.
 
 ## The problem
 
@@ -26,7 +26,7 @@ A business can explicitly allow an agent to use an eligible business-scope opera
 
 ### 2. Wallet registry and balance snapshots
 
-NERITH registers Solana wallet addresses and classifies wallets by scope and purpose:
+NERITH's production registry currently classifies Solana wallets by scope and legacy purpose. Draft PR #51 adds a separate business-scoped role-assignment layer without changing that legacy purpose column:
 
 - **Operating wallet:** liquidity available for business tasks and possible conversion.
 - **API-payment wallet:** a separate business wallet used by the x402 client to pay the Swap.io API. It is excluded from operating liquidity and forecasts.
