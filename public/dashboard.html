@@ -379,16 +379,20 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       if(window.NERITHJUPITER.connected&&typeof window.NERITHJUPITER.disconnect==="function")await window.NERITHJUPITER.disconnect();
       return await window.NERITHJUPITER.connect();
     }
+    const injected=window.okxwallet?.solana;
+    if((preferredWallet==="okx"||!preferredWallet)&&injected&&typeof injected.connect==="function"&&typeof injected.signMessage==="function"){
+      const connected=await injected.connect();
+      const address=connected?.publicKey?.toString?.()||injected.publicKey?.toString?.()||"";
+      if(address)return address;
+    }
     if(preferredWallet==="okx"){
-      const injected=window.okxwallet?.solana;
-      if(injected&&typeof injected.connect==="function"&&typeof injected.signMessage==="function"){
-        const connected=await injected.connect();
-        const address=connected?.publicKey?.toString?.()||injected.publicKey?.toString?.()||"";
-        if(address)return address;
-      }
       if(!window.NERITHOKX?.connect)throw new Error("The OKX Connect module did not load. Refresh and try again.");
       return await window.NERITHOKX.connect();
     }
+    // Start the OKX App Connect handoff before awaiting Wallet Standard adapters.
+    // Mobile browsers can lose the transient user gesture after an awaited adapter
+    // call, preventing Android from opening the OKX app.
+    if(!injected&&window.NERITHOKX?.connect)return await window.NERITHOKX.connect();
     for(const wallet of standardSolanaWallets){
       const connectFeature=wallet.features["standard:connect"];
       if(typeof connectFeature?.connect!=="function")continue;
@@ -397,17 +401,12 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
         const account=(connected?.accounts||[]).find(item=>supportsSolanaMainnet(item.chains));
         if(account?.address)return account.address;
       }catch(error){
-        // A closed AppKit/Wallet Standard adapter must not block injected wallet fallbacks.
+        // A closed Wallet Standard adapter must not block other wallet providers.
         continue;
       }
     }
     const provider=getInjectedSolanaProvider();
-    if(!provider){
-      // The OKX universal connector is also available when the dashboard is not
-      // running inside OKX's injected DApp browser.
-      if(window.NERITHOKX?.connect)return await window.NERITHOKX.connect();
-      throw new Error("No compatible Solana wallet was detected. Open NERITH inside your wallet app, or connect through the OKX wallet handoff.");
-    }
+    if(!provider)throw new Error("No compatible Solana wallet was detected. Open NERITH inside OKX Wallet, or retry the OKX app handoff.");
     const connected=await provider.connect();
     const address=connected?.publicKey?.toString?.()||provider.publicKey?.toString?.()||"";
     if(!address)throw new Error("The wallet connected but did not return a public address.");
