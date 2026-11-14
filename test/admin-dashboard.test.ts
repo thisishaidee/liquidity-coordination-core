@@ -750,6 +750,13 @@ describe("browser page script syntax", () => {
         expect(html).toContain("window.NERITHJUPITER?.connect");
         expect(html).toContain("window.NERITHJUPITER.signMessage");
         expect(html).toContain("createX402PaymentHeader");
+        expect(html).toContain('id="x402DemoPanel"');
+        expect(html).toContain('id="x402SyncBalances"');
+        expect(html).toContain('id="x402GetQuote"');
+        expect(html).toContain('id="x402PayQuote"');
+        expect(html).toContain('/v1/admin/x402/demo/quote');
+        expect(html).toContain('X-PAYMENT');
+        expect(html).toContain('no swap is executed');
         expect(html).toContain("createTransferCheckedInstruction");
         expect(html).toContain("The active Jupiter Mobile session does not match the registered x402 payment wallet.");
         expect(html).not.toContain("createAssociatedTokenAccountIdempotentInstruction");
