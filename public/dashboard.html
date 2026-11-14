@@ -1220,6 +1220,8 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     const card=button.closest(".wallet-card");
     const help=card?.querySelector(".wallet-role-help");
     pendingExistingWalletVerification={button,walletId:button.dataset.verifyWallet,address:button.dataset.address,help};
+    const connectPanel=$("walletConnectPanel");
+    if(connectPanel){connectPanel.hidden=false;connectPanel.scrollIntoView({behavior:"smooth",block:"center"});}
     $("walletChooser").hidden=false;
     $("connectBusinessWallet").setAttribute("aria-expanded","true");
     $("walletChooserHelp").textContent="Choose the wallet that owns this exact address. Select Jupiter Mobile to connect through its secure wallet handoff, then approve the ownership message.";
