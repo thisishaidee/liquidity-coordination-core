@@ -4418,9 +4418,9 @@ async function requestAdminX402DemoQuote(request: Request, env: Env): Promise<Re
     WHERE w.business_id = ? AND w.network = 'solana' AND w.address = ?
       AND w.status = 'active' AND w.purpose = 'operating'
       AND w.ownership_verified_at IS NOT NULL
-      AND ((w.scope = 'agent' AND w.agent_id = ?) OR (w.scope = 'business' AND ? = 1))
+      AND (w.scope = 'business' OR (w.scope = 'agent' AND w.agent_id = ?))
     LIMIT 1
-  `).bind(businessId, operatingWalletAddress, agent.id, agent.can_use_business_treasury).first<{
+  `).bind(businessId, operatingWalletAddress, agent.id).first<{
     wallet_id: string; confirmed_atoms: string; reserved_atoms: string; observed_at: string;
   }>();
   if (!operatingWallet) return json({ error: "operating_wallet_not_authorized", message: "Choose an ownership-verified operating wallet assigned to the selected agent." }, 403);
