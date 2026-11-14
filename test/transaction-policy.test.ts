@@ -185,6 +185,23 @@ describe("deterministic payment intent policy", () => {
     }
   });
 
+  it("requires an allowlisted, verified SOL fee payer with enough spendable balance", () => {
+    expect(evaluate(intent({ networkFeePayerWalletId: "not_allowed" }), policy(), [wallet()], now))
+      .toMatchObject({ eligible: false, code: "network_fee_payer_not_allowed" });
+    expect(evaluate(
+      intent(),
+      policy(),
+      [wallet(), wallet({ walletId: "wallet_payment", mint: "SOL", ownershipVerifiedAt: null })],
+      now
+    )).toMatchObject({ eligible: false, code: "network_fee_wallet_unavailable" });
+    expect(evaluate(
+      intent(),
+      policy(),
+      [wallet(), wallet({ walletId: "wallet_payment", mint: "SOL", confirmedAtoms: "1000", reservedAtoms: "1000" })],
+      now
+    )).toMatchObject({ eligible: false, code: "network_fee_balance_insufficient" });
+  });
+
   it("rejects estimated network fees above the business cap", () => {
     expect(evaluate(intent({ networkFeeLamports: "10001" }), policy(), [wallet()], now))
       .toMatchObject({ eligible: false, code: "network_fee_limit_exceeded" });
