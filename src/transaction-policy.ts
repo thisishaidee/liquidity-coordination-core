@@ -21,6 +21,7 @@ export type PolicyWalletSnapshot = {
 export type PaymentIntent = {
   operationId: string;
   idempotencyKey: string;
+  idempotencyKeyAlreadyUsed: boolean;
   businessId: string;
   destination: string;
   mint: string;
@@ -145,6 +146,7 @@ export function evaluatePaymentIntentPolicy(
       !intent.idempotencyKey || intent.idempotencyKey.length < 8 || intent.idempotencyKey.length > 128) {
     return reject("invalid_operation_identity", "A bounded operation ID and idempotency key are required.");
   }
+  if (intent.idempotencyKeyAlreadyUsed) return reject("idempotency_key_replayed", "This payment idempotency key has already been used.");
   if (!intent.businessId || intent.businessId !== policy.businessId) {
     return reject("business_scope_mismatch", "The payment intent does not belong to the policy business.");
   }
