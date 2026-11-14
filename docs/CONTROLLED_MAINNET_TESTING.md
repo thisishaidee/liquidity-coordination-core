@@ -12,7 +12,11 @@
 - No production database binding, production Worker secret, or Telegram bot token is copied into this environment.
 - The production Worker and database are not changed by this workflow.
 
-The test Worker is deployed only by `.github/workflows/nerith-mainnet-test.yml` after typecheck and the full test suite pass. A successful deployment is not implied by the presence of this file; confirm the workflow and `/health` before testing.
+The isolated test Worker is deployed at `https://nerith-mainnet-testing.haideecoded-e0f.workers.dev`. Its `/health` endpoint has returned `status=ok`, `database=connected`, and `telegramConfigured=false`. The dedicated D1 database has all 32 migrations applied and currently contains zero businesses and zero agents. The deployment workflow runs typecheck and the full test suite before applying migrations and deploying the Worker.
+
+## One-time test access setup
+
+The test Worker intentionally has no copied production bootstrap credential. Before creating a test workspace, add a new secret named `ADMIN_BOOTSTRAP_TOKEN` to the `nerith-mainnet-testing` Worker in Cloudflare. Generate a fresh random value, save it securely, and enter that same value in the test website's existing-workspace/setup flow when prompted. Do not reuse the production token and do not paste the value into chat or GitHub. This is the only remaining setup step before workspace creation.
 
 ## Wallet safety
 
