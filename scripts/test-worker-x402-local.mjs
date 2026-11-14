@@ -65,7 +65,8 @@ function expectD1Failure(sql, label) {
   });
   const log = [result.stdout ?? "", result.stderr ?? ""].join("\n");
   output.steps[label] = { expectedFailure: true, exitCode: result.status, log: log.slice(-4000) };
-  if (!result.error && result.status === 0) {
+  if (result.error) throw new Error(label + " could not execute: " + result.error.message);
+  if (result.status === 0) {
     throw new Error(label + " unexpectedly succeeded; database guard did not reject the mutation.");
   }
 }
