@@ -423,10 +423,26 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       return await window.NERITHJUPITER.signMessage(message,address);
     }
     if(preferredWallet==="okx"){
-      if(!window.NERITHOKX?.connected||window.NERITHOKX.getAddress?.()!==address){
-        throw new Error("OKX Wallet is not connected to this registered address. Reconnect the matching OKX account and retry.");
+      const provider=window.okxwallet?.solana;
+      if(provider&&typeof provider.signMessage==="function"){
+        let connectedKey=provider.publicKey?.toString?.()||"";
+        if(connectedKey!==address){
+          const connected=await provider.connect();
+          connectedKey=connected?.publicKey?.toString?.()||provider.publicKey?.toString?.()||"";
+        }
+        if(connectedKey!==address)throw new Error("The connected OKX account does not match this registered wallet. Switch to the matching account and retry.");
+        const signed=await provider.signMessage(new TextEncoder().encode(message),"utf8");
+        const signedKey=signed?.publicKey?.toString?.()||provider.publicKey?.toString?.()||connectedKey;
+        if(signedKey!==address)throw new Error("OKX signed with a different account. Reconnect the registered wallet and retry.");
+        const rawSignature=signed?.signature??signed;
+        const bytes=rawSignature instanceof Uint8Array?rawSignature:ArrayBuffer.isView(rawSignature)?new Uint8Array(rawSignature.buffer,rawSignature.byteOffset,rawSignature.byteLength):null;
+        if(!bytes||bytes.length!==64)throw new Error("OKX returned an unsupported message-signature format.");
+        return bytes;
       }
-      return await window.NERITHOKX.signMessage(message,address);
+      if(window.NERITHOKX?.connected&&window.NERITHOKX.getAddress?.()===address){
+        return await window.NERITHOKX.signMessage(message,address);
+      }
+      throw new Error("OKX Wallet is not connected to this registered address. Reconnect the matching OKX account and retry.");
     }
     if(window.NERITHOKX?.connected&&window.NERITHOKX?.getAddress){
       const okxAddress=window.NERITHOKX.getAddress();
