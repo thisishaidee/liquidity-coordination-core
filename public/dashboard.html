@@ -915,14 +915,14 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
         registeredWalletId=registered.walletId;
       }
       if(preferredWallet==="okx"||preferredWallet==="jupiter"){
-        await prepareWalletOwnershipChallenge(registered.walletId,address);
-        pendingWalletVerification={walletId:registered.walletId,address};
+        await prepareWalletOwnershipChallenge(registeredWalletId,address);
+        pendingWalletVerification={walletId:registeredWalletId,address,preferredWallet};
         status.innerHTML='Wallet registered. Tap <button type="button" class="btn primary" id="signNewWalletOwnership">Sign ownership message</button> to confirm address control. This signature does not move funds.';
         return;
       }
-      await prepareWalletOwnershipChallenge(registered.walletId,address);
+      await prepareWalletOwnershipChallenge(registeredWalletId,address);
       status.textContent="Wallet registered. Sign the ownership message in your wallet to finish verification…";
-      await verifyWalletOwnershipWithWallet(registered.walletId,address,button);
+      await verifyWalletOwnershipWithWallet(registeredWalletId,address,button,preferredWallet);
       status.textContent="Wallet connected and ownership verified. You can now assign its business role below.";
     }catch(error){
       const message=String(error.message||error);
@@ -1115,7 +1115,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     const button=event.target;
     const pending=pendingWalletVerification;
     try{
-      await verifyWalletOwnershipWithWallet(pending.walletId,pending.address,button);
+      await verifyWalletOwnershipWithWallet(pending.walletId,pending.address,button,pending.preferredWallet||"");
       pendingWalletVerification=null;
       $("walletConnectStatus").textContent="Wallet connected and ownership verified. You can now assign its business role below.";
     }catch(error){showError("Wallet ownership verification failed: "+String(error.message||error));}
