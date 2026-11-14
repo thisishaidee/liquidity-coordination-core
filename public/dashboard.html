@@ -478,7 +478,6 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   }
   async function signFundingTransaction(prepared) {
     let transaction = base64ToBytes(prepared.transactionBase64);
-    const chain = "solana:mainnet";
     for (const signerAddress of prepared.requiredSigners || []) {
       let signedByWallet = false;
       for (const wallet of standardSolanaWallets) {
@@ -490,6 +489,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
         const account = accounts.find(item => item.address === signerAddress && supportsSolanaMainnet(item.chains) &&
           Array.isArray(item.features) && item.features.includes("solana:signTransaction"));
         if (!account) continue;
+        const chain = account.chains.find(value => supportedSolanaMainnetChains.has(value)) || "solana:mainnet";
         const output = await sign.signTransaction({ account, transaction, chain });
         const signedTransaction = output?.[0]?.signedTransaction;
         if (!(signedTransaction instanceof Uint8Array) || signedTransaction.length < 100 || signedTransaction.length > 16384) {
