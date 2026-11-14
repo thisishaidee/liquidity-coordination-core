@@ -2399,7 +2399,33 @@ async function proxyHermes(
       : undefined;
     if (testFixture) {
       // CI-only replay of a real, previously captured unpaid Hermes 402 response.
+      // Validate the exact request built by the quote handler before replaying the fixture.
       // Production must leave NERITH_TEST_MODE unset and always use the live Hermes host.
+      const input = payload.input as { token?: unknown; amount?: unknown; chainKey?: unknown } | undefined;
+      const output = payload.output as { token?: unknown; chainKey?: unknown } | undefined;
+      const expectedUserAddress = "BPz2u6eoWLervxEqfpsMCVmKk7h6fEVsd7L5rvEibMfD";
+      const validOutgoingQuote =
+        path === "/v1/swap/quote" &&
+        input?.token === SOL_MINT &&
+        input?.amount === "1000000000" &&
+        input?.chainKey === "sol" &&
+        output?.token === USDC_MINT &&
+        output?.chainKey === "sol" &&
+        payload.userAddress === expectedUserAddress &&
+        payload.slippageBps === 50;
+      if (!validOutgoingQuote) {
+        throw new Error("Local Hermes fixture rejected an unexpected outgoing quote payload.");
+      }
+      console.log("nerith_test_hermes_request_validated", JSON.stringify({
+        path,
+        inputToken: input.token,
+        inputAmount: input.amount,
+        inputChain: input.chainKey,
+        outputToken: output.token,
+        outputChain: output.chainKey,
+        userAddress: payload.userAddress,
+        slippageBps: payload.slippageBps
+      }));
       const fixture = JSON.parse(atob(testFixture)) as {
         status?: number;
         body?: string;
