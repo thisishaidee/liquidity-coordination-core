@@ -607,7 +607,7 @@ try {
     method: "POST", headers: paymentAuthHeaders, body: JSON.stringify({
       taskId: "multi-wallet-payment-" + suffix,
       idempotencyKey: "multi-idem-" + suffix,
-      destination: directPaymentPayload.destination, amount: "6",
+      destination: directPaymentPayload.destination, amount: "8",
       feePayerWalletId: managedPaymentWalletId, networkFeeLamports: "5000"
     })
   });
@@ -631,8 +631,8 @@ try {
     JOIN wallet_balances b ON b.id = r.wallet_balance_id WHERE l.operation_id = '${multiWalletPaymentBody.operationId}'
     ORDER BY l.leg_index`, "verifyMultiWalletPaymentReservations");
   if (multiWalletPaymentRows.length !== 2 || multiWalletPaymentRows.some(row => row.kind !== "reserve_replenishment" || row.status !== "reserved") ||
-      multiWalletPaymentRows.reduce((sum, row) => sum + BigInt(row.amount_atoms), 0n) !== 5500000n) {
-    throw new Error("Multi-wallet payment reservations did not match the planned 5.5 USDC shortfall.");
+      multiWalletPaymentRows.reduce((sum, row) => sum + BigInt(row.amount_atoms), 0n) !== 7000000n) {
+    throw new Error("Multi-wallet payment reservations did not match the planned 7 USDC shortfall.");
   }
   const unreservedFinalLeg = queryD1(`SELECT status FROM operation_funding_legs WHERE operation_id = '${multiWalletPaymentBody.operationId}' AND kind = 'final_payment'`, "verifyFinalPaymentWaitsForReplenishment");
   if (unreservedFinalLeg[0]?.status !== "planned") throw new Error("Final payment was not held behind replenishment confirmation.");
