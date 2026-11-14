@@ -11,6 +11,49 @@ CREATE TRIGGER IF NOT EXISTS trg_managed_reservation_reserve_balance
 BEFORE INSERT ON reservations
 WHEN NEW.reservation_source = 'managed' AND NEW.status = 'active'
 BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1
+    FROM wallet_balances b
+    JOIN wallets source_wallet ON source_wallet.id = b.wallet_id
+    JOIN operations op ON op.id = NEW.operation_id
+    JOIN operation_funding_legs leg ON leg.id = NEW.funding_leg_id
+      AND leg.operation_id = NEW.operation_id
+    WHERE b.id = NEW.wallet_balance_id
+      AND leg.source_wallet_id = source_wallet.id
+      AND source_wallet.business_id = op.business_id
+      AND source_wallet.scope = 'business'
+      AND source_wallet.status = 'active'
+      AND source_wallet.ownership_verified_at IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM wallet_role_assignments source_role
+        WHERE source_role.business_id = source_wallet.business_id
+          AND source_role.wallet_id = source_wallet.id
+          AND source_role.enabled = 1
+          AND (
+            (leg.kind = 'final_payment' AND source_role.role = 'payment')
+            OR (leg.kind IN ('reserve_replenishment', 'conversion') AND source_role.role IN ('reserve', 'operating'))
+          )
+      )
+      AND (
+        leg.kind = 'final_payment'
+        OR EXISTS (
+          SELECT 1
+          FROM wallets destination_wallet
+          JOIN wallet_role_assignments destination_role
+            ON destination_role.wallet_id = destination_wallet.id
+            AND destination_role.business_id = destination_wallet.business_id
+          WHERE destination_wallet.id = leg.destination_wallet_id
+            AND destination_wallet.business_id = op.business_id
+            AND destination_wallet.scope = 'business'
+            AND destination_wallet.status = 'active'
+            AND destination_wallet.ownership_verified_at IS NOT NULL
+            AND destination_wallet.address = leg.destination_address
+            AND destination_role.role = 'payment'
+            AND destination_role.enabled = 1
+        )
+      )
+  ) THEN RAISE(ABORT, 'managed_reservation_wallet_not_authorized') END;
+
   UPDATE wallet_balances
   SET reserved_atoms = CAST(reserved_atoms AS INTEGER) + CAST(NEW.amount_atoms AS INTEGER)
   WHERE id = NEW.wallet_balance_id
