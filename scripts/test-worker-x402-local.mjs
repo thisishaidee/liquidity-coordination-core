@@ -54,6 +54,22 @@ function queryD1(sql, label) {
   return parseD1Rows(raw, label);
 }
 
+function expectD1Failure(sql, label) {
+  const result = spawnSync(process.execPath, [
+    wranglerCli, "d1", "execute", "liquidity-coordination", "--local", "--json", "--command", sql
+  ], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 120_000,
+    env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" }
+  });
+  const log = [result.stdout ?? "", result.stderr ?? ""].join("\n");
+  output.steps[label] = { expectedFailure: true, exitCode: result.status, log: log.slice(-4000) };
+  if (!result.error && result.status === 0) {
+    throw new Error(label + " unexpectedly succeeded; database guard did not reject the mutation.");
+  }
+}
+
 async function waitForWorker(child, getLogs) {
   const deadline = Date.now() + 60_000;
   let lastError = "Worker has not started";
@@ -708,6 +724,24 @@ const businessPaymentIntentCount = queryD1(`SELECT COUNT(*) AS count FROM busine
       multiFeeLedger.some(row => row.status !== "reserved" || row.maximum_fee_lamports !== "5000")) {
     throw new Error("Multi-leg fee budget was not reserved and recorded for all three transactions.");
   }
+
+  const guardedFeeLegId = multiWalletPaymentBody.fundingLegs[0].id;
+  expectD1Failure(
+    `UPDATE business_payment_intents SET network_fee_budget_lamports = '1' WHERE id = '${multiWalletPaymentBody.intentId}'`,
+    "rejectFeeBudgetMutation"
+  );
+  expectD1Failure(
+    `UPDATE operation_funding_leg_fees SET maximum_fee_lamports = '1' WHERE funding_leg_id = '${guardedFeeLegId}'`,
+    "rejectPerLegFeeCapMutation"
+  );
+  expectD1Failure(
+    `UPDATE operation_funding_leg_fees SET transaction_hash = 'invalid_signature_binding', status = 'submitted' WHERE funding_leg_id = '${guardedFeeLegId}'`,
+    "rejectFeeSubmissionBeforeFundingLegSubmission"
+  );
+  expectD1Failure(
+    `UPDATE operation_funding_leg_fees SET status = 'reconciled' WHERE funding_leg_id = '${guardedFeeLegId}'`,
+    "rejectFeeReconciliationWithoutFinalizedEvidence"
+  );
   if (prepositionHold.length !== 1 || prepositionHold[0].amount_atoms !== "1000000" ||
       prepositionHold[0].reservation_source !== "managed" || prepositionHold[0].reserved_atoms !== "1000000") {
     throw new Error("Existing payment-wallet liquidity was not held while reserve replenishment is in flight.");
