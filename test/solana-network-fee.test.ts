@@ -16,7 +16,7 @@ describe("finalized Solana network fee verification", () => {
       meta: { fee: 0 }, transaction: { message: { accountKeys: [{ pubkey: payer, signer: false }] } }
     }, payer, "0")).toEqual({ verified: false, reason: "Finalized transaction fee payer is not the registered business wallet with a verified transaction signature." });
     expect(verifySolanaNetworkFee({
-      meta: { fee: 0 }, transaction: { message: { accountKeys: [{ pubkey: payer, signer: false }] } }
+      meta: { fee: 0 }, transaction: { message: { accountKeys: [{ pubkey: payer, signer: true }] } }
     }, payer, "0").verified).toBe(false);
   });
 
