@@ -80,6 +80,10 @@ function JupiterMobileBridge() {
         const destinationAta = getAssociatedTokenAddressSync(mint, recipient, true);
         const sourceInfo = await connection.getAccountInfo(sourceAta, "confirmed");
         if (!sourceInfo) throw new Error("This Jupiter account has no Solana USDC token account.");
+        const sourceBalance = await connection.getTokenAccountBalance(sourceAta, "confirmed");
+        if (BigInt(sourceBalance.value.amount) < BigInt(requirement.maxAmountRequired)) {
+          throw new Error("This Jupiter account does not have enough USDC to pay the exact x402 API fee.");
+        }
         const destinationInfo = await connection.getAccountInfo(destinationAta, "confirmed");
         if (!destinationInfo) throw new Error("Swap.io's USDC receiving account is not initialized; refusing to add extra instructions to the x402 payment.");
         const instructions = [
