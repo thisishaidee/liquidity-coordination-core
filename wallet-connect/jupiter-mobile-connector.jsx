@@ -31,10 +31,23 @@ function JupiterMobileBridge() {
     if (!jupiterAdapter) return;
     const adapter = jupiterAdapter;
     const api = Object.freeze({
-      async connect() {
+      async connect(expectedAddress = "") {
+        const currentAddress = adapter.publicKey?.toBase58?.() || "";
+        if (adapter.connected && currentAddress && (!expectedAddress || currentAddress === expectedAddress)) {
+          return currentAddress;
+        }
+        if (adapter.connected && currentAddress && expectedAddress && currentAddress !== expectedAddress) {
+          if (typeof adapter.disconnect !== "function") {
+            throw new Error("Jupiter Mobile is connected to a different account. Switch to the registered operating account in Jupiter Mobile, then reconnect.");
+          }
+          await adapter.disconnect();
+        }
         await adapter.connect();
         const address = adapter.publicKey?.toBase58?.() || "";
         if (!address) throw new Error("Jupiter Mobile connected without returning a Solana address.");
+        if (expectedAddress && address !== expectedAddress) {
+          throw new Error("Jupiter Mobile reconnected as " + address + ", but this verification requires " + expectedAddress + ". Select the matching account in Jupiter Mobile and retry.");
+        }
         return address;
       },
       getAddress() {
