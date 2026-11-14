@@ -325,6 +325,12 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   }
   async function connectSolanaWallet(preferredWallet="") {
     if(preferredWallet==="okx"){
+      const injected=window.okxwallet?.solana;
+      if(injected&&typeof injected.connect==="function"&&typeof injected.signMessage==="function"){
+        const connected=await injected.connect();
+        const address=connected?.publicKey?.toString?.()||injected.publicKey?.toString?.()||"";
+        if(address)return address;
+      }
       if(!window.NERITHOKX?.connect)throw new Error("The OKX Connect module did not load. Refresh and try again.");
       return await window.NERITHOKX.connect();
     }
