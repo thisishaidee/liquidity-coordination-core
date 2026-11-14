@@ -147,19 +147,6 @@ try {
     bodySha256: createHash("sha256").update(hermesFixture.body).digest("hex")
   };
 
-  worker = spawn(process.execPath, [
-    wranglerCli, "dev", "--local", "--port", "8787", "--ip", "127.0.0.1",
-    "--var", "NERITH_TEST_MODE:true",
-    "--var", "HERMES_TEST_402_FIXTURE:" + testFixture
-  ], {
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" }
-  });
-  worker.stdout.on("data", chunk => { workerLog += chunk.toString(); });
-  worker.stderr.on("data", chunk => { workerLog += chunk.toString(); });
-
-  output.steps.localWorkerHealth = await waitForWorker(worker, () => workerLog);
-
   const suffix = randomBytes(8).toString("hex");
   const businessId = "biz_" + randomBytes(16).toString("hex");
   const agentId = "agt_" + randomBytes(16).toString("hex");
@@ -363,6 +350,19 @@ try {
     crossWalletAtomicRollbackRestoredBalances: afterCrossWalletFailure.every(row => row.reserved_atoms === "0")
   };
 
+
+  worker = spawn(process.execPath, [
+    wranglerCli, "dev", "--local", "--port", "8787", "--ip", "127.0.0.1",
+    "--var", "NERITH_TEST_MODE:true",
+    "--var", "HERMES_TEST_402_FIXTURE:" + testFixture
+  ], {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" }
+  });
+  worker.stdout.on("data", chunk => { workerLog += chunk.toString(); });
+  worker.stderr.on("data", chunk => { workerLog += chunk.toString(); });
+
+  output.steps.localWorkerHealth = await waitForWorker(worker, () => workerLog);
 
   const authHeaders = {
     authorization: "Bearer " + apiKey,
