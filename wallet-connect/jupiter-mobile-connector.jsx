@@ -65,6 +65,8 @@ function JupiterMobileBridge() {
           throw new Error("Jupiter Mobile did not expose transaction signing for this session.");
         }
         if (!requirement || requirement.scheme !== "exact" || requirement.network !== "solana" ||
+            requirement.resource !== "https://hermes.swap.io/v1/swap/quote" ||
+            typeof requirement.maxTimeoutSeconds !== "number" || requirement.maxTimeoutSeconds < 1 || requirement.maxTimeoutSeconds > 120 ||
             requirement.asset !== "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" ||
             !/^\d{1,18}$/.test(String(requirement.maxAmountRequired || "")) ||
             BigInt(requirement.maxAmountRequired) > 10000n ||
