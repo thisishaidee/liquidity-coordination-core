@@ -22,7 +22,7 @@ Only a business owner/admin session may submit or reconcile a funding leg. An ag
 - `POST /v1/admin/payment-intents/:intentId/funding-legs/:legId/reconcile`
   - No transaction data is accepted from the client. The Worker retrieves the signature stored on the leg.
   - Queries `getSignatureStatuses` with history enabled. Missing, processed, and confirmed-but-not-finalized results remain pending.
-  - Query `getTransaction` with `commitment: finalized`, `encoding: jsonParsed`, and `maxSupportedTransactionVersion: 0`.
+  - Query `getTransaction` with `commitment: finalized`, `encoding: jsonParsed`, and `maxSupportedTransactionVersion: 1`.
   - Verify RPC result signature, successful metadata, positive slot, registered source signer, exact SPL-token program instruction, source/destination token-account ownership, mint, decimals, exact atom amount, and matching pre/post token balance deltas using `verifySolanaTokenTransfer`.
   - If the RPC is unavailable or the finalized transaction is not yet indexed, return pending/502 without mutating ledger state.
   - If the finalized transaction is definitively failed or mismatched, record a safe failure/ambiguous result according to whether the chain outcome is definitive. Never release a reservation on an RPC timeout.
@@ -78,7 +78,7 @@ If any conditional statement changes zero rows, treat it as a concurrency/state 
 - Pre-migration submitted/replenishing intents with submitted legs lacking ledger rows are marked ambiguous during migration. Their existing holds are deliberately preserved for manual reconciliation rather than inventing fee evidence.
 - Conversion remains excluded until its separate transaction/fee accounting and swap settlement verifier exist.
 
-An earlier candidate commit passed typecheck, unit tests, Wrangler dry-run, the unpaid Hermes 402 evidence check, and the isolated local Worker/D1 integration suite. Subsequent fee-payer signature-proof and cross-platform multi-signer changes are awaiting a fresh, non-cancelled CI run. These checks validate the candidate implementation, not a funded-wallet transaction or a live paid x402 swap. Do not enable real signing, merge, or deploy until the current head passes CI and the remaining database failure/replay cases and wallet handoff tests are complete.
+An earlier candidate commit passed typecheck, unit tests, Wrangler dry-run, the unpaid Hermes 402 evidence check, and the isolated local Worker/D1 integration suite. The current branch also opts into Solana transaction version 1 when reading finalized settlement and x402 transactions; this avoids a v0-only RPC ceiling on a network where v1 transactions are active. The newest CI run is validating this change. These checks validate the candidate implementation, not a funded-wallet transaction or a live paid x402 swap. Do not enable real signing, merge, or deploy until the current head passes CI and the remaining database failure/replay cases and wallet handoff tests are complete.
 
 ## Balance observations
 
