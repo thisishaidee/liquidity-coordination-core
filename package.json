@@ -12,8 +12,9 @@
     "build:dashboard": "node scripts/embed-dashboard.mjs && npm run build:landing && npm run build:control && npm run build:business-dashboard && npm run build:pixel-field",
     "build:landing": "node scripts/embed-landing.mjs",
     "build:control": "node scripts/embed-control.mjs",
-    "build:business-dashboard": "node scripts/embed-business-dashboard.mjs",
-    "build:pixel-field": "node scripts/embed-pixel-field.mjs"
+    "build:business-dashboard": "npm run install:jupiter-wallet && node scripts/embed-business-dashboard.mjs",
+    "build:pixel-field": "node scripts/embed-pixel-field.mjs",
+    "install:jupiter-wallet": "npm --prefix wallet-connect install --no-audit --no-fund"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261110.1",
