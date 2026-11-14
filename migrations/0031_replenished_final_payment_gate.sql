@@ -24,6 +24,7 @@ WHEN NEW.reservation_source = 'managed'
     JOIN business_payment_intents intent ON intent.operation_id = leg.operation_id
     WHERE leg.id = NEW.funding_leg_id
       AND leg.kind = 'final_payment'
+      AND leg.status = 'reserved'
       AND intent.action = 'replenish_then_pay'
       AND intent.status <> 'awaiting_signature'
   )
