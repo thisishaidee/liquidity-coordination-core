@@ -2216,15 +2216,15 @@ async function setBusinessWalletRole(request: Request, env: Env): Promise<Respon
   const priority = body.priority === undefined ? 100 : body.priority;
   const minimumRemainingAtoms = body.minimumRemainingAtoms === undefined ? "0" : body.minimumRemainingAtoms;
   const maximumTransferAtoms = body.maximumTransferAtoms === undefined ? null : body.maximumTransferAtoms;
-  const atomsPattern = /^(0|[1-9][0-9]{0,77})$/;
   if (
     typeof businessId !== "string" || typeof walletId !== "string" ||
     typeof role !== "string" || !validRoles.includes(role) ||
     typeof enabled !== "boolean" ||
     !Number.isSafeInteger(priority) || (priority as number) < 0 || (priority as number) > 1_000_000 ||
-    typeof minimumRemainingAtoms !== "string" || !atomsPattern.test(minimumRemainingAtoms) ||
-    (maximumTransferAtoms !== null && (typeof maximumTransferAtoms !== "string" || !atomsPattern.test(maximumTransferAtoms) || maximumTransferAtoms === "0"))
-  ) return json({ error: "invalid_request", message: "Provide a valid business wallet, role, enabled flag and integer token-atom limits." }, 400);
+    typeof minimumRemainingAtoms !== "string" ||
+    !(minimumRemainingAtoms === "0" || isSqliteAtomString(minimumRemainingAtoms)) ||
+    (maximumTransferAtoms !== null && (typeof maximumTransferAtoms !== "string" || !isSqliteAtomString(maximumTransferAtoms)))
+  ) return json({ error: "invalid_request", message: "Provide a valid business wallet, role, enabled flag and atom limits within the database accounting range." }, 400);
   if (role !== "reserve" && (minimumRemainingAtoms !== "0" || maximumTransferAtoms !== null)) {
     return json({ error: "reserve_limits_only_apply_to_reserve_wallets" }, 400);
   }
