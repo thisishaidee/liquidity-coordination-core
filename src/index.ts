@@ -2450,7 +2450,7 @@ async function submitFundingLegTransaction(
     return json({ error: "conversion_settlement_not_supported" }, 409);
   }
   if (Date.parse(row.intent_expires_at) <= Date.now()) return json({ error: "payment_intent_expired" }, 409);
-  if (row.intent_status !== "reserved" && row.intent_status !== "replenishing") {
+  if (row.intent_status !== "reserved" && row.intent_status !== "replenishing" && row.intent_status !== "awaiting_signature") {
     return json({ error: "payment_intent_not_submittable", status: row.intent_status }, 409);
   }
   if (row.leg_status !== "reserved" && row.leg_status !== "awaiting_signature" &&
@@ -2491,7 +2491,7 @@ async function submitFundingLegTransaction(
   if (row.leg_kind === "final_payment") {
     statements.push(env.DB.prepare(`
       UPDATE business_payment_intents SET status = 'submitted', updated_at = datetime('now')
-      WHERE id = ? AND business_id = ? AND status = 'reserved'
+      WHERE id = ? AND business_id = ? AND status IN ('reserved', 'awaiting_signature')
     `).bind(intentId, businessId));
   }
   try {
