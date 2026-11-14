@@ -452,7 +452,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       const replenishmentReady = canManagePayments && intent.action === "replenish_then_pay" &&
         legs.some(leg => leg.kind === "reserve_replenishment") &&
         legs.filter(leg => leg.kind === "reserve_replenishment").every(leg => leg.status === "confirmed") &&
-        legs.some(leg => leg.kind === "final_payment" && leg.status === "reserved");
+        legs.some(leg => leg.kind === "final_payment" && ["planned","blocked","reserved"].includes(leg.status));
       return '<section class="panel"><div class="panel-head"><div><div class="panel-title">Payment request</div><div class="panel-subtitle mono">' + escapeHtml(intent.intentId) + '</div></div><span class="chip">' + escapeHtml(intent.status.replaceAll("_"," ")) + '</span></div>' +
         '<div class="grid metric-grid"><article><div class="metric-label">Requested</div><div class="metric-value">' + escapeHtml(moneyAtoms(intent.requestedAtoms,6)) + '</div><div class="metric-foot">USDC</div></article><article><div class="metric-label">Approved payment</div><div class="metric-value">' + escapeHtml(moneyAtoms(intent.paymentAtoms,6)) + '</div><div class="metric-foot">USDC</div></article></div>' +
         '<div class="wallet-role-help">Destination: ' + escapeHtml(intent.destination) + '</div><div class="wallet-role-help">Expires: ' + escapeHtml(fmtDate(intent.expiresAt)) + '</div>' +
