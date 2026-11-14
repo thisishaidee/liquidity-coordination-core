@@ -61,6 +61,12 @@ describe("exact SPL token funding-leg verification", () => {
     expect(verifyExactSplTokenTransfer(value, expected).verified).toBe(false);
   });
 
+  it("rejects token-account deltas that do not match the parsed instruction", () => {
+    const value = tx();
+    value.meta!.postTokenBalances![0].uiTokenAmount!.amount = "2499999";
+    expect(verifyExactSplTokenTransfer(value, expected).verified).toBe(false);
+  });
+
   it("rejects an amount mismatch", () => {
     const value = tx();
     value.transaction!.message!.instructions![0].parsed!.info!.tokenAmount = { amount: "2499999" };
