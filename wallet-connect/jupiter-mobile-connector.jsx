@@ -67,6 +67,7 @@ function JupiterMobileBridge() {
         if (!requirement || requirement.scheme !== "exact" || requirement.network !== "solana" ||
             requirement.asset !== "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" ||
             !/^\d{1,18}$/.test(String(requirement.maxAmountRequired || "")) ||
+            BigInt(requirement.maxAmountRequired) > 10000n ||
             !requirement.payTo || !requirement.extra?.feePayer) {
           throw new Error("Swap.io returned an unsupported or incomplete Solana USDC payment requirement.");
         }
