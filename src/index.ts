@@ -15,7 +15,7 @@ import { decryptTotpSecret, encryptTotpSecret, generateTotpSecret, verifyTotpSte
 import { verifySolSourceDebit, type SolanaSettlementTransaction } from "./settlement";
 import { parseHermesPaymentPayload, parseHermesPaymentRequirement, parseHermesPaymentReceipt, verifyHermesPaymentTransaction, type HermesPaymentRequirement } from "./x402";
 import { describeAdminRoute, isAllowedAdminOrigin, isDashboardRoleAllowed, matchesBusinessScope } from "./admin-auth";
-import { verifySolanaMessageSignature } from "./solana-wallet-verification";
+import { decodeSolanaAddress, verifySolanaMessageSignature } from "./solana-wallet-verification";
 import { evaluatePaymentIntentPolicy, type PaymentIntent, type PaymentPolicy, type PolicyWalletSnapshot } from "./transaction-policy";
 
 interface Env {
@@ -1932,6 +1932,9 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
     (slippageBps !== null && (!Number.isSafeInteger(slippageBps) || (slippageBps as number) < 0 || (slippageBps as number) > 10000)) ||
     purpose.length > 300
   ) return json({ error: "invalid_payment_request" }, 400);
+
+  try { decodeSolanaAddress(destination); }
+  catch { return json({ error: "invalid_solana_destination", message: "Destination must be a valid 32-byte Solana public key." }, 400); }
 
   let requestedAtoms: bigint;
   try { requestedAtoms = parseTokenAmount(body.amount); }
