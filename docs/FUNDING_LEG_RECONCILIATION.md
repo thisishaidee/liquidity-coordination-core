@@ -2,7 +2,7 @@
 
 ## Status
 
-Partially implemented on the draft feature branch. Owner/admin-only signature submission and finalized-RPC reconciliation are now wired for simple SPL-token reserve-replenishment and final-payment legs. This branch still does not sign or broadcast transactions, refresh finalized destination balances, unlock the final payment after replenishment, reconcile actual SOL network fees, or support conversions. Nothing enables autonomous execution.
+Partially implemented on the draft feature branch. Owner/admin-only signature submission and finalized-RPC reconciliation are wired for simple SPL-token reserve-replenishment and final-payment legs. Final-payment readiness now requires all reserve legs to be confirmed, a fresh finalized USDC balance read from Solana RPC, and an atomic D1 transition that releases the preposition hold and creates the final-payment reservation. The actual transaction is still signed and broadcast by the business-controlled wallet. Conversion remains unsupported by this verifier. Nothing enables autonomous execution.
 
 ## Trust boundary
 
@@ -35,8 +35,10 @@ Only a business owner/admin session may submit or reconcile a funding leg. An ag
 - Destination must be the business's registered payment wallet.
 - The asset mint must be the configured USDC mint.
 - The exact transfer amount must match the reserved leg amount. Do not accept overpayment or underpayment as a successful exact leg.
-- After finality and exact transfer verification, the leg is marked confirmed and only its linked source reservation is consumed. A finalized payment-wallet balance refresh is not yet implemented, so the final-payment leg remains blocked.
-- Only after a separate finalized payment-wallet balance refresh proves sufficient USDC may the final-payment leg be reserved and advanced to `awaiting_signature`. That unlock step is still pending.
+- After finality and exact transfer verification, the leg is marked confirmed and only its linked source reservation is consumed.
+- `POST /v1/admin/payment-intents/:intentId/prepare-final-payment?businessId=...` requires every reserve-replenishment leg to be confirmed, and the intent to remain unexpired. It reads every USDC token account for the registered payment wallet at `finalized` commitment and validates owner, mint, decimals and canonical atom amounts.
+- In one D1 batch it advances the intent to `awaiting_signature`, updates the confirmed balance snapshot without resetting `reserved_atoms`, releases the operation's preposition hold, reserves the final-payment leg, and inserts the managed final-payment reservation. Database triggers independently enforce that the intent is ready and all replenishment legs are confirmed.
+- RPC failure or insufficient spendable balance leaves the final payment blocked. Existing active reservations and configured reserve floors remain protected.
 
 ### Final payment
 
@@ -58,14 +60,14 @@ After RPC verification succeeds, perform all database state changes in one D1 ba
 2. Store confirmed slot and verified received atoms.
 3. Transition the leg to confirmed.
 4. Consume/release only reservations linked to that funding leg, with exactly-once conditional updates.
-5. For reserve replenishment, after all required funding legs are confirmed, reserve the final-payment leg and insert its managed reservation in the same batch. The existing database trigger remains a second line of defence.
+5. For reserve replenishment, the separate final-payment preparation route requires all funding legs confirmed and a finalized balance read, then changes intent status, refreshes the balance snapshot, releases the preposition hold, reserves the final-payment leg and inserts its managed reservation in one D1 batch. Database triggers guard both the intent state and confirmed funding legs.
 6. Update intent and operation status only when all required conditions hold.
 
 If any conditional statement changes zero rows, treat it as a concurrency/state conflict and do not return success. D1 batch atomicity must ensure partial state changes roll back together. Add a retry test proving that repeated reconciliation cannot consume a reservation twice or create duplicate final-payment holds.
 
 ## Balance observations
 
-The existing `syncSolanaBalances` helper uses `confirmed` commitment for general dashboard balance refresh. It is not sufficient as settlement proof. Settlement must use finalized transaction evidence and must record the commitment/time of any refreshed balance snapshot. Never reset `reserved_atoms` while refreshing `confirmed_atoms`.
+The existing `syncSolanaBalances` helper uses `confirmed` commitment for general dashboard balance refresh. It is not sufficient as settlement proof. The final-payment preparation route uses a separate finalized token-account lookup, records the balance snapshot with `solana_rpc_finalized`, and never resets `reserved_atoms` while refreshing `confirmed_atoms`.
 
 ## Remaining tests before production readiness
 
@@ -74,6 +76,8 @@ The existing `syncSolanaBalances` helper uses `confirmed` commitment for general
 - Processed/confirmed-but-not-finalized, missing transaction, RPC timeout, failed transaction, malformed jsonParsed metadata, unsupported transaction version, wrong signer, wrong token account owner, wrong mint/decimals, wrong amount, extra transfer, and unapproved instruction are rejected or remain pending without releasing holds.
 - Exact finalized reserve transfer confirms once and consumes only its linked reservation.
 - Multiple reserve legs must all confirm before the final-payment reservation exists.
+- Finalized balance lookup aggregates multiple USDC token accounts and rejects mismatched owner, mint, decimals, malformed amounts and RPC errors.
+- Replenishment final-payment database triggers reject an early intent transition, final-leg reservation or managed reservation before the intent is `awaiting_signature`.
 - A failed reserve leg cannot unlock final payment.
 - Exact finalized final payment confirms intent once and reconciles the final-payment and fee holds separately.
 - Concurrent duplicate reconcile requests cannot double-consume or double-reserve.
@@ -89,5 +93,5 @@ This stage must not create or hold private keys, sign transactions, broadcast tr
 - Both routes require a business-scoped owner/admin session, same-origin/allowlisted browser origin on writes, and a `businessId` query parameter. The expiry worker also preserves holds while any funding leg is submitted or ambiguous. The intent and leg are resolved together from D1, so a leg cannot be submitted under another business scope.
 - The submit body accepts only a base58 transaction signature. It does not accept transaction facts or a client-declared settlement state.
 - Reconciliation uses the stored signature and the configured HTTPS RPC. Exact finalized transfers consume only the linked reservation. Finalized mismatches become `ambiguous` and retain their hold; the scheduled expiry routine skips ambiguous intents.
-- Reserve-replenishment confirmation does not credit a cached payment-wallet balance or unlock final payment. The separate fee reservation is reconciled only after the finalized transaction identifies the registered business fee payer and proves the actual network fee is within the approved cap; the fee wallet must remain active, verified, business-scoped and assigned.
+- Reserve-replenishment confirmation does not itself credit a cached payment-wallet balance. The separate prepare-final-payment route performs a finalized RPC balance refresh and atomically creates the final hold. The separate fee reservation is reconciled only after the finalized transaction identifies the registered business fee payer and proves the actual network fee is within the approved cap; the fee wallet must remain active, verified, business-scoped and assigned.
 - These routes are code on a draft PR only. They have not been deployed or exercised against a funded wallet.
