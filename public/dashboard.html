@@ -416,9 +416,11 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       const connectFeature=wallet.features["standard:connect"];
       const signMessageFeature=wallet.features["solana:signMessage"];
       if(typeof connectFeature?.connect!=="function"||typeof signMessageFeature?.signMessage!=="function")continue;
-      const connected=await connectFeature.connect();
-      const account=(connected?.accounts||[]).find(item=>item.address===address&&
-        supportsSolanaMainnet(item.chains));
+      let account=(wallet.accounts||[]).find(item=>item.address===address&&supportsSolanaMainnet(item.chains));
+      if(!account) {
+        const connected=await connectFeature.connect();
+        account=(connected?.accounts||[]).find(item=>item.address===address&&supportsSolanaMainnet(item.chains));
+      }
       if(!account)continue;
       const signed=await signMessageFeature.signMessage({account,message:new TextEncoder().encode(message)});
       const signature=signed?.[0]?.signature;
@@ -427,8 +429,11 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     }
     const provider=getInjectedSolanaProvider();
     if(!provider)throw new Error("No compatible Solana wallet was detected. Use a Wallet Standard wallet such as Jupiter Wallet or open NERITH in your OKX, Phantom, Solflare or Backpack wallet browser.");
-    const connected=await provider.connect();
-    const connectedKey=connected?.publicKey?.toString?.()||provider.publicKey?.toString?.()||"";
+    let connectedKey=provider.publicKey?.toString?.()||"";
+    if(connectedKey!==address) {
+      const connected=await provider.connect();
+      connectedKey=connected?.publicKey?.toString?.()||provider.publicKey?.toString?.()||"";
+    }
     if(connectedKey!==address)throw new Error("The connected wallet address does not match this registered wallet. Switch to the matching wallet and try again.");
     const signed=await provider.signMessage(new TextEncoder().encode(message),"utf8");
     const signedKey=signed?.publicKey?.toString?.()||provider.publicKey?.toString?.()||connectedKey;
