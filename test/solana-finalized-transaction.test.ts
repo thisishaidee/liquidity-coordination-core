@@ -87,8 +87,26 @@ describe("fetchFinalizedSolanaTransaction", () => {
     expect(result.state).toBe("finalized");
     expect(calls.map(call => call.method)).toEqual(["getSignatureStatuses", "getTransaction"]);
     expect(calls[1].params[1]).toEqual({
-      commitment: "finalized", encoding: "jsonParsed", maxSupportedTransactionVersion: 0
+      commitment: "finalized", encoding: "jsonParsed", maxSupportedTransactionVersion: 1
     });
+  });
+
+  it("opts into the active v1 transaction format", async () => {
+    const calls: Array<{ method: string; params: unknown[] }> = [];
+    const fetcher: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body));
+      calls.push(body);
+      return body.method === "getSignatureStatuses"
+        ? response({ result: { value: [{ confirmationStatus: "finalized", err: null, slot: 124 }] } })
+        : response({ result: {
+          slot: 124,
+          transaction: { signatures: [SIGNATURE] },
+          meta: { err: null }
+        } });
+    };
+    const result = await fetchFinalizedSolanaTransaction(ENDPOINT, SIGNATURE, fetcher);
+    expect(result.state).toBe("finalized");
+    expect(calls[1].params[1]).toMatchObject({ maxSupportedTransactionVersion: 1 });
   });
 
   it("does not treat a mismatched transaction response as finalized", async () => {
