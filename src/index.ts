@@ -15,6 +15,7 @@ import { decryptTotpSecret, encryptTotpSecret, generateTotpSecret, verifyTotpSte
 import { verifySolSourceDebit, type SolanaSettlementTransaction } from "./settlement";
 import { parseHermesPaymentPayload, parseHermesPaymentRequirement, parseHermesPaymentReceipt, verifyHermesPaymentTransaction, type HermesPaymentRequirement } from "./x402";
 import { describeAdminRoute, isAllowedAdminOrigin, isDashboardRoleAllowed, matchesBusinessScope } from "./admin-auth";
+import { verifySolanaMessageSignature } from "./solana-wallet-verification";
 
 interface Env {
   DB: D1Database;
@@ -1702,6 +1703,7 @@ async function listBusinessWallets(request: Request, env: Env): Promise<Response
   if (!business) return json({ error: "business_not_found" }, 404);
   const rows = await env.DB.prepare(`
     SELECT w.id, w.address, w.network, w.scope, w.purpose, w.status,
+           w.ownership_verified_at, w.ownership_verified_origin,
            b.token, b.confirmed_atoms, b.reserved_atoms, b.observed_at, b.source
     FROM wallets w
     LEFT JOIN wallet_balances b ON b.wallet_id = w.id
@@ -1709,17 +1711,19 @@ async function listBusinessWallets(request: Request, env: Env): Promise<Response
     ORDER BY w.status ASC, w.purpose ASC, w.address ASC, b.token ASC
   `).bind(businessId).all<{
     id: string; address: string; network: string; scope: string; purpose: string; status: string;
+    ownership_verified_at: string | null; ownership_verified_origin: string | null;
     token: string | null; confirmed_atoms: string | null; reserved_atoms: string | null;
     observed_at: string | null; source: string | null;
   }>();
   const wallets = new Map<string, {
     walletId: string; address: string; network: string; scope: string; purpose: string; status: string;
+    ownershipVerifiedAt: string | null; ownershipVerifiedOrigin: string | null;
     balances: Array<{ token: string; confirmed: string; reserved: string; available: string; observedAt: string; source: string; fresh: boolean }>;
   }>();
   for (const row of rows.results ?? []) {
     if (!wallets.has(row.id)) wallets.set(row.id, {
       walletId: row.id, address: row.address, network: row.network, scope: row.scope,
-      purpose: row.purpose, status: row.status, balances: []
+      purpose: row.purpose, status: row.status, ownershipVerifiedAt: row.ownership_verified_at, ownershipVerifiedOrigin: row.ownership_verified_origin, balances: []
     });
     if (row.token && row.confirmed_atoms !== null && row.reserved_atoms !== null && row.observed_at && row.source) {
       const decimals = row.token === "SOL" ? 9 : 6;
@@ -1793,11 +1797,11 @@ async function setBusinessWalletRole(request: Request, env: Env): Promise<Respon
   }
 
   const wallet = await env.DB.prepare(`
-    SELECT id, purpose FROM wallets
+    SELECT id, purpose, ownership_verified_at FROM wallets
     WHERE id = ? AND business_id = ? AND scope = 'business'
       AND network = 'solana' AND status = 'active'
     LIMIT 1
-  `).bind(walletId, businessId).first<{ id: string; purpose: string }>();
+  `).bind(walletId, businessId).first<{ id: string; purpose: string; ownership_verified_at: string | null }>();
   if (!wallet) return json({ error: "active_business_wallet_not_found" }, 404);
 
   if (role === "payment" && enabled) {
@@ -1807,6 +1811,10 @@ async function setBusinessWalletRole(request: Request, env: Env): Promise<Respon
     if (existingPayment && existingPayment.wallet_id !== walletId) {
       return json({ error: "payment_wallet_already_assigned", message: "Disable the current payment-wallet assignment before selecting another." }, 409);
     }
+  }
+
+  if (enabled && !wallet.ownership_verified_at) {
+    return json({ error: "wallet_ownership_not_verified", message: "Verify control of this wallet address before enabling a business role." }, 409);
   }
 
   // Keep the current x402 integration contract intact while legacy purpose is in use.
