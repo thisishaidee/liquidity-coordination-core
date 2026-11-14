@@ -11,7 +11,7 @@ WHEN NEW.kind = 'final_payment'
       AND intent.status <> 'awaiting_signature'
       AND NOT EXISTS (
         SELECT 1 FROM operation_funding_legs funding
-        WHERE funding.operation_id = leg.operation_id
+        WHERE funding.operation_id = NEW.operation_id
           AND funding.kind IN ('reserve_replenishment', 'conversion')
           AND funding.status <> 'confirmed'
       )
