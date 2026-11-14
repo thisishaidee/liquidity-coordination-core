@@ -106,7 +106,7 @@ try {
   const fundingLegTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_funding_leg_identity_immutable', 'trg_funding_leg_transaction_hash_immutable', 'trg_funding_leg_state_transition', 'trg_funding_leg_submitted_requires_hash', 'trg_funding_leg_confirmed_requires_hash')", "inspectFundingLegTriggers");
   const finalPaymentTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_final_payment_leg_requires_confirmed_funding', 'trg_final_payment_reservation_requires_confirmed_funding')", "inspectFinalPaymentFundingTriggers");
   const paymentIntentTables = queryD1("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('business_payment_policies', 'business_payment_intents')", "inspectBusinessPaymentTables");
-  const paymentIntentTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_business_payment_intent_identity_immutable', 'trg_business_payment_intent_state_transition')", "inspectBusinessPaymentTriggers");
+  const paymentIntentTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_business_payment_intent_identity_immutable', 'trg_business_payment_intent_state_transition', 'trg_business_payment_intent_scope_insert')", "inspectBusinessPaymentTriggers");
   const schemaChecks = {
     ownershipVerifiedAtColumn: walletColumns.some(row => row.name === "ownership_verified_at"),
     ownershipVerifiedOriginColumn: walletColumns.some(row => row.name === "ownership_verified_origin"),
@@ -156,6 +156,9 @@ try {
   const suffix = randomBytes(8).toString("hex");
   const businessId = "biz_" + randomBytes(16).toString("hex");
   const agentId = "agt_" + randomBytes(16).toString("hex");
+  const paymentAgentId = "agt_" + randomBytes(16).toString("hex");
+  const paymentApiKey = "lci_payment_" + randomBytes(32).toString("hex");
+  const paymentApiKeyHash = createHash("sha256").update(paymentApiKey).digest("hex");
   const operatingWalletId = "wal_" + randomBytes(16).toString("hex");
   const paymentWalletId = "wal_" + randomBytes(16).toString("hex");
   const apiKey = "lci_track2_" + randomBytes(32).toString("hex");
@@ -167,7 +170,9 @@ try {
     PRAGMA foreign_keys = ON;
     INSERT INTO businesses (id, name) VALUES ('${businessId}', 'NERITH Track Two Test');
     INSERT INTO agents (id, business_id, name, api_key_hash, can_use_business_treasury)
-      VALUES ('${agentId}', '${businessId}', 'Track Two Agent', '${apiKeyHash}', 1);
+      VALUES ('${agentId}', '${businessId}', 'Track Two Agent', '${apiKeyHash}', 0);
+    INSERT INTO agents (id, business_id, name, api_key_hash, can_use_business_treasury)
+      VALUES ('${paymentAgentId}', '${businessId}', 'Business Payment Agent', '${paymentApiKeyHash}', 1);
     INSERT INTO wallets (id, business_id, agent_id, network, address, scope, purpose)
       VALUES ('${operatingWalletId}', '${businessId}', '${agentId}', 'solana', '${operatingAddress}', 'agent', 'operating');
     INSERT INTO wallets (id, business_id, agent_id, network, address, scope, purpose)
@@ -488,6 +493,10 @@ try {
     authorization: "Bearer " + apiKey,
     "content-type": "application/json"
   };
+  const paymentAuthHeaders = {
+    authorization: "Bearer " + paymentApiKey,
+    "content-type": "application/json"
+  };
   const incomingPaymentHeaderPresent = Object.keys(authHeaders)
     .some(name => name.toLowerCase() === "x-payment");
   output.steps.incomingPaymentHeaderCheck = { present: incomingPaymentHeaderPresent };
@@ -502,7 +511,7 @@ try {
     networkFeeLamports: "5000"
   };
   const directPaymentResponse = await fetch(baseUrl + "/v1/payments/prepare", {
-    method: "POST", headers: authHeaders, body: JSON.stringify(directPaymentPayload)
+    method: "POST", headers: paymentAuthHeaders, body: JSON.stringify(directPaymentPayload)
   });
   const directPaymentBody = await directPaymentResponse.json();
   if (directPaymentResponse.status !== 201 || directPaymentBody.action !== "direct_payment" || directPaymentBody.status !== "reserved") {
@@ -517,7 +526,7 @@ try {
     throw new Error("Direct payment did not create a correctly guarded payment-wallet reservation.");
   }
   const directReplayResponse = await fetch(baseUrl + "/v1/payments/prepare", {
-    method: "POST", headers: authHeaders, body: JSON.stringify(directPaymentPayload)
+    method: "POST", headers: paymentAuthHeaders, body: JSON.stringify(directPaymentPayload)
   });
   const directReplayBody = await directReplayResponse.json();
   if (directReplayResponse.status !== 200 || directReplayBody.reused !== true || directReplayBody.intentId !== directPaymentBody.intentId) {
@@ -529,7 +538,7 @@ try {
   if (directConflictResponse.status !== 409) throw new Error("Payment idempotency key accepted a changed request payload.");
 
   const multiWalletPaymentResponse = await fetch(baseUrl + "/v1/payments/prepare", {
-    method: "POST", headers: authHeaders, body: JSON.stringify({
+    method: "POST", headers: paymentAuthHeaders, body: JSON.stringify({
       taskId: "multi-wallet-payment-" + suffix,
       idempotencyKey: "multi-idem-" + suffix,
       destination: directPaymentPayload.destination, amount: "6",
