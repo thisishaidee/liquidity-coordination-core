@@ -124,6 +124,7 @@ describe("verifySolanaTokenTransfer", () => {
   it("accepts an associated-token account created for the approved recipient", () => {
     const tx = fixture();
     tx.meta!.preTokenBalances = tx.meta!.preTokenBalances!.filter(row => row.accountIndex !== 3);
+    tx.meta!.postTokenBalances!.find(row => row.accountIndex === 3)!.uiTokenAmount!.amount = "1000000";
     tx.transaction!.message!.instructions!.unshift({
       program: "spl-associated-token-account",
       parsed: { type: "createIdempotent", info: { account: DESTINATION_ATA, wallet: DESTINATION, mint: MINT } }
