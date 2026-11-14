@@ -7,7 +7,7 @@ describe("finalized Solana network fee verification", () => {
   it("accepts the registered fee payer when the actual fee is within the hold", () => {
     expect(verifySolanaNetworkFee({
       meta: { fee: 5000 },
-      transaction: { message: { accountKeys: [{ pubkey: payer, signer: true }] } }
+      transaction: { message: { accountKeys: [{ pubkey: payer }] } }
     }, payer, "10000")).toEqual({ verified: true, actualFeeLamports: "5000" });
   });
 
