@@ -307,14 +307,14 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   }
   async function signOwnershipChallenge(address,message) {
     for(const wallet of standardSolanaWallets){
-      const connect=wallet.features["standard:connect"]?.connect;
-      const signMessage=wallet.features["solana:signMessage"]?.signMessage;
-      if(typeof connect!=="function"||typeof signMessage!=="function")continue;
-      const connected=await connect();
+      const connectFeature=wallet.features["standard:connect"];
+      const signMessageFeature=wallet.features["solana:signMessage"];
+      if(typeof connectFeature?.connect!=="function"||typeof signMessageFeature?.signMessage!=="function")continue;
+      const connected=await connectFeature.connect();
       const account=(connected?.accounts||[]).find(item=>item.address===address&&
         Array.isArray(item.chains)&&item.chains.includes("solana:mainnet"));
       if(!account)continue;
-      const signed=await signMessage({account,message:new TextEncoder().encode(message)});
+      const signed=await signMessageFeature.signMessage({account,message:new TextEncoder().encode(message)});
       const signature=signed?.[0]?.signature;
       if(signature instanceof Uint8Array&&signature.length===64)return signature;
       throw new Error("The selected Wallet Standard provider returned an unsupported message-signature format.");
