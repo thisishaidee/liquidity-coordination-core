@@ -77,7 +77,7 @@ async function waitForWorker(child, getLogs) {
 let worker;
 let workerLog = "";
 try {
-  runWrangler(["d1", "migrations", "apply", "liquidity-coordination", "--local", "--yes"], "applyLocalD1Migrations");
+  runWrangler(["d1", "migrations", "apply", "liquidity-coordination", "--local"], "applyLocalD1Migrations");
 
   worker = spawn("npx", ["wrangler", "dev", "--local", "--port", "8787", "--ip", "127.0.0.1"], {
     stdio: ["ignore", "pipe", "pipe"],
