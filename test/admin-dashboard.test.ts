@@ -749,6 +749,10 @@ describe("browser page script syntax", () => {
         expect(html).toContain('src="/assets/jupiter-mobile-connector.js"');
         expect(html).toContain("window.NERITHJUPITER?.connect");
         expect(html).toContain("window.NERITHJUPITER.signMessage");
+        expect(html).toContain("createX402PaymentHeader");
+        expect(html).toContain("createTransferCheckedInstruction");
+        expect(html).toContain("The active Jupiter Mobile session does not match the registered x402 payment wallet.");
+        expect(html).not.toContain("createAssociatedTokenAccountIdempotentInstruction");
         expect(html).toContain("prepareWalletOwnershipChallenge");
         expect(html).toContain("walletOwnershipChallenges.get(walletId)");
         expect(html).toContain('button.textContent="Preparing verification…"');
