@@ -149,3 +149,67 @@ BEGIN
     THEN RAISE(ABORT, 'managed_fee_reservation_insufficient_balance')
   END;
 END;
+
+-- The aggregate budget is immutable after intent creation.
+CREATE TRIGGER IF NOT EXISTS trg_business_payment_intent_fee_budget_immutable
+BEFORE UPDATE OF network_fee_budget_lamports ON business_payment_intents
+WHEN NEW.network_fee_budget_lamports IS NOT OLD.network_fee_budget_lamports
+BEGIN
+  SELECT RAISE(ABORT, 'business_payment_intent_fee_budget_immutable');
+END;
+
+-- Every non-conversion funding leg must have exactly one fee row tied to the
+-- same operation, approved fee payer and per-transaction policy cap.
+CREATE TRIGGER IF NOT EXISTS trg_funding_leg_fee_scope_insert
+BEFORE INSERT ON operation_funding_leg_fees
+WHEN NOT EXISTS (
+  SELECT 1
+  FROM operation_funding_legs leg
+  JOIN business_payment_intents intent ON intent.operation_id = leg.operation_id
+  WHERE leg.id = NEW.funding_leg_id
+    AND leg.operation_id = NEW.operation_id
+    AND leg.kind IN ('reserve_replenishment', 'final_payment')
+    AND leg.transaction_hash IS NULL
+    AND intent.fee_payer_wallet_id = NEW.fee_payer_wallet_id
+    AND intent.network_fee_lamports = NEW.maximum_fee_lamports
+    AND intent.action <> 'conversion_required'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'funding_leg_fee_scope_invalid');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_funding_leg_fee_state_matches_leg
+BEFORE UPDATE OF status ON operation_funding_leg_fees
+WHEN (
+  NEW.status = 'submitted' AND NOT EXISTS (
+    SELECT 1 FROM operation_funding_legs leg
+    WHERE leg.id = NEW.funding_leg_id AND leg.operation_id = NEW.operation_id
+      AND leg.status = 'submitted' AND leg.transaction_hash = NEW.transaction_hash
+  )
+) OR (
+  NEW.status = 'reconciled' AND (
+    CAST(NEW.actual_fee_lamports AS INTEGER) > CAST(NEW.maximum_fee_lamports AS INTEGER)
+    OR NOT EXISTS (
+      SELECT 1 FROM operation_funding_legs leg
+      WHERE leg.id = NEW.funding_leg_id AND leg.operation_id = NEW.operation_id
+        AND leg.status IN ('confirmed', 'failed', 'ambiguous')
+        AND leg.transaction_hash = NEW.transaction_hash
+    )
+  )
+) OR (
+  NEW.status = 'ambiguous' AND NOT EXISTS (
+    SELECT 1 FROM operation_funding_legs leg
+    WHERE leg.id = NEW.funding_leg_id AND leg.operation_id = NEW.operation_id
+      AND leg.status = 'ambiguous' AND leg.transaction_hash = NEW.transaction_hash
+  )
+) OR (
+  NEW.status = 'not_required' AND NOT EXISTS (
+    SELECT 1 FROM operation_funding_legs leg
+    WHERE leg.id = NEW.funding_leg_id AND leg.operation_id = NEW.operation_id
+      AND leg.status IN ('planned', 'reserved', 'cancelled', 'expired')
+      AND leg.transaction_hash IS NULL
+  )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'funding_leg_fee_state_mismatch');
+END;
