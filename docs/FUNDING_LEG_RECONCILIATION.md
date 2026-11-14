@@ -38,7 +38,8 @@ Only a business owner/admin session may submit or reconcile a funding leg. An ag
 - After finality and exact transfer verification, the leg is marked confirmed and only its linked source reservation is consumed.
 - `POST /v1/admin/payment-intents/:intentId/prepare-final-payment?businessId=...` requires every reserve-replenishment leg to be confirmed, and the intent to remain unexpired. It reads every USDC token account for the registered payment wallet at `finalized` commitment and validates owner, mint, decimals and canonical atom amounts.
 - In one D1 batch it advances the intent to `awaiting_signature`, updates the confirmed balance snapshot without resetting `reserved_atoms`, releases the operation's preposition hold, reserves the final-payment leg, and inserts the managed final-payment reservation. Database triggers independently enforce that the intent is ready and all replenishment legs are confirmed.
-- RPC failure or insufficient spendable balance leaves the final payment blocked. Existing active reservations and configured reserve floors remain protected.
+- RPC failure leaves the intent and reservations unchanged. If the finalized balance is insufficient, NERITH persists the finalized snapshot, releases only this operation's temporary preposition hold, and leaves the final-payment leg planned. Existing reservations and configured reserve floors remain protected.
+- A partial unique index allows only one active managed reservation per funding leg. Repeated preparation after success returns the existing reservation; concurrent attempts cannot double-reserve.
 
 ### Final payment
 
@@ -90,8 +91,8 @@ This stage must not create or hold private keys, sign transactions, broadcast tr
 
 ## Route behavior currently implemented
 
-- Both routes require a business-scoped owner/admin session, same-origin/allowlisted browser origin on writes, and a `businessId` query parameter. The expiry worker also preserves holds while any funding leg is submitted or ambiguous. The intent and leg are resolved together from D1, so a leg cannot be submitted under another business scope.
+- All three settlement/preparation routes require a business-scoped owner/admin session, same-origin/allowlisted browser origin on writes, and a `businessId` query parameter. The expiry worker also preserves holds while any funding leg is submitted or ambiguous. The intent and leg are resolved together from D1, so a leg cannot be submitted under another business scope.
 - The submit body accepts only a base58 transaction signature. It does not accept transaction facts or a client-declared settlement state.
 - Reconciliation uses the stored signature and the configured HTTPS RPC. Exact finalized transfers consume only the linked reservation. Finalized mismatches become `ambiguous` and retain their hold; the scheduled expiry routine skips ambiguous intents.
-- Reserve-replenishment confirmation does not itself credit a cached payment-wallet balance. The separate prepare-final-payment route performs a finalized RPC balance refresh and atomically creates the final hold. The separate fee reservation is reconciled only after the finalized transaction identifies the registered business fee payer and proves the actual network fee is within the approved cap; the fee wallet must remain active, verified, business-scoped and assigned.
+- Reserve-replenishment confirmation does not itself credit a cached payment-wallet balance. The separate prepare-final-payment route performs a finalized RPC balance refresh and atomically creates the final hold; repeated calls reuse the existing hold. The separate fee reservation is reconciled only after the finalized transaction identifies the registered business fee payer and proves the actual network fee is within the approved cap; the fee wallet must remain active, verified, business-scoped and assigned.
 - These routes are code on a draft PR only. They have not been deployed or exercised against a funded wallet.
