@@ -99,6 +99,17 @@ BEGIN
   SELECT RAISE(ABORT, 'reconciled_funding_leg_fee_requires_finalized_fee');
 END;
 
+CREATE TRIGGER IF NOT EXISTS trg_funding_leg_fee_reconciliation_immutable
+BEFORE UPDATE OF actual_fee_lamports, finalized_slot ON operation_funding_leg_fees
+WHEN OLD.status = 'reconciled'
+  AND (
+    NEW.actual_fee_lamports IS NOT OLD.actual_fee_lamports
+    OR NEW.finalized_slot IS NOT OLD.finalized_slot
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'funding_leg_fee_reconciliation_immutable');
+END;
+
 -- The single managed_fee reservation is the aggregate budget for all
 -- transaction legs. It is released only by the application after all fee rows
 -- have reached a terminal, reconciled/not-required state.
@@ -206,10 +217,28 @@ WHEN (
   NEW.status = 'not_required' AND NOT EXISTS (
     SELECT 1 FROM operation_funding_legs leg
     WHERE leg.id = NEW.funding_leg_id AND leg.operation_id = NEW.operation_id
-      AND leg.status IN ('planned', 'reserved', 'cancelled', 'expired')
+      AND leg.status IN ('planned', 'reserved', 'awaiting_signature', 'authorized_for_execution', 'cancelled', 'expired')
       AND leg.transaction_hash IS NULL
   )
 )
 BEGIN
   SELECT RAISE(ABORT, 'funding_leg_fee_state_mismatch');
 END;
+
+
+-- Existing intents may already have submitted transactions from before this
+-- ledger existed. Do not fabricate fee records or release their existing
+-- holds: mark the parent intent ambiguous so new release/reconciliation paths
+-- cannot mistake an untracked in-flight transaction for a fully accounted one.
+UPDATE business_payment_intents
+SET status = 'ambiguous', updated_at = datetime('now')
+WHERE status IN ('submitted', 'replenishing')
+  AND EXISTS (
+    SELECT 1 FROM operation_funding_legs leg
+    WHERE leg.operation_id = business_payment_intents.operation_id
+      AND leg.status = 'submitted'
+      AND NOT EXISTS (
+        SELECT 1 FROM operation_funding_leg_fees fee
+        WHERE fee.funding_leg_id = leg.id
+      )
+  );
