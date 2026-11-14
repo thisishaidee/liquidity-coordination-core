@@ -756,7 +756,7 @@ describe("browser page script syntax", () => {
         expect(html).toContain('id="walletChooser"');
         expect(html).toContain('id="connectX402Reserve"');
         expect(html).toContain('purpose.value="api_payment"');
-        expect(html).toContain("A closed AppKit/Wallet Standard adapter must not block injected wallet fallbacks.");
+        expect(html).toContain("A closed Wallet Standard adapter must not block other wallet providers.");
         expect(html).toContain("Retry ownership check");
         expect(html).toContain("Connect the wallet that owns this exact address");
         expect(html).toContain("const connectedAddress=await connectSolanaWallet()");
