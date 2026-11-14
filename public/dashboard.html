@@ -177,6 +177,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   const $ = (id) => document.getElementById(id);
   if(window.NERITHOKX?.initialize)window.NERITHOKX.initialize().catch(()=>{});
   const state = { businessId: "", role: "", workspace: null, agents: [], wallets: [], walletRoles: [], telegram: [], forecast: null, operations: [], paymentIntents: [], nextCursor: null, operationStatus: "", loadErrors: {} };
+  let pendingWalletVerification=null;
   const parseDecimalAtoms = (value, decimals=6) => {
     const text=String(value??"0");
     if(!/^\d+(?:\.\d+)?$/.test(text))return 0n;
@@ -341,8 +342,9 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     return address;
   }
   async function signOwnershipChallenge(address,message) {
-    if(window.NERITHOKX?.signMessage&&window.NERITHOKX?.connectedAddress===address){
-      return await window.NERITHOKX.signMessage(message,address);
+    if(window.NERITHOKX?.connected&&window.NERITHOKX?.getAddress){
+      const okxAddress=window.NERITHOKX.getAddress();
+      if(okxAddress===address)return await window.NERITHOKX.signMessage(message,address);
     }
     for(const wallet of standardSolanaWallets){
       const connectFeature=wallet.features["standard:connect"];
@@ -740,6 +742,11 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       status.textContent="Registering "+(purpose==="api_payment"?"the isolated x402 fee wallet":"the operating wallet")+"…";
       const registered=await apiWrite("/v1/admin/wallets",{businessId:state.businessId,network:"solana",address,scope:"business",purpose});
       registeredWalletId=registered.walletId;
+      if(preferredWallet==="okx"){
+        pendingWalletVerification={walletId:registered.walletId,address};
+        status.innerHTML='Wallet registered. Tap <button type="button" class="btn primary" id="signNewWalletOwnership">Sign ownership message</button> to confirm address control. This signature does not move funds.';
+        return;
+      }
       status.textContent="Wallet registered. Sign the ownership message in your wallet to finish verification…";
       await verifyWalletOwnershipWithWallet(registered.walletId,address,button);
       status.textContent="Wallet connected and ownership verified. You can now assign its business role below.";
@@ -758,6 +765,17 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     $("connectBusinessWallet").setAttribute("aria-expanded",String(open));
     if(open)$("walletChooserHelp").textContent="Choose a wallet. NERITH will only request your public address and a message signature to prove ownership.";
   });
+  $("walletConnectStatus")?.addEventListener("click",async event=>{
+    if(event.target.id!=="signNewWalletOwnership"||!pendingWalletVerification)return;
+    const button=event.target;
+    const pending=pendingWalletVerification;
+    try{
+      await verifyWalletOwnershipWithWallet(pending.walletId,pending.address,button);
+      pendingWalletVerification=null;
+      $("walletConnectStatus").textContent="Wallet connected and ownership verified. You can now assign its business role below.";
+    }catch(error){showError("Wallet ownership verification failed: "+String(error.message||error));}
+  });
+
   $("walletChooser")?.addEventListener("click",async event=>{
     const choice=event.target.closest("[data-wallet-choice]");
     if(!choice)return;
