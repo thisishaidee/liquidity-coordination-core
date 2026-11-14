@@ -378,6 +378,16 @@ try {
     queryD1(`UPDATE operation_funding_legs SET transaction_hash = 'local-' || lower('${label}') || '-signature', status = 'submitted' WHERE id = '${legId}'`, "funding" + label + "LegSubmitted");
     queryD1(`UPDATE operation_funding_legs SET status = 'confirmed' WHERE id = '${legId}'`, "funding" + label + "LegConfirmed");
   }
+  let finalPaymentReservationRequiresReservedState = false;
+  try {
+    queryD1(`INSERT INTO reservations
+      (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
+      VALUES ('${managedFinalPaymentReservationId}', '${managedGateOperationId}', '${managedPaymentBalanceId}', '1000000', 'USDC', 'active', datetime('now', '+15 minutes'), '${managedFinalPaymentLegId}', 'managed')`, "rejectUnreservedFinalPaymentLeg");
+  } catch (error) {
+    finalPaymentReservationRequiresReservedState = String(error).includes("final_payment_leg_not_reserved");
+    if (!finalPaymentReservationRequiresReservedState) throw error;
+  }
+  if (!finalPaymentReservationRequiresReservedState) throw new Error("Final payment reservation was allowed before its funding leg entered reserved state.");
   queryD1(`UPDATE operation_funding_legs SET status = 'reserved' WHERE id = '${managedFinalPaymentLegId}'`, "allowFinalPaymentAfterFundingConfirmed");
   const finalPaymentLegState = queryD1(`SELECT status FROM operation_funding_legs WHERE id = '${managedFinalPaymentLegId}'`, "verifyFinalPaymentGate");
   if (finalPaymentLegState[0]?.status !== "reserved") throw new Error("Final payment did not become reservable after all funding legs confirmed.");
@@ -405,6 +415,7 @@ try {
     crossWalletAtomicRollbackRestoredBalances: afterCrossWalletFailure.every(row => row.reserved_atoms === "0"),
     finalPaymentBlockedUntilFundingConfirmed: finalPaymentGateRejected,
     prematureFinalPaymentReservationRejected,
+    finalPaymentReservationRequiresReservedState,
     finalPaymentAllowedAfterFundingConfirmed: finalPaymentLegState[0]?.status === "reserved",
     finalPaymentReservationReleased: finalPaymentReleased[0]?.reserved_atoms === "0"
   };
