@@ -10,9 +10,9 @@ NERITH is not a wallet, a custody service, a trading terminal, or an autonomous 
 
 The next milestone is documented in [AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md](AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md). Draft PR #51 adds the additive multi-wallet role schema, business-scoped role APIs, a responsive dashboard role-management surface, and deterministic USDC replenishment planning. These changes are branch-only and are not current production functionality until reviewed, merged and deployed with the D1 migration. The planner does not reserve balances or execute inter-wallet replenishment. The Worker still does not autonomously sign or broadcast transactions.
 
-## Multi-leg funding ledger status
+## Multi-leg funding and atomic reservation status
 
-The draft adds an operation funding-leg table linked to the existing reservation ledger. Each leg has an immutable identity, one transaction-hash binding, and guarded state transitions from planned through submitted/confirmed or failure/ambiguity. This is schema and state-machine groundwork only; existing operations do not create or execute these legs yet.
+The draft adds an operation funding-leg table linked to the existing reservation ledger, plus a managed reservation mode. Managed rows are guarded by D1 triggers that verify business ownership, verified wallet control, enabled reserve/payment roles, available balance and bounded atom values. Multi-row inserts can reserve across multiple source wallets atomically; a failing source rolls back every row and balance update. Managed release updates the aggregate exactly once. The local integration suite is being expanded to exercise both successful multi-wallet reservation and cross-wallet rollback. No API currently creates these managed reservations or orchestrates the legs.
 
 ## Deterministic payment policy status
 
@@ -57,7 +57,7 @@ NERITH evaluates fresh, authorized wallet snapshots and returns one of three bro
 - **Awaiting conversion:** USDC is short, but an eligible SOL source may be converted to cover the shortfall.
 - **Blocked:** the request cannot be safely covered by the currently eligible liquidity.
 
-Reservations are ledger holds, not blockchain transfers, escrow, or proof of payment. The V1 allocator intentionally does not combine balances from multiple wallets. This avoids pretending that separate reservations are atomic when they are not.
+Reservations are ledger holds, not blockchain transfers, escrow, or proof of payment. The current production V1 allocator still does not combine balances from multiple wallets. The draft branch now has a database-level atomic reservation primitive for managed funding legs, but it is not yet wired into a user-facing payment workflow.
 
 Reservations expire automatically through a one-minute Worker cron. Agents can also release or complete an operation. An agent-reported completion is not proof that an external payment occurred.
 
