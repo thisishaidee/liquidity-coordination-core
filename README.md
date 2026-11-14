@@ -70,7 +70,8 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 
 - Exact decimal-to-atom conversion using BigInt.
 - Conservative liquidity decision engine.
-- Direct USDC liquidity reservation from one eligible wallet.
+- Direct USDC liquidity reservation from one eligible wallet in the existing V1 agent flow.
+- Draft managed reservation accounting for verified multi-wallet funding legs, with database guards and all-or-nothing multi-row reservation/release (not yet exposed through a payment API).
 - Conditional balance update to prevent concurrent over-reservation.
 - Reservation expiry timestamp (15 minutes) and explicit release endpoint.
 - Agent and business wallet scope enforcement.
