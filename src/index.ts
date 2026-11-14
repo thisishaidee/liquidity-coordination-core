@@ -2566,8 +2566,10 @@ async function prepareFundingLegTransaction(
       row.fee_reservation_amount !== row.network_fee_budget_lamports) {
     return json({ error: "funding_leg_fee_wallet_or_reservation_invalid" }, 409);
   }
-  if (row.asset_mint !== env.SOLANA_USDC_MINT || row.amount_atoms !== row.amount_atoms ||
-      !/^[1-9][0-9]{0,18}$/.test(row.amount_atoms)) {
+  if (row.asset_mint !== env.SOLANA_USDC_MINT ||
+      !/^[1-9][0-9]{0,18}$/.test(row.amount_atoms) ||
+      !/^(0|[1-9][0-9]{0,18})$/.test(row.network_fee_budget_lamports) ||
+      !/^(0|[1-9][0-9]{0,18})$/.test(row.network_fee_lamports)) {
     return json({ error: "funding_leg_usdc_identity_invalid" }, 409);
   }
   if (row.leg_kind === "reserve_replenishment" &&
@@ -6135,7 +6137,10 @@ export default {
     if (request.method === "POST" && finalPaymentPrepareRoute) {
       return prepareFinalPaymentAfterReplenishment(request, env, finalPaymentPrepareRoute[1]);
     }
-    const fundingLegRoute = url.pathname.match(/^\/v1\/admin\/payment-intents\/([a-zA-Z0-9_-]+)\/funding-legs\/([a-zA-Z0-9_-]+)\/(submit|reconcile)$/);
+    const fundingLegRoute = url.pathname.match(/^\/v1\/admin\/payment-intents\/([a-zA-Z0-9_-]+)\/funding-legs\/([a-zA-Z0-9_-]+)\/(prepare|submit|reconcile)$/);
+    if (request.method === "POST" && fundingLegRoute && fundingLegRoute[3] === "prepare") {
+      return prepareFundingLegTransaction(request, env, fundingLegRoute[1], fundingLegRoute[2]);
+    }
     if (request.method === "POST" && fundingLegRoute && fundingLegRoute[3] === "submit") {
       return submitFundingLegTransaction(request, env, fundingLegRoute[1], fundingLegRoute[2]);
     }
