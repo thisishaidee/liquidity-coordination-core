@@ -58,6 +58,7 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 | POST | `/v1/admin/telegram/setup` | Platform-token-only shared bot setup, webhook registration and command publishing |
 | GET | `/v1/admin/telegram/status` | Platform-token-only shared Telegram webhook status |
 | GET/POST | `/v1/admin/x402/budgets` | Read or set business-wide and per-agent daily x402 USDC spending limits |
+| POST | `/v1/admin/x402/demo/quote` | Owner/admin-only, one-call Swap.io x402 proof run using verified operating and API-fee wallets |
 | POST | `/v1/admin/x402/reconcile` | Reconcile a pending x402 reservation with its finalized on-chain receipt |
 | POST | `/v1/admin/telegram/link-codes` | Create a one-time private Telegram linking invitation |
 | POST | `/v1/telegram/webhook` | Receive verified Telegram bot updates |
@@ -83,6 +84,7 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 - Exact decimal-to-atom conversion using BigInt.
 - Conservative liquidity decision engine.
 - Direct USDC liquidity reservation from one eligible wallet in the existing V1 agent flow.
+- Owner/admin-controlled Swap.io x402 proof flow: relays the unpaid 402 challenge, requires a separate explicit Jupiter Mobile USDC payment signature, enforces a 0.01 USDC per-call cap, and verifies the settlement receipt before displaying the quote; it does not execute the swap.
 - Business payment-intent preparation with deterministic policy evaluation, business-wide idempotency, daily and per-transaction caps, and atomic multi-wallet USDC/SOL reservation holds.
 - Owner/admin-only funding-leg submission and finalized Solana RPC reconciliation with exact SPL transfer verification, immutable transaction signatures, ambiguity holds and separate network-fee validation.
 - Finalized payment-wallet USDC refresh after all reserve legs confirm; the final-payment leg and reservation are unlocked atomically under database-enforced intent and funding-leg gates.
