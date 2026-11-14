@@ -719,6 +719,8 @@ describe("browser page script syntax", () => {
     expect(jupiterJs).toContain("NERITHJUPITER");
     expect(jupiterJs).toContain("NERITHSOLANA");
     expect(jupiterJs).toContain("solana:signTransaction");
+    expect(jupiterJs).toContain("requireAllSignatures: false");
+    expect(jupiterJs).toContain("expected USDC transfer-authority signature");
     expect(jupiterJs).toContain("Wallet Standard account");
     expect(jupiterJs).toContain("13a7a3c0065f86dab70a544edc8ed07d");
     expect(jupiterJs).toContain("prepareX402Payment");
