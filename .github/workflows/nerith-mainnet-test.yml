@@ -9,6 +9,7 @@ on:
       - "public/**"
       - "migrations/**"
       - "scripts/**"
+      - "wallet-connect/**"
       - "test/**"
       - "package.json"
       - "tsconfig.json"
