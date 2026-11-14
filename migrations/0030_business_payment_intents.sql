@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS business_payment_intents (
   payment_atoms TEXT NOT NULL,
   fee_payer_wallet_id TEXT NOT NULL REFERENCES wallets(id),
   network_fee_lamports TEXT NOT NULL,
+  allow_partial_payment INTEGER NOT NULL DEFAULT 0 CHECK (allow_partial_payment IN (0, 1)),
+  slippage_bps INTEGER CHECK (slippage_bps BETWEEN 0 AND 10000),
   action TEXT NOT NULL CHECK (action IN ('direct_payment', 'replenish_then_pay', 'partial_payment', 'conversion_required')),
   status TEXT NOT NULL CHECK (status IN (
     'policy_checked', 'reserved', 'replenishing', 'awaiting_owner_approval',
@@ -49,7 +51,7 @@ CREATE INDEX IF NOT EXISTS idx_business_payment_intents_status_expiry
 CREATE TRIGGER IF NOT EXISTS trg_business_payment_intent_identity_immutable
 BEFORE UPDATE OF business_id, operation_id, idempotency_key, destination, mint,
                  requested_atoms, payment_atoms, fee_payer_wallet_id,
-                 network_fee_lamports, action, policy_version, policy_snapshot
+                 network_fee_lamports, allow_partial_payment, slippage_bps, action, policy_version, policy_snapshot
 ON business_payment_intents
 WHEN NEW.business_id IS NOT OLD.business_id
   OR NEW.operation_id IS NOT OLD.operation_id
@@ -60,6 +62,8 @@ WHEN NEW.business_id IS NOT OLD.business_id
   OR NEW.payment_atoms IS NOT OLD.payment_atoms
   OR NEW.fee_payer_wallet_id IS NOT OLD.fee_payer_wallet_id
   OR NEW.network_fee_lamports IS NOT OLD.network_fee_lamports
+  OR NEW.allow_partial_payment IS NOT OLD.allow_partial_payment
+  OR NEW.slippage_bps IS NOT OLD.slippage_bps
   OR NEW.action IS NOT OLD.action
   OR NEW.policy_version IS NOT OLD.policy_version
   OR NEW.policy_snapshot IS NOT OLD.policy_snapshot
@@ -81,4 +85,25 @@ WHEN NOT (
 )
 BEGIN
   SELECT RAISE(ABORT, 'invalid_business_payment_intent_transition');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_business_payment_intent_scope_insert
+BEFORE INSERT ON business_payment_intents
+BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM operations op
+    JOIN agents a ON a.id = op.agent_id AND a.business_id = op.business_id
+    JOIN wallets fee_wallet ON fee_wallet.id = NEW.fee_payer_wallet_id
+    WHERE op.id = NEW.operation_id
+      AND op.business_id = NEW.business_id
+      AND fee_wallet.business_id = NEW.business_id
+      AND fee_wallet.scope = 'business'
+      AND fee_wallet.status = 'active'
+      AND fee_wallet.ownership_verified_at IS NOT NULL
+  ) THEN RAISE(ABORT, 'business_payment_intent_scope_invalid') END;
+
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM business_payment_policies p
+    WHERE p.business_id = NEW.business_id AND p.version = NEW.policy_version
+  ) THEN RAISE(ABORT, 'business_payment_policy_version_changed') END;
 END;
