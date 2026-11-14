@@ -72,7 +72,8 @@ WHEN OLD.reservation_source = 'managed'
   AND NEW.status IN ('released', 'consumed', 'expired')
 BEGIN
   UPDATE wallet_balances
-  SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - CAST(OLD.amount_atoms AS INTEGER)
+  SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - CAST(OLD.amount_atoms AS INTEGER),
+      observed_at = CASE WHEN NEW.status = 'consumed' THEN datetime('now', '-10 minutes') ELSE observed_at END
   WHERE id = OLD.wallet_balance_id
     AND CAST(reserved_atoms AS INTEGER) >= CAST(OLD.amount_atoms AS INTEGER);
   SELECT CASE WHEN changes() <> 1
