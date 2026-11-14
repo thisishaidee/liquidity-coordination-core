@@ -4589,6 +4589,7 @@ export default {
     await env.DB.prepare("DELETE FROM telegram_request_drafts WHERE expires_at <= datetime('now')").run();
     await env.DB.prepare("DELETE FROM telegram_processed_updates WHERE processed_at < datetime('now', '-30 days')").run();
     await env.DB.prepare("DELETE FROM api_rate_limits WHERE updated_at < datetime('now', '-2 days')").run();
+    await env.DB.prepare("DELETE FROM wallet_ownership_challenges WHERE expires_at < datetime('now', '-1 day') OR consumed_at < datetime('now', '-1 day')").run();
     await env.DB.prepare(`
       DELETE FROM x402_payment_challenges
       WHERE status = 'expired' AND created_at < datetime('now', '-30 days')
