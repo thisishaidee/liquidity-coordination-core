@@ -454,6 +454,7 @@ try {
     throw new Error("Business payment intent uniqueness or immutable state guards failed.");
   }
   queryD1(`UPDATE wallet_role_assignments SET minimum_remaining_atoms = '500000', maximum_transfer_atoms = '600000' WHERE wallet_id = '${managedSecondReserveWalletId}' AND role = 'reserve'`, "applyManagedReserveLimits");
+  queryD1(`UPDATE wallet_balances SET confirmed_atoms = '1099999' WHERE id = '${managedSecondReserveBalanceId}'`, "setReserveFloorTestBalance");
   const limitedLegIds = ["leg_" + randomBytes(16).toString("hex"), "leg_" + randomBytes(16).toString("hex"), "leg_" + randomBytes(16).toString("hex")];
   const limitedReservationIds = ["res_" + randomBytes(16).toString("hex"), "res_" + randomBytes(16).toString("hex"), "res_" + randomBytes(16).toString("hex")];
   const limitedAmounts = ["700000", "600000", "500000"];
@@ -482,6 +483,7 @@ try {
     VALUES ('${limitedReservationIds[2]}', '${managedOperationId}', '${managedSecondReserveBalanceId}', '500000', 'USDC', 'active', datetime('now', '+15 minutes'), '${limitedLegIds[2]}', 'managed')`, "reserveWithinFloorAndCap");
   queryD1(`UPDATE reservations SET status = 'released', released_at = datetime('now') WHERE id = '${limitedReservationIds[2]}'`, "releaseReserveLimitTestHold");
   queryD1(`UPDATE wallet_role_assignments SET minimum_remaining_atoms = '0', maximum_transfer_atoms = NULL WHERE wallet_id = '${managedSecondReserveWalletId}' AND role = 'reserve'`, "restoreManagedReserveLimits");
+  queryD1(`UPDATE wallet_balances SET confirmed_atoms = '4000000' WHERE id = '${managedSecondReserveBalanceId}'`, "restoreReserveTestBalance");
   const reserveLimitBalance = queryD1(`SELECT reserved_atoms FROM wallet_balances WHERE id = '${managedSecondReserveBalanceId}'`, "verifyReserveLimitRelease");
   if (!reserveTransferCapRejected || !reserveFloorRejected || reserveLimitBalance[0]?.reserved_atoms !== "0") {
     throw new Error("Managed reserve floor or transfer cap enforcement failed.");
