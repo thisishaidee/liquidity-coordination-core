@@ -210,7 +210,7 @@ try {
   const databaseChecks = {
     oneChallengeStored: challengeRows.length === 1,
     challengeStatusPending: stored?.status === "pending",
-    amountMatchesRelayedChallenge: stored?.amount_atoms === requirement.maxAmountRequired,
+    amountMatchesRelayedChallenge: String(stored?.amount_atoms ?? "") === requirement.maxAmountRequired,
     resourceMatchesRelayedChallenge: stored?.resource === requirement.resource,
     recipientMatchesRelayedChallenge: stored?.pay_to === requirement.payTo,
     assetMatchesRelayedChallenge: stored?.asset === requirement.asset,
