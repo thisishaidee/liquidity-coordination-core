@@ -39,7 +39,7 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS trg_managed_reservation_identity_immutable
 BEFORE UPDATE OF wallet_balance_id, amount_atoms, reservation_source, funding_leg_id ON reservations
-WHEN OLD.reservation_source = 'managed' AND OLD.status = 'active'
+WHEN OLD.reservation_source = 'managed'
   AND (
     NEW.wallet_balance_id IS NOT OLD.wallet_balance_id
     OR NEW.amount_atoms IS NOT OLD.amount_atoms
@@ -52,7 +52,7 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS trg_managed_reservation_active_delete_block
 BEFORE DELETE ON reservations
-WHEN OLD.reservation_source = 'managed' AND OLD.status = 'active'
+WHEN OLD.reservation_source = 'managed'
 BEGIN
   SELECT RAISE(ABORT, 'managed_reservation_must_be_released_before_delete');
 END;
