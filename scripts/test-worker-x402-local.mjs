@@ -104,6 +104,7 @@ try {
   const reservationColumns = queryD1("PRAGMA table_info(reservations)", "inspectReservationColumns");
   const managedReservationTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_managed_reservation_reserve_balance', 'trg_managed_reservation_release_balance', 'trg_managed_reservation_identity_immutable', 'trg_managed_reservation_active_delete_block', 'trg_managed_fee_reservation_reserve_balance')", "inspectManagedReservationTriggers");
   const fundingLegTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_funding_leg_identity_immutable', 'trg_funding_leg_transaction_hash_immutable', 'trg_funding_leg_state_transition', 'trg_funding_leg_submitted_requires_hash', 'trg_funding_leg_confirmed_requires_hash')", "inspectFundingLegTriggers");
+  const fundingLegTransactionHashIndex = queryD1("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_funding_legs_transaction_hash'", "inspectFundingLegTransactionHashIndex");
   const finalPaymentTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_final_payment_leg_requires_confirmed_funding', 'trg_final_payment_reservation_requires_confirmed_funding')", "inspectFinalPaymentFundingTriggers");
   const paymentIntentTables = queryD1("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('business_payment_policies', 'business_payment_intents')", "inspectBusinessPaymentTables");
   const paymentIntentTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_business_payment_intent_identity_immutable', 'trg_business_payment_intent_state_transition', 'trg_business_payment_intent_scope_insert', 'trg_business_payment_intent_policy_guard')", "inspectBusinessPaymentTriggers");
@@ -119,6 +120,7 @@ try {
     managedReservationSourceColumn: reservationColumns.some(row => row.name === "reservation_source"),
     managedReservationTriggers: managedReservationTriggers.length === 5,
     fundingLegSafetyTriggers: fundingLegTriggers.length === 5,
+    uniqueFundingLegTransactionHash: fundingLegTransactionHashIndex.length === 1 && fundingLegTransactionHashIndex[0].sql.includes("CREATE UNIQUE INDEX"),
     finalPaymentFundingGates: finalPaymentTriggers.length === 2,
     businessPaymentTables: paymentIntentTables.length === 2,
     businessPaymentTriggers: paymentIntentTriggers.length === 4
