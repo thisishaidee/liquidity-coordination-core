@@ -792,7 +792,7 @@ describe("browser page script syntax", () => {
         expect(html).toContain('async function connectSolanaWallet(preferredWallet="",expectedAddress="")');
         expect(html).toContain("return await window.NERITHJUPITER.connect(expectedAddress);");
         expect(html).toContain('connectSolanaWallet(wallet==="browser"?"":wallet,pending.address)');
-        const jupiterConnector = readFileSync(new URL("../wallet-connect/jupiter-mobile-connector.jsx", import.meta.url), "utf8");
+        const jupiterConnector = readFileSync("wallet-connect/jupiter-mobile-connector.jsx", "utf8");
         expect(jupiterConnector).toContain("await adapter.disconnect();");
         expect(jupiterConnector).toContain("Jupiter Mobile reconnected as ");
 
