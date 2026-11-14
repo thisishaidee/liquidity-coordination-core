@@ -344,6 +344,33 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     ];
     return candidates.find(provider=>provider&&typeof provider.connect==="function"&&typeof provider.signMessage==="function")||null;
   }
+  function getX402WalletSigner(address) {
+    if(window.NERITHJUPITER?.connected&&window.NERITHJUPITER.getAddress?.()===address) {
+      return {kind:"jupiter",label:"Jupiter Mobile"};
+    }
+    if(window.NERITHOKX?.connected&&window.NERITHOKX.getAddress?.()===address&&
+       typeof window.NERITHOKX.signTransaction==="function") {
+      return {kind:"okx",label:"OKX Wallet"};
+    }
+    for(const wallet of standardSolanaWallets) {
+      const account=(wallet.accounts||[]).find(item=>item.address===address&&supportsSolanaMainnet(item.chains));
+      const signFeature=wallet.features?.["solana:signTransaction"];
+      if(account&&typeof signFeature?.signTransaction==="function") {
+        return {kind:"standard",label:wallet.name||"Solana wallet",wallet,account};
+      }
+    }
+    const candidates=[
+      window.okxwallet?.solana,
+      window.phantom?.solana,
+      window.solflare,
+      window.backpack?.solana,
+      window.solana
+    ];
+    const provider=candidates.find(item=>item&&item.publicKey?.toString?.()===address&&
+      typeof item.signTransaction==="function");
+    if(provider)return {kind:"injected",label:provider.name||"Connected Solana wallet",provider};
+    throw new Error("The selected fee wallet is not connected with transaction-signing permission. Reconnect it, then request a fresh quote.");
+  }
   async function connectSolanaWallet(preferredWallet="") {
     if(preferredWallet==="jupiter"){
       if(!window.NERITHJUPITER?.connect)throw new Error("The Jupiter Mobile connector is still loading. Refresh the dashboard and try again.");
@@ -925,16 +952,14 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       if (amount <= 0n || amount > 10000n) {
         throw new Error("The quoted fee exceeds NERITH's 0.01 USDC per-payment safety cap. No payment was signed.");
       }
-      const connector = window.NERITHJUPITER;
+      const connector = window.NERITHSOLANA;
       if (!connector || typeof connector.prepareX402Payment !== "function") {
-        throw new Error("Connect Jupiter Mobile to the selected x402 fee wallet before preparing payment.");
+        throw new Error("The Solana transaction-signing module is still loading. Refresh the dashboard and try again.");
       }
-      if (connector.getAddress() !== body.paymentWalletAddress) {
-        throw new Error("Jupiter Mobile is connected to a different account. Reconnect using the selected x402 fee wallet.");
-      }
-      $("x402DemoStatus").textContent = "HTTP 402 received. Preparing the exact USDC transfer before the approval tap…";
-      const prepared = await connector.prepareX402Payment(requirement, body.paymentWalletAddress);
-      pendingX402Demo = { body, requirement, preparationId: prepared.preparationId };
+      const signer = getX402WalletSigner(body.paymentWalletAddress);
+      $("x402DemoStatus").textContent = "HTTP 402 received. Preparing the exact USDC transfer for " + signer.label + "…";
+      const prepared = await connector.prepareX402Payment(requirement, body.paymentWalletAddress, signer);
+      pendingX402Demo = { body, requirement, preparationId: prepared.preparationId, signer };
       const secondsLeft = Math.max(1, Math.floor((prepared.expiresAt - Date.now()) / 1000));
       $("x402DemoFee").textContent = "Payment required: " + formatAtoms(amount, 6, 6) + " USDC";
       $("x402DemoFeeNote").textContent = "Payment transaction prepared. Approve within about " + secondsLeft + " seconds. This pays for the quote API call only; it does not execute a swap or move SOL.";
@@ -955,15 +980,16 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     let paymentSigned = false;
     try {
       const paymentAddress = pending.body.paymentWalletAddress;
-      const connector = window.NERITHJUPITER;
-      if (!connector || typeof connector.createX402PaymentHeader !== "function") {
-        throw new Error("Connect Jupiter Mobile to the selected x402 fee wallet before signing.");
+      const connector = window.NERITHSOLANA;
+      if (!connector || typeof connector.signPreparedX402Payment !== "function") {
+        throw new Error("The Solana transaction-signing module is unavailable. Refresh and request a fresh quote.");
       }
-      if (connector.getAddress() !== paymentAddress) {
-        throw new Error("Jupiter Mobile is connected to a different account. Reconnect using the selected x402 fee wallet.");
+      const signer = getX402WalletSigner(paymentAddress);
+      if (signer.kind !== pending.signer.kind) {
+        throw new Error("The connected wallet changed after the quote was prepared. Request a fresh challenge.");
       }
-      $("x402DemoStatus").textContent = "Opening Jupiter Mobile to approve the exact USDC API fee…";
-      const paymentHeader = await connector.signPreparedX402Payment(pending.preparationId, paymentAddress);
+      $("x402DemoStatus").textContent = "Opening " + signer.label + " to approve the exact USDC API fee…";
+      const paymentHeader = await connector.signPreparedX402Payment(pending.preparationId, paymentAddress, signer);
       paymentSigned = true;
       pendingX402Demo = null;
       $("x402DemoPayment").hidden = true;
