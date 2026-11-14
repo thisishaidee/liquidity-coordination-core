@@ -17,6 +17,8 @@ import { parseHermesPaymentPayload, parseHermesPaymentRequirement, parseHermesPa
 import { describeAdminRoute, isAllowedAdminOrigin, isDashboardRoleAllowed, matchesBusinessScope } from "./admin-auth";
 import { decodeSolanaAddress, verifySolanaMessageSignature } from "./solana-wallet-verification";
 import { evaluatePaymentIntentPolicy, type PaymentIntent, type PaymentPolicy, type PolicyWalletSnapshot } from "./transaction-policy";
+import { fetchFinalizedSolanaTransaction } from "./solana-finalized-transaction";
+import { verifySolanaTokenTransfer, type SolanaPaymentTransaction } from "./payment-settlement";
 
 interface Env {
   DB: D1Database;
@@ -2188,6 +2190,266 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
         ? "Reserve-wallet amounts are held in the internal ledger. Final payment remains blocked until every replenishment leg is confirmed."
         : "The payment-wallet amount is held in the internal ledger. No transaction has been signed or broadcast."
   }, 201);
+}
+
+
+type FundingLegSettlementRow = {
+  leg_id: string; leg_status: string; leg_kind: string; transaction_hash: string | null;
+  amount_atoms: string; asset_mint: string; destination_address: string;
+  intent_id: string; intent_status: string; intent_action: string; intent_expires_at: string;
+  intent_destination: string; intent_mint: string; payment_atoms: string;
+  operation_id: string; business_id: string; operation_status: string;
+  source_wallet_id: string; source_address: string; source_status: string;
+  source_scope: string; source_verified_at: string | null;
+  destination_wallet_id: string | null; destination_wallet_address: string | null;
+  destination_wallet_status: string | null; destination_wallet_scope: string | null;
+  destination_verified_at: string | null; reservation_id: string | null;
+};
+
+async function getFundingLegSettlementRow(
+  env: Env, intentId: string, legId: string, businessId: string
+): Promise<FundingLegSettlementRow | null> {
+  return env.DB.prepare(`
+    SELECT l.id AS leg_id, l.status AS leg_status, l.kind AS leg_kind,
+           l.transaction_hash, l.amount_atoms, l.asset_mint, l.destination_address,
+           i.id AS intent_id, i.status AS intent_status, i.action AS intent_action,
+           i.expires_at AS intent_expires_at, i.destination AS intent_destination,
+           i.mint AS intent_mint, i.payment_atoms,
+           op.id AS operation_id, op.business_id, op.status AS operation_status,
+           source_wallet.id AS source_wallet_id, source_wallet.address AS source_address,
+           source_wallet.status AS source_status, source_wallet.scope AS source_scope,
+           source_wallet.ownership_verified_at AS source_verified_at,
+           destination_wallet.id AS destination_wallet_id,
+           destination_wallet.address AS destination_wallet_address,
+           destination_wallet.status AS destination_wallet_status,
+           destination_wallet.scope AS destination_wallet_scope,
+           destination_wallet.ownership_verified_at AS destination_verified_at,
+           reservation.id AS reservation_id
+    FROM operation_funding_legs l
+    JOIN operations op ON op.id = l.operation_id
+    JOIN business_payment_intents i ON i.operation_id = op.id AND i.business_id = op.business_id
+    JOIN wallets source_wallet ON source_wallet.id = l.source_wallet_id
+    LEFT JOIN wallets destination_wallet ON destination_wallet.id = l.destination_wallet_id
+    LEFT JOIN reservations reservation
+      ON reservation.funding_leg_id = l.id AND reservation.status = 'active'
+    WHERE i.id = ? AND l.id = ? AND op.business_id = ?
+    LIMIT 1
+  `).bind(intentId, legId, businessId).first<FundingLegSettlementRow>();
+}
+
+async function submitFundingLegTransaction(
+  request: Request, env: Env, intentId: string, legId: string
+): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const businessId = new URL(request.url).searchParams.get("businessId") ?? "";
+  const body = await readJson(request);
+  if (!body || typeof body.signature !== "string" ||
+      !/^[1-9A-HJ-NP-Za-km-z]{80,100}$/.test(body.signature)) {
+    return json({ error: "invalid_transaction_signature" }, 400);
+  }
+  const row = await getFundingLegSettlementRow(env, intentId, legId, businessId);
+  if (!row) return json({ error: "funding_leg_not_found" }, 404);
+  if (row.leg_status === "submitted" && row.transaction_hash === body.signature) {
+    return json({ intentId, fundingLegId: legId, status: "submitted", reused: true,
+      note: "Signature is recorded only; on-chain settlement is still unverified." });
+  }
+  if (row.transaction_hash) return json({ error: "funding_leg_signature_already_bound" }, 409);
+  if (row.intent_action === "conversion_required" || row.leg_kind === "conversion") {
+    return json({ error: "conversion_settlement_not_supported" }, 409);
+  }
+  if (Date.parse(row.intent_expires_at) <= Date.now()) return json({ error: "payment_intent_expired" }, 409);
+  if (row.intent_status !== "reserved" && row.intent_status !== "replenishing") {
+    return json({ error: "payment_intent_not_submittable", status: row.intent_status }, 409);
+  }
+  if (row.leg_status !== "reserved" && row.leg_status !== "awaiting_signature" &&
+      row.leg_status !== "authorized_for_execution") {
+    return json({ error: "funding_leg_not_submittable", status: row.leg_status }, 409);
+  }
+  if (!row.reservation_id || row.source_status !== "active" || row.source_scope !== "business" || !row.source_verified_at) {
+    return json({ error: "funding_leg_reservation_or_source_invalid" }, 409);
+  }
+  if (row.leg_kind === "reserve_replenishment" &&
+      (!row.destination_wallet_id || row.destination_wallet_status !== "active" ||
+       row.destination_wallet_scope !== "business" || !row.destination_verified_at ||
+       row.destination_address !== row.destination_wallet_address)) {
+    return json({ error: "funding_leg_destination_wallet_invalid" }, 409);
+  }
+  if (row.leg_kind === "final_payment" &&
+      (row.destination_address !== row.intent_destination ||
+       row.asset_mint !== row.intent_mint || row.amount_atoms !== row.payment_atoms)) {
+    return json({ error: "funding_leg_intent_identity_mismatch" }, 409);
+  }
+
+  const statements: D1PreparedStatement[] = [];
+  if (row.leg_status === "reserved") {
+    statements.push(env.DB.prepare(
+      "UPDATE operation_funding_legs SET status = 'awaiting_signature' WHERE id = ? AND status = 'reserved' AND transaction_hash IS NULL"
+    ).bind(legId));
+  }
+  statements.push(env.DB.prepare(`
+    UPDATE operation_funding_legs
+    SET transaction_hash = ?, status = 'submitted', updated_at = datetime('now')
+    WHERE id = ? AND operation_id = ? AND status = ? AND transaction_hash IS NULL
+      AND EXISTS (
+        SELECT 1 FROM reservations r
+        WHERE r.funding_leg_id = operation_funding_legs.id AND r.status = 'active'
+      )
+  `).bind(body.signature, legId, row.operation_id,
+    row.leg_status === "reserved" ? "awaiting_signature" : row.leg_status));
+  if (row.leg_kind === "final_payment") {
+    statements.push(env.DB.prepare(`
+      UPDATE business_payment_intents SET status = 'submitted', updated_at = datetime('now')
+      WHERE id = ? AND business_id = ? AND status = 'reserved'
+    `).bind(intentId, businessId));
+  }
+  try {
+    await env.DB.batch(statements);
+  } catch {
+    return json({ error: "funding_leg_submission_conflict" }, 409);
+  }
+  const updated = await getFundingLegSettlementRow(env, intentId, legId, businessId);
+  if (!updated || updated.leg_status !== "submitted" || updated.transaction_hash !== body.signature) {
+    return json({ error: "funding_leg_submission_conflict" }, 409);
+  }
+  return json({ intentId, fundingLegId: legId, status: "submitted", transactionSignature: body.signature,
+    note: "Signature recorded. NERITH has not yet verified finality or payment settlement." }, 202);
+}
+
+async function reconcileFundingLegTransaction(
+  request: Request, env: Env, intentId: string, legId: string
+): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const businessId = new URL(request.url).searchParams.get("businessId") ?? "";
+  const row = await getFundingLegSettlementRow(env, intentId, legId, businessId);
+  if (!row) return json({ error: "funding_leg_not_found" }, 404);
+  if (row.leg_status === "confirmed") {
+    return json({ intentId, fundingLegId: legId, status: "confirmed", confirmed: true, reused: true });
+  }
+  if (row.leg_status === "ambiguous") {
+    // Ambiguous finalized mismatches are not automatically retried or released.
+    return json({ intentId, fundingLegId: legId, status: "ambiguous", confirmed: false,
+      note: "The finalized transaction did not prove the approved transfer. Reservations remain held for owner review." }, 409);
+  }
+  if (row.leg_status !== "submitted" || !row.transaction_hash) {
+    return json({ error: "funding_leg_not_submitted", status: row.leg_status }, 409);
+  }
+  if (!env.SOLANA_RPC_URL) return json({ error: "solana_rpc_not_configured" }, 503);
+  if (row.intent_action === "conversion_required" || row.leg_kind === "conversion") {
+    return json({ error: "conversion_settlement_not_supported" }, 409);
+  }
+  if (!row.reservation_id || row.source_status !== "active" || row.source_scope !== "business" || !row.source_verified_at) {
+    return json({ error: "funding_leg_reservation_or_source_invalid" }, 409);
+  }
+  const destinationOwner = row.leg_kind === "reserve_replenishment"
+    ? row.destination_wallet_address : row.destination_address;
+  if (!destinationOwner || (row.leg_kind === "reserve_replenishment" &&
+      (!row.destination_wallet_id || row.destination_wallet_status !== "active" ||
+       row.destination_wallet_scope !== "business" || !row.destination_verified_at ||
+       row.destination_address !== row.destination_wallet_address))) {
+    return json({ error: "funding_leg_destination_invalid" }, 409);
+  }
+  if (row.leg_kind === "final_payment" &&
+      (row.destination_address !== row.intent_destination ||
+       row.asset_mint !== row.intent_mint || row.amount_atoms !== row.payment_atoms)) {
+    return json({ error: "funding_leg_intent_identity_mismatch" }, 409);
+  }
+
+  let lookup;
+  try {
+    lookup = await fetchFinalizedSolanaTransaction(env.SOLANA_RPC_URL, row.transaction_hash);
+  } catch {
+    return json({ intentId, fundingLegId: legId, status: "submitted", confirmed: false,
+      pending: true, reason: "Solana RPC is temporarily unavailable. The reservation remains active." }, 503);
+  }
+  if (lookup.state === "pending") {
+    return json({ intentId, fundingLegId: legId, status: "submitted", confirmed: false,
+      pending: true, reason: lookup.reason }, 202);
+  }
+  if (lookup.state === "failed") {
+    try {
+      await env.DB.batch([
+        env.DB.prepare(`
+          UPDATE operation_funding_legs SET status = 'failed', failure_reason = ?, confirmed_slot = ?,
+            updated_at = datetime('now')
+          WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
+        `).bind(lookup.reason, lookup.slot ?? null, legId, row.transaction_hash),
+        env.DB.prepare(`
+          UPDATE reservations SET status = 'released', released_at = datetime('now')
+          WHERE funding_leg_id = ? AND status = 'active'
+        `).bind(legId),
+        env.DB.prepare(`
+          UPDATE business_payment_intents SET status = 'failed', updated_at = datetime('now')
+          WHERE id = ? AND status IN ('submitted', 'replenishing', 'reserved')
+        `).bind(intentId)
+      ]);
+    } catch {
+      return json({ error: "funding_leg_failure_reconciliation_conflict" }, 409);
+    }
+    return json({ intentId, fundingLegId: legId, status: "failed", confirmed: false, reason: lookup.reason }, 409);
+  }
+
+  const verification = verifySolanaTokenTransfer(
+    lookup.transaction as SolanaPaymentTransaction,
+    {
+      signature: row.transaction_hash,
+      sourceWalletAddress: row.source_address,
+      destinationOwnerAddress: destinationOwner,
+      mint: row.asset_mint,
+      amountAtoms: row.amount_atoms,
+      decimals: 6
+    }
+  );
+  if (!verification.verified) {
+    try {
+      await env.DB.prepare(`
+        UPDATE operation_funding_legs
+        SET status = 'ambiguous', failure_reason = ?, confirmed_slot = ?,
+            updated_at = datetime('now')
+        WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
+      `).bind(verification.reason, lookup.slot, legId, row.transaction_hash).run();
+    } catch {
+      return json({ error: "funding_leg_ambiguity_record_failed" }, 409);
+    }
+    return json({ intentId, fundingLegId: legId, status: "ambiguous", confirmed: false,
+      reason: verification.reason,
+      note: "The transaction is finalized but does not prove the approved transfer. Reservations remain held." }, 409);
+  }
+
+  const statements: D1PreparedStatement[] = [
+    env.DB.prepare(`
+      UPDATE operation_funding_legs
+      SET status = 'confirmed', received_output_atoms = ?, confirmed_slot = ?,
+          failure_reason = NULL, updated_at = datetime('now')
+      WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
+    `).bind(verification.amountAtoms ?? row.amount_atoms, lookup.slot, legId, row.transaction_hash),
+    env.DB.prepare(`
+      UPDATE reservations SET status = 'consumed', released_at = datetime('now')
+      WHERE funding_leg_id = ? AND status = 'active'
+    `).bind(legId)
+  ];
+  if (row.leg_kind === "final_payment") {
+    statements.push(env.DB.prepare(`
+      UPDATE business_payment_intents SET status = 'confirmed', updated_at = datetime('now')
+      WHERE id = ? AND business_id = ? AND status = 'submitted'
+    `).bind(intentId, businessId));
+  }
+  try {
+    await env.DB.batch(statements);
+  } catch {
+    return json({ error: "funding_leg_confirmation_conflict" }, 409);
+  }
+  const finalRow = await getFundingLegSettlementRow(env, intentId, legId, businessId);
+  if (!finalRow || finalRow.leg_status !== "confirmed") {
+    return json({ error: "funding_leg_confirmation_conflict" }, 409);
+  }
+  return json({
+    intentId, fundingLegId: legId, status: "confirmed", confirmed: true,
+    transactionSignature: row.transaction_hash, confirmedSlot: lookup.slot,
+    amountAtoms: verification.amountAtoms,
+    nextStep: row.leg_kind === "reserve_replenishment"
+      ? "Refresh and verify the payment-wallet USDC balance at finalized commitment before reserving or submitting the final-payment leg."
+      : "Payment transfer is finalized and verified. The separate SOL network-fee reservation still requires independent fee reconciliation."
+  });
 }
 
 async function getBusinessPaymentIntent(request: Request, env: Env, intentId: string): Promise<Response> {
@@ -5216,6 +5478,13 @@ export default {
     if (request.method === "GET" && url.pathname === "/v1/admin/payment-policy") return getBusinessPaymentPolicy(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/payment-policy") return setBusinessPaymentPolicy(request, env);
     if (request.method === "POST" && url.pathname === "/v1/payments/prepare") return createBusinessPaymentIntent(request, env);
+    const fundingLegRoute = url.pathname.match(/^\/v1\/admin\/payment-intents\/([a-zA-Z0-9_-]+)\/funding-legs\/([a-zA-Z0-9_-]+)\/(submit|reconcile)$/);
+    if (request.method === "POST" && fundingLegRoute && fundingLegRoute[3] === "submit") {
+      return submitFundingLegTransaction(request, env, fundingLegRoute[1], fundingLegRoute[2]);
+    }
+    if (request.method === "POST" && fundingLegRoute && fundingLegRoute[3] === "reconcile") {
+      return reconcileFundingLegTransaction(request, env, fundingLegRoute[1], fundingLegRoute[2]);
+    }
     const paymentIntentMatch = url.pathname.match(/^\/v1\/payments\/([a-zA-Z0-9_-]+)$/);
     if (request.method === "GET" && paymentIntentMatch) return getBusinessPaymentIntent(request, env, paymentIntentMatch[1]);
     if (request.method === "POST" && url.pathname === "/v1/admin/wallet-roles") return setBusinessWalletRole(request, env);
