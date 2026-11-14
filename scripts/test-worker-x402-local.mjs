@@ -189,6 +189,84 @@ try {
   const seedFile = join(tmpdir(), "nerith-track2-seed-" + suffix + ".sql");
   await writeFile(seedFile, seedSql, "utf8");
   runWrangler(["d1", "execute", "liquidity-coordination", "--local", "--file", seedFile], "seedLocalTestFixtures");
+  const managedReserveWalletId = "wal_" + randomBytes(16).toString("hex");
+  const managedPaymentWalletId = "wal_" + randomBytes(16).toString("hex");
+  const managedReserveBalanceId = "bal_" + randomBytes(16).toString("hex");
+  const managedOperationId = "op_" + randomBytes(16).toString("hex");
+  const managedLegId = "leg_" + randomBytes(16).toString("hex");
+  const managedSecondLegId = "leg_" + randomBytes(16).toString("hex");
+  const managedReservationId = "res_" + randomBytes(16).toString("hex");
+  const managedSecondReservationId = "res_" + randomBytes(16).toString("hex");
+  const managedReserveAddress = "8bN6v5Kj3dQx4sW7mR2pL9cF1aT6uH5eG3iJ7kM9nPq";
+  const managedPaymentAddress = "9cP7w6Lm4eRy5tX8nS3qM1dG2bU7vI6fH4jK8lN2oQr";
+
+  queryD1(`INSERT INTO wallets
+    (id, business_id, agent_id, network, address, scope, purpose, ownership_verified_at, ownership_verified_origin)
+    VALUES ('${managedReserveWalletId}', '${businessId}', NULL, 'solana', '${managedReserveAddress}', 'business', 'operating', datetime('now'), 'https://neritth.pages.dev')`, "insertManagedReserveWallet");
+  queryD1(`INSERT INTO wallets
+    (id, business_id, agent_id, network, address, scope, purpose, ownership_verified_at, ownership_verified_origin)
+    VALUES ('${managedPaymentWalletId}', '${businessId}', NULL, 'solana', '${managedPaymentAddress}', 'business', 'operating', datetime('now'), 'https://neritth.pages.dev')`, "insertManagedPaymentWallet");
+  queryD1(`INSERT INTO wallet_role_assignments (business_id, wallet_id, role, enabled)
+    VALUES ('${businessId}', '${managedReserveWalletId}', 'reserve', 1)`, "assignManagedReserveRole");
+  queryD1(`INSERT INTO wallet_role_assignments (business_id, wallet_id, role, enabled)
+    VALUES ('${businessId}', '${managedPaymentWalletId}', 'payment', 1)`, "assignManagedPaymentRole");
+  queryD1(`INSERT INTO wallet_balances (id, wallet_id, token, confirmed_atoms, reserved_atoms, observed_at, source)
+    VALUES ('${managedReserveBalanceId}', '${managedReserveWalletId}', 'USDC', '5000000', '0', datetime('now'), 'managed_reservation_fixture')`, "insertManagedReserveBalance");
+  queryD1(`INSERT INTO wallet_balances (id, wallet_id, token, confirmed_atoms, reserved_atoms, observed_at, source)
+    VALUES ('bal_${randomBytes(16).toString("hex")}', '${managedPaymentWalletId}', 'USDC', '1000000', '0', datetime('now'), 'managed_reservation_fixture')`, "insertManagedPaymentBalance");
+  queryD1(`INSERT INTO operations
+    (id, business_id, agent_id, task_id, network, token, amount_atoms, purpose, status, action, available_atoms, shortfall_atoms)
+    VALUES ('${managedOperationId}', '${businessId}', '${agentId}', 'managed-reservation-test', 'solana', 'USDC', '3000000', 'payment', 'reserved', 'replenish_then_pay', '0', '3000000')`, "insertManagedReservationOperation");
+  queryD1(`INSERT INTO operation_funding_legs
+    (id, operation_id, leg_index, kind, source_wallet_id, destination_wallet_id, destination_address, asset_mint, amount_atoms)
+    VALUES ('${managedLegId}', '${managedOperationId}', 0, 'reserve_replenishment', '${managedReserveWalletId}', '${managedPaymentWalletId}', '${managedPaymentAddress}', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '3000000')`, "insertManagedFundingLeg");
+  queryD1(`INSERT INTO reservations
+    (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
+    VALUES ('${managedReservationId}', '${managedOperationId}', '${managedReserveBalanceId}', '3000000', 'USDC', 'active', datetime('now', '+15 minutes'), '${managedLegId}', 'managed')`, "reserveManagedFundingLeg");
+  const reservedAfterInsert = queryD1(`SELECT reserved_atoms FROM wallet_balances WHERE id = '${managedReserveBalanceId}'`, "readManagedReservedBalance");
+  if (reservedAfterInsert[0]?.reserved_atoms !== "3000000") throw new Error("Managed reservation trigger did not reserve the expected amount.");
+
+  queryD1(`INSERT INTO operation_funding_legs
+    (id, operation_id, leg_index, kind, source_wallet_id, destination_wallet_id, destination_address, asset_mint, amount_atoms)
+    VALUES ('${managedSecondLegId}', '${managedOperationId}', 1, 'reserve_replenishment', '${managedReserveWalletId}', '${managedPaymentWalletId}', '${managedPaymentAddress}', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '3000000')`, "insertSecondManagedFundingLeg");
+  let insufficientManagedReservationRejected = false;
+  try {
+    queryD1(`INSERT INTO reservations
+      (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
+      VALUES ('${managedSecondReservationId}', '${managedOperationId}', '${managedReserveBalanceId}', '3000000', 'USDC', 'active', datetime('now', '+15 minutes'), '${managedSecondLegId}', 'managed')`, "rejectInsufficientManagedReservation");
+  } catch (error) {
+    insufficientManagedReservationRejected = String(error).includes("managed_reservation_insufficient_balance");
+    if (!insufficientManagedReservationRejected) throw error;
+  }
+  if (!insufficientManagedReservationRejected) throw new Error("Managed reservation accepted more than the confirmed balance.");
+  const reservedAfterRejectedInsert = queryD1(`SELECT reserved_atoms FROM wallet_balances WHERE id = '${managedReserveBalanceId}'`, "verifyRejectedReservationRollback");
+  if (reservedAfterRejectedInsert[0]?.reserved_atoms !== "3000000") throw new Error("Rejected managed reservation changed the existing reservation balance.");
+
+  queryD1(`UPDATE reservations SET status = 'released', released_at = datetime('now') WHERE id = '${managedReservationId}' AND status = 'active'`, "releaseManagedFundingReservation");
+  const reservedAfterRelease = queryD1(`SELECT reserved_atoms FROM wallet_balances WHERE id = '${managedReserveBalanceId}'`, "verifyManagedReservationRelease");
+  if (reservedAfterRelease[0]?.reserved_atoms !== "0") throw new Error("Managed reservation release did not decrement the aggregate exactly once.");
+
+  queryD1(`UPDATE operation_funding_legs SET status = 'reserved' WHERE id = '${managedLegId}'`, "fundingLegToReserved");
+  queryD1(`UPDATE operation_funding_legs SET status = 'awaiting_signature' WHERE id = '${managedLegId}'`, "fundingLegAwaitingSignature");
+  queryD1(`UPDATE operation_funding_legs SET transaction_hash = 'local-test-signature', status = 'submitted' WHERE id = '${managedLegId}'`, "fundingLegSubmitted");
+  queryD1(`UPDATE operation_funding_legs SET status = 'confirmed' WHERE id = '${managedLegId}'`, "fundingLegConfirmed");
+  let fundingLegRegressionRejected = false;
+  try {
+    queryD1(`UPDATE operation_funding_legs SET status = 'submitted' WHERE id = '${managedLegId}'`, "rejectFundingLegRegression");
+  } catch (error) {
+    fundingLegRegressionRejected = String(error).includes("invalid_funding_leg_transition");
+    if (!fundingLegRegressionRejected) throw error;
+  }
+  if (!fundingLegRegressionRejected) throw new Error("Funding leg state machine allowed a confirmed leg to regress.");
+  output.steps.managedReservationBehavior = {
+    initialReservationAtoms: reservedAfterInsert[0].reserved_atoms,
+    rejectedOverReservation: insufficientManagedReservationRejected,
+    reservedAfterRejectedInsert: reservedAfterRejectedInsert[0].reserved_atoms,
+    reservedAfterRelease: reservedAfterRelease[0].reserved_atoms,
+    fundingLegConfirmed: true,
+    confirmedLegRegressionRejected: fundingLegRegressionRejected
+  };
+
 
   const authHeaders = {
     authorization: "Bearer " + apiKey,
