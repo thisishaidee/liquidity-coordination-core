@@ -83,7 +83,7 @@ try {
     .filter(file => /^\d{4}_[a-z0-9_-]+\.sql$/i.test(file))
     .sort();
   if (migrationFiles.length !== 24) {
-    throw new Error("Expected 24 ordered D1 migration files; found " + migrationFiles.length);
+    throw new Error("Expected 25 ordered D1 migration files; found " + migrationFiles.length);
   }
   const migrationSql = (await Promise.all(
     migrationFiles.map(async file => "-- " + file + "\n" + await readFile(join("migrations", file), "utf8"))
