@@ -116,11 +116,11 @@ The existing `syncSolanaBalances` helper uses `confirmed` commitment for general
 
 ## Explicit non-goals
 
-This stage must not create or hold private keys, sign transactions, or auto-approve conversion. The registered business wallet(s) sign; the Worker may broadcast only after verifying the complete signed transaction. Wallet construction/signing UX and Telegram Mini App handoff are separate stages.
+This stage must not create or hold private keys or auto-approve conversion. The business dashboard requests Wallet Standard signatures from the registered business wallet(s); the Worker broadcasts only after verifying the complete signed transaction. Telegram Mini App, WalletConnect and platform-specific deep-link adapters remain unimplemented and unverified.
 
 ## Route behavior currently implemented
 
-- All four settlement/preparation routes require a business-scoped owner/admin session, same-origin/allowlisted browser origin on writes, and a `businessId` query parameter. The expiry worker also preserves holds while any funding leg is submitted or ambiguous. The intent and leg are resolved together from D1, so a leg cannot be submitted under another business scope.
+- All payment-intent admin read and settlement/preparation routes require a business-scoped owner/admin session, same-origin/allowlisted browser origin on writes, and a `businessId` query parameter. The expiry worker also preserves holds while any funding leg is submitted or ambiguous. The intent and leg are resolved together from D1, so a leg cannot be submitted under another business scope.
 - The legacy submit body accepts only a base58 signature for externally broadcast transactions. The preferred submit-signed route accepts fully signed bytes and a message digest, verifies them before Worker broadcast, and never trusts client-declared settlement state.
 - Reconciliation uses the stored signature and the configured HTTPS RPC. Exact finalized transfers consume only the linked reservation. Finalized mismatches become `ambiguous` and retain their hold; the scheduled expiry routine skips ambiguous intents.
 - Reserve-replenishment confirmation does not itself credit a cached payment-wallet balance. The separate prepare-final-payment route performs a finalized RPC balance refresh and atomically creates the final hold; repeated calls reuse the existing hold. The separate fee reservation is reconciled only after the finalized transaction identifies the registered business fee payer and proves the actual network fee is within the approved cap; the fee wallet must remain active, verified, business-scoped and assigned.
