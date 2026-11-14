@@ -374,11 +374,10 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     if(provider)return {kind:"injected",label:provider.name||"Connected Solana wallet",provider};
     throw new Error("The selected fee wallet is not connected with transaction-signing permission. Reconnect it, then request a fresh quote.");
   }
-  async function connectSolanaWallet(preferredWallet="") {
+  async function connectSolanaWallet(preferredWallet="",expectedAddress="") {
     if(preferredWallet==="jupiter"){
       if(!window.NERITHJUPITER?.connect)throw new Error("The Jupiter Mobile connector is still loading. Refresh the dashboard and try again.");
-      if(window.NERITHJUPITER.connected&&window.NERITHJUPITER.getAddress?.())return window.NERITHJUPITER.getAddress();
-      return await window.NERITHJUPITER.connect();
+      return await window.NERITHJUPITER.connect(expectedAddress);
     }
     const injected=window.okxwallet?.solana;
     if((preferredWallet==="okx"||!preferredWallet)&&injected&&typeof injected.connect==="function"&&typeof injected.signMessage==="function"){
@@ -1178,7 +1177,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       pending.button.textContent="Opening wallet…";
       if(pending.help)pending.help.textContent="Connecting to "+(wallet==="browser"?"the wallet in this browser":wallet==="jupiter"?"Jupiter Mobile":"OKX Wallet")+" for this exact registered address…";
       try{
-        const connectedAddress=await connectSolanaWallet(wallet==="browser"?"":wallet);
+        const connectedAddress=await connectSolanaWallet(wallet==="browser"?"":wallet,pending.address);
         if(connectedAddress!==pending.address){
           throw new Error("The connected wallet is "+connectedAddress+", but this registered wallet is "+pending.address+". Switch to the wallet that owns this exact address and retry.");
         }
