@@ -27,8 +27,8 @@ export function describeAdminRoute(
   ) return { kind: "global" };
 
   if (
-    (method === "GET" && ["/v1/admin/workspace", "/v1/admin/operations", "/v1/admin/forecast", "/v1/admin/agents", "/v1/admin/wallets", "/v1/admin/wallet-roles"].includes(pathname)) ||
-    (method === "POST" && ["/v1/admin/agents", "/v1/admin/wallets", "/v1/admin/balances/sync", "/v1/admin/telegram/test", "/v1/admin/telegram/permissions", "/v1/admin/telegram/link-codes"].includes(pathname)) ||
+    (method === "GET" && ["/v1/admin/workspace", "/v1/admin/operations", "/v1/admin/forecast", "/v1/admin/agents", "/v1/admin/wallets", "/v1/admin/wallet-roles", "/v1/admin/payment-policy"].includes(pathname)) ||
+    (method === "POST" && ["/v1/admin/agents", "/v1/admin/wallets", "/v1/admin/balances/sync", "/v1/admin/telegram/test", "/v1/admin/telegram/permissions", "/v1/admin/telegram/link-codes", "/v1/admin/payment-policy"].includes(pathname)) ||
     ((method === "GET" || method === "POST") && pathname === "/v1/admin/x402/budgets") ||
     (method === "GET" && pathname === "/v1/admin/telegram/connections")
   ) {
