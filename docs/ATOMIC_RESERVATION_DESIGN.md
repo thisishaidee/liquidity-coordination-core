@@ -38,9 +38,9 @@ One row per business payment request:
 
 The idempotency key must be checked and inserted in the same D1 transaction that creates the intent. A repeated key returns the existing intent; it must never create a second payment.
 
-### business_payment_legs
+### operation_funding_legs (draft schema added)
 
-One row per independently tracked on-chain action:
+The draft migration now adds one row per independently tracked on-chain action:
 
 - intent ID and deterministic sequence number
 - leg kind: reserve_replenishment, conversion, or final_payment
@@ -54,7 +54,7 @@ A reserve-replenishment plan with three source wallets creates three transfer le
 
 ### Reservation ledger
 
-Do not duplicate the existing reservation ledger without a clear ownership boundary. Two implementation choices need a short prototype:
+The draft adds a nullable funding_leg_id link to the existing reservations table. It does not yet change the existing manual balance-reservation logic. Do not duplicate the existing reservation ledger without a clear ownership boundary. Two implementation choices need a short prototype:
 
 1. Extend reservations with a nullable business_payment_intent_id / leg_id and a clear reservation_kind, preserving operation_id for the existing agent flow.
 2. Add a dedicated business_payment_reservations table linked to payment intent legs.
@@ -100,4 +100,4 @@ Only after confirmed replenishment and a fresh balance observation can the final
 
 ## Implementation boundary
 
-The current draft policy evaluator is not wired into createLiquidityRequest or a business payment endpoint. This document records the next safe integration design. No new reservation migration, business payment endpoint, transaction submission or fund movement is included.
+The draft now includes the per-leg table, reservation link, immutable identity/hash guards and state-transition triggers. The current policy evaluator is not wired into createLiquidityRequest or a business payment endpoint, and no code creates or advances these new legs. Atomic multi-wallet reservation, business payment intents, transaction submission and fund movement remain unimplemented.
