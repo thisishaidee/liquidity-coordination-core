@@ -51,4 +51,4 @@ async function signMessage(message, expectedAddress) {
   return signature;
 }
 
-window.NERITHOKX = Object.freeze({ initialize, connect, signMessage, get connectedAddress() { return window.NERITHOKX_CONNECTED_ADDRESS || ""; } });
+window.NERITHOKX = Object.freeze({ initialize, connect, signMessage, get connected() { return Boolean(universalProvider?.connected()); }, getAddress() { return universalProvider?.connected() ? solanaProvider.getAccount(MAINNET_CHAIN)?.address || "" : ""; } });
