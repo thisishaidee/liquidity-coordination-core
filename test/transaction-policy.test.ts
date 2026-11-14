@@ -14,6 +14,7 @@ function intent(overrides: Partial<PaymentIntent> = {}): PaymentIntent {
   return {
     operationId: "op_12345678",
     idempotencyKey: "idem_12345678",
+    idempotencyKeyAlreadyUsed: false,
     businessId: "biz_a",
     destination: DESTINATION,
     mint: MINT,
@@ -246,6 +247,11 @@ describe("deterministic payment intent policy", () => {
     ];
     const result = evaluate(intent(), policy(), [payment, ...excluded], now);
     expect(result).toMatchObject({ eligible: false, code: "insufficient_authorized_usdc" });
+  });
+
+  it("rejects a previously used idempotency key to prevent replay", () => {
+    expect(evaluate(intent({ idempotencyKeyAlreadyUsed: true }), policy(), [wallet()], now))
+      .toMatchObject({ eligible: false, code: "idempotency_key_replayed" });
   });
 
   it("rejects expired intents, invalid idempotency keys and excess slippage", () => {
