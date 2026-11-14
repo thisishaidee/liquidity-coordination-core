@@ -2863,7 +2863,7 @@ async function submitSignedFundingLegTransaction(
 
   const connection = new Connection(env.SOLANA_RPC_URL, "finalized");
   let blockhashValid: boolean;
-  let estimatedFee: number | null;
+  let estimatedFee: bigint | null;
   try {
     const validity = await connection.isBlockhashValid(verified.recentBlockhash, "finalized");
     blockhashValid = validity.value;
@@ -2875,8 +2875,8 @@ async function submitSignedFundingLegTransaction(
     return json({ error: "signed_transaction_blockhash_expired",
       note: "No transaction was broadcast. The existing reservation remains held; prepare a fresh transaction through the owner recovery flow." }, 409);
   }
-  if (estimatedFee === null || !Number.isSafeInteger(estimatedFee) || estimatedFee < 0 ||
-      BigInt(estimatedFee) > BigInt(row.fee_maximum_fee_lamports)) {
+  if (estimatedFee === null || estimatedFee < 0n ||
+      estimatedFee > BigInt(row.fee_maximum_fee_lamports)) {
     return json({ error: "signed_transaction_fee_exceeds_approved_cap" }, 409);
   }
 
