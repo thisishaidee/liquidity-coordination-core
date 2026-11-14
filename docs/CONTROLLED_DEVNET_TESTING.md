@@ -16,12 +16,12 @@
 From the repository root:
 
 ```sh
-npm ci
+npm install
 npm run build:dashboard
 npx wrangler d1 migrations apply DB --local --config wrangler.devnet.toml --persist-to .wrangler/state/nerith-devnet
 ```
 
-The local database is persisted under a separate directory so it cannot silently reuse the default local D1 state.
+The repository currently has no committed npm lockfile, so `npm ci` is not yet valid. Adding and reviewing a lockfile, then switching CI and test instructions to `npm ci`, is a pre-production supply-chain hardening requirement. The local database is persisted under a separate directory so it cannot silently reuse the default local D1 state.
 
 ## Start the local Worker
 
