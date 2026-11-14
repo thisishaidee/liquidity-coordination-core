@@ -212,6 +212,27 @@ try {
   let quoteBody;
   try { quoteBody = JSON.parse(quoteBodyText); } catch { quoteBody = null; }
 
+  // The Worker fixture branch validates the actual payload assembled by requestSwapQuote.
+  // Its marker is emitted only after every expected field passes inside proxyHermes.
+  const outgoingRequestValidationMarker = "nerith_test_hermes_request_validated";
+  const outgoingRequestValidated = workerLog.includes(outgoingRequestValidationMarker);
+  output.steps.hermesOutgoingRequestValidation = {
+    passed: outgoingRequestValidated,
+    expected: {
+      path: "/v1/swap/quote",
+      inputToken: "So11111111111111111111111111111111111111112",
+      inputAmount: "1000000000",
+      inputChain: "sol",
+      outputToken: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      outputChain: "sol",
+      userAddress: operatingAddress,
+      slippageBps: 50
+    }
+  };
+  if (!outgoingRequestValidated) {
+    throw new Error("Worker did not validate the expected outgoing Hermes quote payload. Worker log: " + workerLog.slice(-3000));
+  }
+
   output.steps.workerQuoteRelay = {
     upstream: "CI-gated fixture replay of the actual live Hermes 402 response captured by Track 1",
     incomingRequestHadPaymentHeader: incomingPaymentHeaderPresent,
@@ -291,6 +312,8 @@ try {
     "NERITH LOCAL WORKER -> CAPTURED LIVE HERMES 402 FIXTURE",
     "Environment: GitHub Actions runner, Wrangler local mode, local D1 only",
     "The upstream body is the exact unpaid HTTP 402 response captured from live Hermes by Track 1 in this same workflow run. Local Wrangler could not reach external Hermes or a loopback mock, so a CI-only, gated fixture is injected into the local Worker for the relay/persistence test.",
+    "The Worker validated the actual outgoing Hermes quote payload before replaying the fixture:",
+    JSON.stringify(output.steps.hermesOutgoingRequestValidation, null, 2),
     "POST /v1/liquidity/requests -> " + liquidityResponse.status,
     JSON.stringify(liquidityBody, null, 2),
     "",
