@@ -707,6 +707,11 @@ it("returns approval, execution and verified settlement as separate operation st
 describe("browser page script syntax", () => {
   it("parses the inline scripts served for the landing page and business dashboard", async () => {
     const { env } = makeEnv();
+    const connectorResponse = await worker.fetch(new Request("https://nerith.test/assets/okx-wallet-connector.js"), env);
+    expect(connectorResponse.status).toBe(200);
+    const connectorJs = await connectorResponse.text();
+    expect(connectorJs).toContain("NERITHOKX");
+    expect(() => new Function(connectorJs)).not.toThrow();
     for (const path of ["/", "/dashboard", "/control"]) {
       const response = await worker.fetch(new Request("https://nerith.test" + path), env);
       const html = await response.text();
