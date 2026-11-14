@@ -2241,6 +2241,24 @@ async function prepareFinalPaymentAfterReplenishment(
     confirmed_reserve_leg_count: number; conversion_leg_count: number;
   }>();
   if (!row) return json({ error: "payment_intent_not_found" }, 404);
+  if (row.action === "replenish_then_pay" && row.intent_status === "awaiting_signature" &&
+      row.final_leg_status === "reserved") {
+    const existingReservation = await env.DB.prepare(`
+      SELECT id FROM reservations
+      WHERE funding_leg_id = ? AND reservation_source = 'managed' AND status = 'active'
+      LIMIT 1
+    `).bind(row.final_leg_id).first<{ id: string }>();
+    if (existingReservation) {
+      return json({
+        intentId,
+        status: "awaiting_signature",
+        finalPaymentLegId: row.final_leg_id,
+        reservationId: existingReservation.id,
+        reused: true,
+        note: "The finalized payment-wallet balance has already been refreshed and the final-payment amount is reserved."
+      });
+    }
+  }
   if (row.action !== "replenish_then_pay" || row.intent_status !== "replenishing") {
     return json({ error: "payment_intent_not_waiting_for_replenishment", status: row.intent_status }, 409);
   }
