@@ -2,11 +2,11 @@
 
 ## Status
 
-Partially implemented on the draft feature branch. Owner/admin-only signature submission and finalized-RPC reconciliation are wired for simple SPL-token reserve-replenishment and final-payment legs. Final-payment readiness now requires all reserve legs to be confirmed, a fresh finalized USDC balance read from Solana RPC, and an atomic D1 transition that releases the preposition hold and creates the final-payment reservation. The actual transaction is still signed and broadcast by the business-controlled wallet. Conversion remains unsupported by this verifier. Nothing enables autonomous execution.
+Partially implemented on the draft feature branch. Owner/admin-only signature submission and finalized-RPC reconciliation are wired for simple SPL-token reserve-replenishment and final-payment legs. Final-payment readiness now requires all reserve legs to be confirmed, a fresh finalized USDC balance read from Solana RPC, and an atomic D1 transition that releases the preposition hold and creates the final-payment reservation. The transaction is signed by the registered business wallet(s); the Worker now verifies the fully signed bytes and broadcasts only after exact instruction/signature checks. Conversion remains unsupported by this verifier. No autonomous approval or signing is enabled.
 
 ## Trust boundary
 
-A client-supplied transaction signature is an untrusted lookup key, not proof of payment. The Worker must retrieve transaction data from the configured Solana RPC and independently verify it. Never accept client-supplied amount, source, destination, mint, token-account owner, slot, confirmation state, or balance deltas as settlement evidence.
+Client-supplied transaction bytes and signatures are untrusted. The Worker verifies the signed transaction structure and cryptographic signatures before broadcast, then retrieves finalized transaction data from the configured Solana RPC and independently verifies settlement. Never accept client-supplied amount, source, destination, mint, token-account owner, slot, confirmation state, or balance deltas as settlement evidence.
 
 Only a business owner/admin session may submit or reconcile a funding leg. An agent API key may prepare and read an intent, but must not be able to assert that a business wallet has signed or paid. The admin route must use the existing business-scoped session and origin checks.
 
@@ -19,6 +19,13 @@ Only a business owner/admin session may submit or reconcile a funding leg. An ag
   - Returns an unsigned base64 checked-transfer transaction, message digest, recent blockhash lifetime, fee estimate and required signer addresses.
   - Rejects a missing destination ATA rather than spending unreserved rent. No state is mutated, no wallet is prompted, and nothing is broadcast by this endpoint.
   - Conversion, Token-2022, arbitrary instructions and multi-leg transaction batches remain unsupported.
+
+- `POST /v1/admin/payment-intents/:intentId/funding-legs/:legId/submit-signed?businessId=...`
+  - Body: `{ "transactionBase64": "...", "messageSha256": "..." }`
+  - Verifies the fully signed legacy transaction against the exact funding leg: fee payer, source-owner signer, cryptographic signatures, canonical token program, derived ATAs, exact atom amount, six decimals and exactly one checked-transfer instruction.
+  - Confirms the prepared message digest, valid blockhash and fee cap. Before first submission it re-runs the prepare checks for current on-chain balances and all active reservations.
+  - Records the transaction signature and submitted state before broadcasting from the Worker. A retry must use the same signed transaction and signature; a different signature is rejected.
+  - A successful broadcast is still pending until the separate finalized reconciliation route confirms settlement.
 
 - `POST /v1/admin/payment-intents/:intentId/funding-legs/:legId/submit`
   - Body: `{ "signature": "<base58 transaction signature>" }`
@@ -109,12 +116,12 @@ The existing `syncSolanaBalances` helper uses `confirmed` commitment for general
 
 ## Explicit non-goals
 
-This stage must not create or hold private keys, sign transactions, broadcast transactions, auto-approve conversion, or move funds. Wallet construction/signing UX and Telegram Mini App handoff are separate stages.
+This stage must not create or hold private keys, sign transactions, or auto-approve conversion. The registered business wallet(s) sign; the Worker may broadcast only after verifying the complete signed transaction. Wallet construction/signing UX and Telegram Mini App handoff are separate stages.
 
 ## Route behavior currently implemented
 
-- All three settlement/preparation routes require a business-scoped owner/admin session, same-origin/allowlisted browser origin on writes, and a `businessId` query parameter. The expiry worker also preserves holds while any funding leg is submitted or ambiguous. The intent and leg are resolved together from D1, so a leg cannot be submitted under another business scope.
-- The submit body accepts only a base58 transaction signature. It does not accept transaction facts or a client-declared settlement state.
+- All four settlement/preparation routes require a business-scoped owner/admin session, same-origin/allowlisted browser origin on writes, and a `businessId` query parameter. The expiry worker also preserves holds while any funding leg is submitted or ambiguous. The intent and leg are resolved together from D1, so a leg cannot be submitted under another business scope.
+- The legacy submit body accepts only a base58 signature for externally broadcast transactions. The preferred submit-signed route accepts fully signed bytes and a message digest, verifies them before Worker broadcast, and never trusts client-declared settlement state.
 - Reconciliation uses the stored signature and the configured HTTPS RPC. Exact finalized transfers consume only the linked reservation. Finalized mismatches become `ambiguous` and retain their hold; the scheduled expiry routine skips ambiguous intents.
 - Reserve-replenishment confirmation does not itself credit a cached payment-wallet balance. The separate prepare-final-payment route performs a finalized RPC balance refresh and atomically creates the final hold; repeated calls reuse the existing hold. The separate fee reservation is reconciled only after the finalized transaction identifies the registered business fee payer and proves the actual network fee is within the approved cap; the fee wallet must remain active, verified, business-scoped and assigned.
-- These routes are code on a draft PR only. They have not been deployed or exercised against a funded wallet.
+- These routes are code on a draft PR only. They have not been deployed or exercised against a funded wallet or real wallet signer.
