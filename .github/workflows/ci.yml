@@ -52,6 +52,28 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  worker-x402-local:
+    # Exercises the real Worker and a disposable local D1 database; no secrets.
+    if: github.event_name == 'pull_request'
+    needs: hermes-unpaid-402
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply migrations, seed isolated fixtures, and test Worker-to-Hermes relay
+        run: node scripts/test-worker-x402-local.mjs
+      - name: Upload local Worker and D1 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nerith-worker-local-x402-evidence
+          path: artifacts/worker-x402/
+          if-no-files-found: warn
+          retention-days: 14
+
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: verify
