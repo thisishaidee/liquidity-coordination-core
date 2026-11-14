@@ -144,10 +144,10 @@ export async function buildUsdcFundingTransaction(
   }));
 
   const estimatedFee = await transaction.getEstimatedFee(connection);
-  if (estimatedFee === null || !Number.isSafeInteger(estimatedFee) || estimatedFee < 0) {
+  if (estimatedFee === null || estimatedFee < 0n) {
     throw new Error("Solana RPC could not estimate the finalized transaction fee.");
   }
-  const fee = BigInt(estimatedFee);
+  const fee = estimatedFee;
   if (fee > BigInt(input.maximumFeeLamports) ||
       fee > BigInt(input.remainingAggregateFeeLamports)) {
     throw new Error("Estimated network fee exceeds the approved per-transaction or remaining aggregate fee budget.");
@@ -155,7 +155,7 @@ export async function buildUsdcFundingTransaction(
   const feePayerBalance = await connection.getBalance(feePayerKey, "finalized");
   const requiredFeePayerBalance = BigInt(input.minimumFeePayerBalanceLamports) > fee
     ? BigInt(input.minimumFeePayerBalanceLamports) : fee;
-  if (!Number.isSafeInteger(feePayerBalance) || BigInt(feePayerBalance) < requiredFeePayerBalance) {
+  if (feePayerBalance < requiredFeePayerBalance) {
     throw new Error("Registered fee payer does not have enough finalized SOL to cover active fee reservations and the estimated network fee.");
   }
 
