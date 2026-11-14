@@ -2706,7 +2706,7 @@ async function prepareSwapTransaction(request: Request, env: Env): Promise<Respo
       UPDATE wallet_balances
       SET reserved_atoms = CAST(reserved_atoms AS INTEGER) + ?
       WHERE id = ?
-        AND CAST(confirmed_atoms AS INTEGER) - CAST(reserved_atoms AS INTEGER) >= ?
+        AND CAST(confirmed_atoms AS INTEGER) - CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
     `).bind(context.sourceAtoms.toString(), context.walletBalanceId, context.sourceAtoms.toString()).run();
 
     if ((reserve.meta?.changes ?? 0) !== 1) {
@@ -2736,7 +2736,7 @@ async function prepareSwapTransaction(request: Request, env: Env): Promise<Respo
         "UPDATE operations SET status = 'awaiting_conversion', source_reservation_id = NULL, provider_key = NULL, build_quote_id = NULL WHERE id = ? AND status = 'preparing_conversion' AND source_reservation_id = ?"
       ).bind(context.operationId, reservationId).run();
       await env.DB.prepare(
-        "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?"
+        "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)"
       ).bind(context.sourceAtoms.toString(), context.walletBalanceId, context.sourceAtoms.toString()).run();
       await env.DB.prepare("DELETE FROM reservations WHERE id = ? AND status = 'active'").bind(reservationId).run();
       return json({ error: "source_reservation_failed" }, 409);
@@ -2871,7 +2871,7 @@ async function createLiquidityRequest(request: Request, env: Env, trustedAgent?:
       UPDATE wallet_balances
       SET reserved_atoms = CAST(reserved_atoms AS INTEGER) + ?
       WHERE id = ?
-        AND CAST(confirmed_atoms AS INTEGER) - CAST(reserved_atoms AS INTEGER) >= ?
+        AND CAST(confirmed_atoms AS INTEGER) - CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
     `).bind(requestedAtoms.toString(), candidate.row.balance_id, requestedAtoms.toString()).run();
 
     if ((reserved.meta?.changes ?? 0) !== 1) {
@@ -2900,7 +2900,7 @@ async function createLiquidityRequest(request: Request, env: Env, trustedAgent?:
       ]);
     } catch {
       await env.DB.prepare(
-        "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?"
+        "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)"
       ).bind(requestedAtoms.toString(), candidate.row.balance_id, requestedAtoms.toString()).run();
       await env.DB.prepare("DELETE FROM operations WHERE id = ?").bind(operationId).run();
       return json({ error: "reservation_persistence_failed" }, 500);
@@ -2947,7 +2947,7 @@ async function createLiquidityRequest(request: Request, env: Env, trustedAgent?:
       UPDATE wallet_balances
       SET reserved_atoms = CAST(reserved_atoms AS INTEGER) + ?
       WHERE id = ?
-        AND CAST(confirmed_atoms AS INTEGER) - CAST(reserved_atoms AS INTEGER) >= ?
+        AND CAST(confirmed_atoms AS INTEGER) - CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
     `).bind(targetReservedAtoms.toString(), targetBalanceId, targetReservedAtoms.toString()).run();
 
     if ((reserveTarget.meta?.changes ?? 0) !== 1) {
@@ -2987,7 +2987,7 @@ async function createLiquidityRequest(request: Request, env: Env, trustedAgent?:
   } catch {
     if (targetReservationId && targetBalanceId && targetReservedAtoms > 0n) {
       await env.DB.prepare(
-        "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?"
+        "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)"
       ).bind(targetReservedAtoms.toString(), targetBalanceId, targetReservedAtoms.toString()).run();
     }
     return json({ error: "operation_not_created" }, 409);
@@ -3067,7 +3067,7 @@ async function releaseOperation(request: Request, env: Env, operationId: string)
     const debit = await env.DB.prepare(`
       UPDATE wallet_balances
       SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?
-      WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?
+      WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
     `).bind(reservation.amount_atoms, reservation.wallet_balance_id, reservation.amount_atoms).run();
 
     if ((debit.meta?.changes ?? 0) !== 1) {
@@ -3144,7 +3144,7 @@ async function completeOperation(request: Request, env: Env, operationId: string
     const debit = await env.DB.prepare(`
       UPDATE wallet_balances
       SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?, observed_at = datetime('now', '-10 minutes')
-      WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?
+      WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
     `).bind(reservation.amount_atoms, reservation.wallet_balance_id, reservation.amount_atoms).run();
 
     if ((debit.meta?.changes ?? 0) !== 1) {
@@ -3277,7 +3277,7 @@ async function expireReservations(env: Env): Promise<{ expired: number; skipped:
       const debit = await env.DB.prepare(`
         UPDATE wallet_balances
         SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?
-        WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?
+        WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
       `).bind(reservation.amount_atoms, reservation.wallet_balance_id, reservation.amount_atoms).run();
 
       if ((debit.meta?.changes ?? 0) !== 1) {
@@ -3548,7 +3548,7 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
 
     const amount = BigInt(reservation.amount_atoms);
     const debit = await env.DB.prepare(
-      "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?"
+      "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)"
     ).bind(amount.toString(), reservation.wallet_balance_id, amount.toString()).run();
 
     if ((debit.meta?.changes ?? 0) !== 1) {
@@ -3594,7 +3594,7 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
       ).bind(targetReservation.id).run();
       if ((claimTarget.meta?.changes ?? 0) === 1) {
         const debitTarget = await env.DB.prepare(
-          "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?"
+          "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)"
         ).bind(targetReservation.amount_atoms, targetReservation.wallet_balance_id, targetReservation.amount_atoms).run();
         if ((debitTarget.meta?.changes ?? 0) !== 1) {
           await env.DB.prepare(
