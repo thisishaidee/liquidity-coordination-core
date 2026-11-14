@@ -284,11 +284,12 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   // without binding the dashboard to a single wallet brand.
   const standardSolanaWallets=new Set();
   const standardWalletApi=Object.freeze({
-    register:(...wallets)=>wallets.forEach(wallet=>{
-      if(wallet&&Array.isArray(wallet.chains)&&wallet.chains.some(chain=>chain==="solana:mainnet")&&wallet.features){
-        standardSolanaWallets.add(wallet);
-      }
-    })
+    register:(...wallets)=>{
+      const accepted=wallets.filter(wallet=>wallet&&Array.isArray(wallet.chains)&&
+        wallet.chains.some(chain=>chain==="solana:mainnet")&&wallet.features&&!standardSolanaWallets.has(wallet));
+      accepted.forEach(wallet=>standardSolanaWallets.add(wallet));
+      return ()=>accepted.forEach(wallet=>standardSolanaWallets.delete(wallet));
+    }
   });
   window.addEventListener("wallet-standard:register-wallet",event=>{
     if(typeof event.detail==="function")event.detail(standardWalletApi);
