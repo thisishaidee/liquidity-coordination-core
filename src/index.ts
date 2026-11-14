@@ -3614,15 +3614,38 @@ async function upsertBalanceSnapshot(request: Request, env: Env): Promise<Respon
 }
 
 async function solanaRpc<T>(rpcUrl: string, method: string, params: unknown[]): Promise<T> {
-  const response = await fetch(rpcUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })
-  });
-  if (!response.ok) throw new Error(`Solana RPC HTTP ${response.status}`);
-  const payload = await response.json() as { result?: T; error?: { message?: string } };
-  if (payload.error || payload.result === undefined) throw new Error(payload.error?.message ?? "Solana RPC returned no result");
-  return payload.result;
+  const body = JSON.stringify({ jsonrpc: "2.0", id: method, method, params });
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const response = await fetch(rpcUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body
+      });
+      if (response.status === 429 || response.status >= 500) {
+        const retryAfter = Number(response.headers.get("retry-after"));
+        const delayMs = Number.isFinite(retryAfter) && retryAfter > 0
+          ? Math.min(retryAfter * 1000, 8000)
+          : Math.min(500 * (2 ** attempt), 4000);
+        lastError = new Error(`Solana RPC HTTP ${response.status}`);
+        if (attempt < 3) {
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+          continue;
+        }
+        throw lastError;
+      }
+      if (!response.ok) throw new Error(`Solana RPC HTTP ${response.status}`);
+      const payload = await response.json() as { result?: T; error?: { message?: string } };
+      if (payload.error || payload.result === undefined) throw new Error(payload.error?.message ?? "Solana RPC returned no result");
+      return payload.result;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error("Solana RPC request failed");
+      if (attempt === 3 || !/HTTP 429|HTTP 5\d\d/i.test(lastError.message)) throw lastError;
+      await new Promise(resolve => setTimeout(resolve, Math.min(500 * (2 ** attempt), 4000)));
+    }
+  }
+  throw lastError ?? new Error("Solana RPC request failed");
 }
 
 async function syncSolanaBalances(request: Request, env: Env): Promise<Response> {
@@ -3653,14 +3676,15 @@ async function syncSolanaBalances(request: Request, env: Env): Promise<Response>
 
   for (const wallet of wallets.results ?? []) {
     try {
-      const [solResult, tokenResult] = await Promise.all([
-        solanaRpc<{ value: number }>(rpcUrl, "getBalance", [wallet.address, { commitment: "confirmed" }]),
-        solanaRpc<{ value: Array<{ account: { data: { parsed?: { info?: { tokenAmount?: { amount?: string } } } } } }> }>(
-          rpcUrl,
-          "getTokenAccountsByOwner",
-          [wallet.address, { mint: usdcMint }, { encoding: "jsonParsed", commitment: "confirmed" }]
-        )
-      ]);
+      // Keep public/shared RPC traffic sequential per wallet to reduce burst rate limits.
+      const solResult = await solanaRpc<{ value: number }>(
+        rpcUrl, "getBalance", [wallet.address, { commitment: "confirmed" }]
+      );
+      const tokenResult = await solanaRpc<{ value: Array<{ account: { data: { parsed?: { info?: { tokenAmount?: { amount?: string } } } } } }> }>(
+        rpcUrl,
+        "getTokenAccountsByOwner",
+        [wallet.address, { mint: usdcMint }, { encoding: "jsonParsed", commitment: "confirmed" }]
+      );
 
       const usdcAtoms = tokenResult.value.reduce((sum, account) => {
         const raw = account.account.data.parsed?.info?.tokenAmount?.amount ?? "0";
