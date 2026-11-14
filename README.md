@@ -104,6 +104,12 @@ Send that body to `POST /v1/admin/x402/budgets` using an authenticated admin ses
 
 The Worker stores the actual Hermes V1 Solana challenge for the exact operation/request, reserves its quoted amount before forwarding the payment, rejects payment replay, and verifies the finalized receipt transaction against the challenge's USDC mint, exact payer debit, exact recipient credit, payer signature and advertised facilitator fee payer before marking spend as settled. A timeout, missing receipt or RPC uncertainty keeps the reservation pending instead of silently freeing budget. GET budgets also lists pending reservations; after a receipt transaction is available, an authenticated admin can POST `{ "reservationId": "x4r_..." }` to `/v1/admin/x402/reconcile` to retry verification. These limits govern paid calls routed through NERITH; they are not a wallet-level spending lock for direct transfers made outside NERITH.
 
+## Deterministic payment policy
+
+The draft includes a pure evaluator in `src/transaction-policy.ts`. It checks business scope, idempotency, intent expiry, asset and destination allowlists, per-transaction and daily limits, fresh verified payment/reserve wallets, reserve floors, transfer caps, SOL network-fee payer allowlists and balances, and conversion-source/slippage policy. It can return a direct-payment, reserve-replenishment, conversion-required or explicitly permitted partial-payment plan.
+
+The evaluator is planning and policy logic only. It does not reserve funds, create transactions, sign, broadcast or authorize a signer. Callers must load committed spend, verify idempotency state and independently validate transaction details before requesting any signature.
+
 ## Important safety boundaries
 
 This is still an early backend, not a production funds executor.
