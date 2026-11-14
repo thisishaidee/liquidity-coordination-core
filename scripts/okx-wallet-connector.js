@@ -1,5 +1,5 @@
 import { OKXUniversalProvider } from "@okxconnect/universal-provider";
-import { OKXSolanaProvider } from "@okxconnect/solana-provider/OKXSolanaProvider";
+import { OKXSolanaProvider } from "@okxconnect/solana-provider";
 
 const MAINNET_CHAIN = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
 let universalProvider;
