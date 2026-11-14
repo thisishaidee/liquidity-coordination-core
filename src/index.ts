@@ -3953,11 +3953,12 @@ async function expireReservations(env: Env): Promise<{ expired: number; skipped:
     }
 
     const reservations = await env.DB.prepare(
-      "SELECT id, wallet_balance_id, amount_atoms FROM reservations WHERE operation_id = ? AND status = 'active'"
+      "SELECT id, wallet_balance_id, amount_atoms, reservation_source FROM reservations WHERE operation_id = ? AND status = 'active'"
     ).bind(operation.id).all<{
       id: string;
       wallet_balance_id: string;
       amount_atoms: string;
+      reservation_source: string;
     }>();
 
     const processed: Array<{ id: string; wallet_balance_id: string; amount_atoms: string; debited: boolean }> = [];
@@ -3968,19 +3969,19 @@ async function expireReservations(env: Env): Promise<{ expired: number; skipped:
       ).bind(reservation.id).run();
       if ((claim.meta?.changes ?? 0) !== 1) continue;
 
-      const debit = await env.DB.prepare(`
-        UPDATE wallet_balances
-        SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?
-        WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
-      `).bind(reservation.amount_atoms, reservation.wallet_balance_id, reservation.amount_atoms).run();
-
-      if ((debit.meta?.changes ?? 0) !== 1) {
-        await env.DB.prepare(
-          "UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = 'expired'"
-        ).bind(reservation.id).run();
-        failed = true;
-        break;
+      if (reservation.reservation_source !== "managed" && reservation.reservation_source !== "managed_fee") {
+        const debit = await env.DB.prepare(
+          "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)"
+        ).bind(reservation.amount_atoms, reservation.wallet_balance_id, reservation.amount_atoms).run();
+        if ((debit.meta?.changes ?? 0) !== 1) {
+          await env.DB.prepare(
+            "UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = 'expired'"
+          ).bind(reservation.id).run();
+          failed = true;
+          break;
+        }
       }
+      // Managed rows were decremented by their D1 trigger; legacy rows above.
       processed.push({ ...reservation, debited: true });
     }
 
@@ -3999,7 +4000,6 @@ async function expireReservations(env: Env): Promise<{ expired: number; skipped:
       skipped++;
       continue;
     }
-
     await notifyBusiness(
       env,
       operation.business_id,
