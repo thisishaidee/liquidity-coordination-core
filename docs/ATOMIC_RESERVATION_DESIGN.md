@@ -21,6 +21,14 @@ A replenishment plan can contain multiple source wallets. Each source-to-payment
 
 A single operations.transaction_hash or source_reservation_id cannot faithfully represent several independently submitted and confirmed funding legs. A single status flag cannot describe partial success across multiple source wallets.
 
+## Implemented reservation foundation
+
+Migration `0028_managed_reservation_accounting.sql` now distinguishes legacy application-managed reservations from trigger-managed reservations. Existing flows remain on `reservation_source = 'legacy'`; the new multi-wallet path marks rows `managed` and links each row to an immutable `operation_funding_legs` record.
+
+On insertion, the database checks that the operation business, source wallet, verified ownership, enabled reserve/operating role, destination payment wallet and leg identity all agree. It validates positive decimal atom strings within SQLite's signed 64-bit accounting range, then conditionally increments `wallet_balances.reserved_atoms`. If any reservation insert fails, SQLite rolls back the complete multi-row statement, including prior trigger updates. Leaving `active` for `released`, `consumed` or `expired` decrements the aggregate once; managed reservation identity cannot be changed and active managed rows cannot be deleted.
+
+The local Worker/D1 integration script now covers a successful reservation across two different verified reserve wallets, release of both holds, a cross-wallet multi-row reservation where the second source is underfunded (and verifies the first insert and balance update are rolled back), plus the existing single-wallet over-reservation and duplicate state-transition checks. The current CI run is validating this expanded test. This remains schema/test foundation: no business-payment API creates these records yet, and no funds move.
+
 ## Proposed data model
 
 ### business_payment_intents
@@ -54,16 +62,9 @@ A reserve-replenishment plan with three source wallets creates three transfer le
 
 ### Reservation ledger
 
-The draft adds a nullable funding_leg_id link and a reservation_source discriminator to the existing reservations table. Legacy rows remain on the existing manual accounting path. New rows marked managed are reserved and released by database triggers, which conditionally update wallet_balances and abort when the balance ledger cannot satisfy the request. The release/complete handlers distinguish managed rows so they do not double-debit them. No endpoint currently creates managed rows, so the existing production flow remains unchanged. The local D1 integration test now exercises a successful managed reservation, rejects an over-reservation, verifies a multi-row insert rolls back all rows and aggregate updates when one leg is underfunded, and confirms release decrements the aggregate exactly once. Do not duplicate the existing reservation ledger without a clear ownership boundary. Two implementation choices need a short prototype:
+The existing reservations table now supports both legacy and managed accounting modes. `funding_leg_id` identifies the specific leg; `reservation_source` selects the accounting mode. Legacy rows retain application-side accounting. Managed rows use the migration's guarded database triggers. The existing manual paths are unchanged. Managed reservations are not yet created by an API endpoint.
 
-1. Extend reservations with a nullable business_payment_intent_id / leg_id and a clear reservation_kind, preserving operation_id for the existing agent flow.
-2. Add a dedicated business_payment_reservations table linked to payment intent legs.
-
-For the new business flow, reservation insertion should be the source of truth and should update wallet_balances.reserved_atoms through database triggers. A BEFORE INSERT trigger should conditionally increment the aggregate only when confirmed minus reserved is sufficient, then abort the statement if the update did not affect exactly one balance row. D1 batch insertion of all legs then becomes all-or-nothing: if any source cannot be reserved, the transaction rolls back all reservation rows and aggregate updates.
-
-Reservation amounts and wallet-balance IDs must be immutable after creation. State transitions from active to released/consumed/expired should decrement the aggregate exactly once. Duplicate release or consume attempts must be harmless and idempotent.
-
-The existing reservations table currently relies on application-side balance updates and reconciliation. Do not add triggers to it without first removing or carefully separating the existing manual updates; otherwise balances could be reserved twice.
+The operation-level funding-leg ledger remains tied to an existing operation row. A dedicated business payment intent table and a business-unique idempotency key are still needed before a general dashboard-initiated payment workflow can be safely exposed.
 
 ## Atomic reservation sequence
 
@@ -71,9 +72,11 @@ The existing reservations table currently relies on application-side balance upd
 2. Load fresh, verified payment and reserve wallet snapshots.
 3. Evaluate the deterministic policy and construct the exact funding legs.
 4. Insert the payment intent with its unique business idempotency key.
-5. Insert every leg and its reservation rows in one D1 batch.
-6. Let reservation triggers conditionally update each wallet balance. If any leg fails, abort the batch so no partial internal reservation is left behind.
-7. Return the prepared intent and funding plan. No transaction is signed or broadcast at this stage.
+5. Persist the operation funding legs and insert every managed reservation row in one D1 batch.
+6. Let reservation triggers conditionally update each wallet balance. If any leg fails, abort the statement/batch so no partial internal reservation is left behind.
+7. Return the prepared funding plan. No transaction is signed or broadcast at this stage.
+
+The atomic managed-reservation primitive and its multi-source local D1 tests are now implemented. Steps 1–4 and 7 are not yet wired into a business payment-intent API.
 
 Do not hold reservations indefinitely. Every reservation must have a bounded expiry. A scheduled reconciler should release expired reservations only when the corresponding operation state permits it, and should compare the reservation ledger with wallet_balances.reserved_atoms.
 
@@ -87,8 +90,10 @@ Only after confirmed replenishment and a fresh balance observation can the final
 
 ## Required tests before implementation is considered complete
 
-- Two or more source wallets reserve successfully in one atomic batch.
-- If any one source lacks spendable balance, no source reservation or aggregate reserved amount changes.
+- [x] Two source wallets reserve successfully in one multi-row insert.
+- [x] If one source lacks spendable balance, all reservation rows and aggregate updates roll back.
+- [x] Release of managed reservations decrements the aggregate once.
+- [ ] Duplicate business payment idempotency key returns the same intent and never double-reserves.
 - Duplicate idempotency key returns the same intent and never double-reserves.
 - Concurrent requests cannot reserve the same atoms twice.
 - Release, expiry and consume transitions decrement reserved amounts exactly once.
@@ -100,4 +105,4 @@ Only after confirmed replenishment and a fresh balance observation can the final
 
 ## Implementation boundary
 
-The draft now includes the per-leg table, reservation link, immutable identity/hash guards and state-transition triggers. The current policy evaluator is not wired into createLiquidityRequest or a business payment endpoint, and no code creates or advances these new legs. Atomic multi-wallet reservation, business payment intents, transaction submission and fund movement remain unimplemented.
+The draft includes the per-leg table, managed reservation link, guarded accounting triggers, immutable identity/hash guards and state-transition triggers. The local D1 test now covers multi-wallet reserve success and cross-wallet rollback. The current policy evaluator is not wired into createLiquidityRequest or a business payment endpoint, and no API creates or advances these new legs. Business payment intents, persistent idempotency, transaction submission and fund movement remain unimplemented.
