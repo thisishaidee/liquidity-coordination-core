@@ -2385,11 +2385,27 @@ async function prepareFinalPaymentAfterReplenishment(
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     if (message.includes("managed_reservation_insufficient_balance")) {
+      try {
+        await env.DB.batch([
+          env.DB.prepare(`
+            UPDATE wallet_balances
+            SET confirmed_atoms = ?, observed_at = datetime('now'), source = 'solana_rpc_finalized'
+            WHERE id = ? AND wallet_id = ? AND token = 'USDC'
+          `).bind(balance.amountAtoms, row.balance_id, row.payment_wallet_id),
+          env.DB.prepare(`
+            UPDATE reservations SET status = 'released', released_at = datetime('now')
+            WHERE operation_id = ? AND wallet_balance_id = ? AND funding_leg_id IS NULL
+              AND reservation_source = 'managed' AND status = 'active'
+          `).bind(row.operation_id, row.balance_id)
+        ]);
+      } catch {
+        return json({ error: "payment_wallet_balance_refresh_conflict" }, 409);
+      }
       return json({
         error: "finalized_payment_wallet_balance_insufficient",
         finalizedBalanceAtoms: balance.amountAtoms,
         requiredPaymentAtoms: row.payment_atoms,
-        message: "Finalized USDC balance is insufficient after preserving existing active reservations and wallet reserve floors."
+        message: "Finalized USDC balance is insufficient after preserving existing active reservations and wallet reserve floors. The refreshed snapshot was retained and the preposition hold released."
       }, 409);
     }
     return json({ error: "final_payment_preparation_conflict" }, 409);
