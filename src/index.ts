@@ -3624,7 +3624,7 @@ async function verifyX402Settlement(
       [receipt.transaction, {
         commitment: "finalized",
         encoding: "jsonParsed",
-        maxSupportedTransactionVersion: 0
+        maxSupportedTransactionVersion: 1
       }]
     );
   } catch {
@@ -5014,7 +5014,7 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
         [operation.transaction_hash, {
           commitment: "finalized",
           encoding: "jsonParsed",
-          maxSupportedTransactionVersion: 0
+          maxSupportedTransactionVersion: 1
         }]
       );
     } catch {
