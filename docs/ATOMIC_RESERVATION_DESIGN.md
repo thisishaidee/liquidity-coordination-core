@@ -1,108 +1,112 @@
-# NERITH atomic reservation and multi-leg payment design
+# NERITH payment preparation, atomic reservations and multi-leg execution
 
-## Current reservation system audit
+## Legacy reservation system
 
-The existing product already has a reservation ledger:
+The existing V1 liquidity-request flow remains separate and unchanged:
 
-- The reservations table stores operation ID, wallet-balance ID, amount, token, status and expiry.
-- A direct liquidity request currently reserves one wallet-balance row and then creates one operation plus one reservation.
-- A conversion operation can have a source reservation and a target USDC reservation. The operations table has single source/target reservation references and one transaction hash for its conversion flow.
-- Release and completion paths iterate all active reservation rows for an operation, so the reservation table itself can represent multiple rows.
-- The scheduled expireReservations routine reconciles wallet_balances.reserved_atoms from active reservation rows and repairs terminal operations whose Worker invocation stopped partway through processing.
-- Existing idempotency is scoped to UNIQUE(agent_id, task_id). It is not a business-wide payment-intent idempotency key.
-- The current agent liquidity-request path selects wallets by legacy purpose = operating and the agent's can_use_business_treasury permission. It does not yet consume the new payment/reserve role model or the new wallet ownership proof.
-- Agent-reported completion of a direct operation is not proof of an on-chain payment. Conversion status has a separate signature/settlement verification path.
+- A direct liquidity request reserves one wallet-balance row and creates one operation plus one reservation.
+- A legacy conversion operation can have a source reservation and a target USDC reservation. Its operation row has one transaction hash and source/target reservation references.
+- Legacy reservations use application-side aggregate accounting.
+- Agent-reported completion of a legacy direct operation is not proof that an external on-chain payment occurred. Conversion status has a separate transaction verification path.
 
-These legacy paths must remain compatible. The new business payment flow should not silently change their meaning.
+The new business payment-intent flow uses a distinct managed reservation mode. Do not reinterpret legacy operation statuses or reservation semantics.
 
-## Why multi-wallet payments need a separate model
+## Implemented branch candidate
 
-A replenishment plan can contain multiple source wallets. Each source-to-payment-wallet transfer is a distinct on-chain action unless all required signers and instructions are deliberately combined into one transaction. The final payment is another action after replenishment is confirmed.
+### Business payment intent
 
-A single operations.transaction_hash or source_reservation_id cannot faithfully represent several independently submitted and confirmed funding legs. A single status flag cannot describe partial success across multiple source wallets.
+Migration `0030_business_payment_intents.sql` adds:
 
-## Implemented reservation foundation
+- `business_payment_policies`: per-business asset and destination allowlists, fee-payer allowlist, transaction/daily limits, balance freshness, intent lifetime, slippage and conversion/partial-payment flags.
+- `business_payment_intents`: one immutable payment request per business idempotency key, linked to one existing operation row.
+- Unique `(business_id, idempotency_key)` constraint.
+- Immutable intent identity and guarded lifecycle transitions.
+- Database insert guards that re-check the policy version, mint/destination/fee-payer allowlists, per-transaction limit and daily aggregate cap.
 
-Migration `0028_managed_reservation_accounting.sql` now distinguishes legacy application-managed reservations from trigger-managed reservations. Existing flows remain on `reservation_source = 'legacy'`; the new multi-wallet path marks rows `managed` and links each row to an immutable `operation_funding_legs` record.
+The payment intent is linked to its funding legs through `operation_id`; the funding-leg table does not directly reference the intent.
 
-On insertion, the database checks that the operation business, source wallet, verified ownership, enabled reserve/operating role, destination payment wallet and leg identity all agree. It validates positive decimal atom strings within SQLite's signed 64-bit accounting range, then conditionally increments `wallet_balances.reserved_atoms`. If any reservation insert fails, SQLite rolls back the complete multi-row statement, including prior trigger updates. Leaving `active` for `released`, `consumed` or `expired` decrements the aggregate once; managed reservation identity cannot be changed and active managed rows cannot be deleted.
+### Funding legs
 
-The local Worker/D1 integration script now covers a successful reservation across two different verified reserve wallets, release of both holds, a cross-wallet multi-row reservation where the second source is underfunded (and verifies the first insert and balance update are rolled back), plus the existing single-wallet over-reservation and duplicate state-transition checks. The current CI run is validating this expanded test. This remains schema/test foundation: no business-payment API creates these records yet, and no funds move.
+Migration `0027_operation_funding_legs.sql` adds `operation_funding_legs`, with one row per independently tracked on-chain action:
 
-## Proposed data model
+- `reserve_replenishment`, `conversion`, or `final_payment`
+- Source and destination wallet IDs, destination address, asset mint and amount
+- Expected/received output atoms
+- Guarded states from planned/reserved through signature, submission and confirmation or failure
+- Transaction signature, submitted/confirmed slots and failure reason
+- Immutable leg identity, immutable transaction hash after first assignment, and a unique transaction-hash index to prevent one signature being reused across legs
 
-### business_payment_intents
+### Managed reservation accounting
 
-One row per business payment request:
+Migration `0028_managed_reservation_accounting.sql` adds managed reservation accounting while preserving legacy rows:
 
-- intent ID and business ID
-- optional initiating agent ID and source task reference
-- business-unique idempotency key
-- destination address and asset mint
-- requested amount and policy-approved amount
-- policy snapshot/version used for the decision
-- status, expiry and timestamps
-- unique constraint on (business_id, idempotency_key)
+- `managed` rows reserve USDC against a funding leg.
+- `managed_fee` rows reserve SOL network fees against the payment intent's approved fee-payer wallet.
+- D1 triggers verify business scope, verified address control, active wallet, enabled role, permitted leg kind, reserve floor, transfer cap and available balance.
+- A failed insert aborts the D1 batch; earlier reservation rows and balance updates are rolled back.
+- Leaving active for released, consumed or expired decrements the aggregate exactly once.
+- Managed reservation identity cannot be mutated, and active managed rows cannot be deleted.
+- Release, completion and expiry code skips manual aggregate debits for trigger-managed rows to avoid double-decrementing.
 
-The idempotency key must be checked and inserted in the same D1 transaction that creates the intent. A repeated key returns the existing intent; it must never create a second payment.
+Migration `0029_final_payment_funding_gate.sql` prevents a final-payment leg from being reserved or advanced to signature/submission while any reserve-replenishment or conversion leg remains unconfirmed.
 
-### operation_funding_legs (draft schema added)
+### API flow
 
-The draft migration now adds one row per independently tracked on-chain action:
+The draft branch wires the foundation into:
 
-- intent ID and deterministic sequence number
-- leg kind: reserve_replenishment, conversion, or final_payment
-- source wallet, destination wallet and mint
-- planned amount and expected output where relevant
-- status: planned, reserved, awaiting_signature, submitted, confirmed, failed, expired or ambiguous
-- transaction signature, submitted slot, confirmed slot and observed amount
-- failure/reconciliation reason and timestamps
+- `POST /v1/payments/prepare`: agent-authenticated, requires explicit business-treasury permission, validates the Solana destination public key, checks the deterministic payment policy, enforces idempotency, then inserts the intent, operation, funding legs and USDC/SOL reservations in one D1 batch.
+- `GET /v1/payments/:intentId`: returns intent state, funding-leg details and reservation state to the initiating agent only.
+- Existing `POST /v1/operations/:id/release` cancels the payment intent and releases its active managed holds.
+- Existing agent completion is blocked for business payment intents. An agent cannot self-report an on-chain payment as complete.
+- Reservation expiry also moves eligible payment intents to expired and releases holds.
 
-A reserve-replenishment plan with three source wallets creates three transfer legs. The final payment is not submitted until every required replenishment leg has reached confirmed state and the payment-wallet balance has been independently refreshed.
+The deterministic policy evaluator checks business scope, verified/fresh payment and reserve wallets, mint/destination allowlists, transaction and daily caps, reserve floors, per-transfer limits, fee-payer policy, network-fee caps, conversion-source allowlists, slippage and explicit partial-payment permission. The database re-checks mutable policy constraints when inserting the intent so concurrent requests cannot both consume the same daily allowance based only on a stale application read.
 
-### Reservation ledger
-
-The existing reservations table now supports both legacy and managed accounting modes. `funding_leg_id` identifies the specific leg; `reservation_source` selects the accounting mode. Legacy rows retain application-side accounting. Managed rows use the migration's guarded database triggers. The existing manual paths are unchanged. Managed reservations are not yet created by an API endpoint.
-
-The operation-level funding-leg ledger remains tied to an existing operation row. A dedicated business payment intent table and a business-unique idempotency key are still needed before a general dashboard-initiated payment workflow can be safely exposed.
+All of the above remains branch-only. No production migration or deployment has occurred.
 
 ## Atomic reservation sequence
 
-1. Validate the request and business policy.
-2. Load fresh, verified payment and reserve wallet snapshots.
-3. Evaluate the deterministic policy and construct the exact funding legs.
-4. Insert the payment intent with its unique business idempotency key.
-5. Persist the operation funding legs and insert every managed reservation row in one D1 batch.
-6. Let reservation triggers conditionally update each wallet balance. If any leg fails, abort the statement/batch so no partial internal reservation is left behind.
-7. Return the prepared funding plan. No transaction is signed or broadcast at this stage.
+1. Authenticate the agent and require its explicit business-treasury permission.
+2. Validate request shape, Solana destination key, idempotency key and amount.
+3. Load the current business payment policy and fresh verified wallet snapshots.
+4. Evaluate the deterministic policy and build a funding plan.
+5. Insert the operation and immutable business payment intent.
+6. Insert all funding legs and managed USDC/SOL reservations in the same D1 batch.
+7. Let D1 triggers enforce each reservation and policy constraint. If any insert fails, the batch must leave no partial intent, leg, reservation or aggregate update.
+8. Return the prepared funding plan. No transaction is built, signed or broadcast at this stage.
 
-The atomic managed-reservation primitive and its multi-source local D1 tests are now implemented. Steps 1–4 and 7 are not yet wired into a business payment-intent API.
+A reserve-replenishment plan with multiple source wallets creates one distinct leg and reservation per source. The final-payment leg remains planned until every required funding leg is confirmed. Cross-transaction replenishment is not atomic on-chain: if one transfer succeeds and another fails, already received funds remain in the payment wallet and must be reported accurately.
 
-Do not hold reservations indefinitely. Every reservation must have a bounded expiry. A scheduled reconciler should release expired reservations only when the corresponding operation state permits it, and should compare the reservation ledger with wallet_balances.reserved_atoms.
+## Still required before fund movement
 
-## Multi-leg execution state machine
+- Build exact SPL Token / Token-2022 transfer instructions from verified source token accounts to the approved destination token account.
+- Resolve and validate associated token accounts, token program IDs, decimals and mint ownership; do not treat an arbitrary base58 key as proof of a valid token account.
+- Create an unsigned transaction for owner review and wallet signing. The browser must not hold or expose agent API keys or private keys.
+- Add transaction submission and reconciliation endpoints. Verify finalized transaction metadata against expected signer, source account, destination account, mint, amount and operation/leg before changing a leg to confirmed.
+- Refresh destination wallet balances from Solana RPC after each confirmed replenishment before preparing final payment.
+- Add a tested manual owner-signing fallback first; real Android OKX, Phantom, Solflare and Backpack handoff must be tested before claiming support.
+- Implement the Telegram Mini App review/handoff only after validating Telegram `initData`, scoped sessions, roles, replay protection and operation-bound approvals.
+- Keep autonomous signing disabled until a separately reviewed Squads or customer-controlled KMS/MPC authority, revocation path, recovery plan and threat model are implemented.
 
-draft → policy_checked → reserved → awaiting_signature / authorized_for_execution → submitted → confirmed / failed / expired / ambiguous
+## Validation status
 
-For multiple replenishment legs, the intent remains in replenishing until all required legs are confirmed. A failed leg must not cause NERITH to claim the full amount was replenished. If some transfers already confirmed, those funds remain in the payment wallet and must be shown accurately; there is no implied cross-transaction atomicity.
+- [x] Managed reservation across two verified reserve wallets.
+- [x] Cross-wallet insufficient-balance failure rolls back all rows and aggregate updates.
+- [x] Reserve floor and per-transfer cap are enforced.
+- [x] Direct payment intent preparation and idempotent replay.
+- [x] Changed payload under the same idempotency key is rejected.
+- [x] Invalid Solana destination is rejected.
+- [x] SOL network-fee hold is separate from USDC payment liquidity.
+- [x] Payment intent release cancels the intent and releases USDC and SOL holds.
+- [x] Agent-reported completion is blocked for a business payment intent.
+- [x] Agent-scoped payment detail returns funding legs and reservations.
+- [x] Final-payment leg remains blocked until all replenishment legs confirm.
+- [x] Database policy insert guard checks allowlists and daily limits.
+- [ ] Concurrent request stress test for overlapping source-wallet reservations.
+- [ ] Expiry integration test for mixed managed USDC and managed-fee SOL reservations.
+- [ ] On-chain funding-leg submission and reconciliation tests.
+- [ ] Real wallet transaction-signing and Android handoff tests.
 
-Only after confirmed replenishment and a fresh balance observation can the final-payment leg be prepared. Final payment confirmation must be verified from the transaction signature and expected token-account balance changes, not an agent's self-reported completion.
+## Execution boundary
 
-## Required tests before implementation is considered complete
-
-- [x] Two source wallets reserve successfully in one multi-row insert.
-- [x] If one source lacks spendable balance, all reservation rows and aggregate updates roll back.
-- [x] Release of managed reservations decrements the aggregate once.
-- [ ] Duplicate business payment idempotency key returns the same intent and never double-reserves.
-- Duplicate idempotency key returns the same intent and never double-reserves.
-- Concurrent requests cannot reserve the same atoms twice.
-- Release, expiry and consume transitions decrement reserved amounts exactly once.
-- A crash between intent creation and signature submission is recoverable.
-- One confirmed replenishment leg plus one failed leg is reported as partial funding, not success.
-- Final payment cannot be submitted before all required replenishment legs confirm.
-- A stale or unverified wallet cannot be reserved.
-- API-payment wallets, receiving wallets and agent-scoped wallets cannot be treated as business reserve sources unless a separately approved policy explicitly allows them.
-
-## Implementation boundary
-
-The draft includes the per-leg table, managed reservation link, guarded accounting triggers, immutable identity/hash guards and state-transition triggers. The local D1 test now covers multi-wallet reserve success and cross-wallet rollback. The current policy evaluator is not wired into createLiquidityRequest or a business payment endpoint, and no API creates or advances these new legs. Business payment intents, persistent idempotency, transaction submission and fund movement remain unimplemented.
+Payment preparation and reservation are not payment execution. No direct transfer transaction builder, signature collection, broadcast, on-chain replenishment verifier, final-payment verifier, Squads integration or KMS/MPC signer is implemented in this branch. Do not mark a payment confirmed based on an agent callback or a transaction hash supplied without RPC verification.
