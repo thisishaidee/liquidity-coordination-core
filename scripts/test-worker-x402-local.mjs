@@ -230,7 +230,7 @@ try {
   queryD1(`INSERT INTO wallet_balances (id, wallet_id, token, confirmed_atoms, reserved_atoms, observed_at, source)
     VALUES ('${managedReserveBalanceId}', '${managedReserveWalletId}', 'USDC', '5000000', '0', datetime('now'), 'managed_reservation_fixture')`, "insertManagedReserveBalance");
   queryD1(`INSERT INTO wallet_balances (id, wallet_id, token, confirmed_atoms, reserved_atoms, observed_at, source)
-    VALUES ('${managedPaymentBalanceId}', '${managedPaymentWalletId}', 'USDC', '2000000', '0', datetime('now'), 'managed_reservation_fixture')`, "insertManagedPaymentBalance");
+    VALUES ('${managedPaymentBalanceId}', '${managedPaymentWalletId}', 'USDC', '1000000', '0', datetime('now'), 'managed_reservation_fixture')`, "insertManagedPaymentBalance");
   queryD1(`INSERT INTO wallet_balances (id, wallet_id, token, confirmed_atoms, reserved_atoms, observed_at, source)
     VALUES ('${managedPaymentSolBalanceId}', '${managedPaymentWalletId}', 'SOL', '1000000000', '0', datetime('now'), 'managed_reservation_fixture')`, "insertManagedPaymentSolBalance");
   queryD1(`INSERT INTO wallets
@@ -433,6 +433,7 @@ try {
     VALUES ('${managedFinalPaymentReservationId}', '${managedGateOperationId}', '${managedPaymentBalanceId}', '1000000', 'USDC', 'active', datetime('now', '+15 minutes'), '${managedFinalPaymentLegId}', 'managed')`, "reserveFinalPaymentAfterFundingConfirmed");
   const finalPaymentReserved = queryD1(`SELECT reserved_atoms FROM wallet_balances WHERE id = '${managedPaymentBalanceId}'`, "verifyFinalPaymentReservation");
   if (finalPaymentReserved[0]?.reserved_atoms !== "1000000") throw new Error("Final payment reservation did not hold the payment wallet balance.");
+  queryD1(`UPDATE wallet_balances SET confirmed_atoms = '2000000' WHERE id = '${managedPaymentBalanceId}'`, "provideDuplicateReservationTestHeadroom");
   let duplicateActiveFinalPaymentReservationRejected = false;
   try {
     queryD1(`INSERT INTO reservations
@@ -445,6 +446,7 @@ try {
   if (!duplicateActiveFinalPaymentReservationRejected) throw new Error("A funding leg accepted more than one active managed reservation.");
   const finalPaymentReservedAfterDuplicate = queryD1(`SELECT reserved_atoms FROM wallet_balances WHERE id = '${managedPaymentBalanceId}'`, "verifyDuplicateFinalReservationRollback");
   if (finalPaymentReservedAfterDuplicate[0]?.reserved_atoms !== "1000000") throw new Error("Duplicate final-payment reservation did not roll back its balance hold.");
+  queryD1(`UPDATE wallet_balances SET confirmed_atoms = '1000000' WHERE id = '${managedPaymentBalanceId}'`, "restoreDuplicateReservationFixtureBalance");
   queryD1(`UPDATE reservations SET status = 'released', released_at = datetime('now') WHERE id = '${managedFinalPaymentReservationId}' AND status = 'active'`, "releaseFinalPaymentReservation");
   const finalPaymentReleased = queryD1(`SELECT reserved_atoms FROM wallet_balances WHERE id = '${managedPaymentBalanceId}'`, "verifyFinalPaymentReservationRelease");
   if (finalPaymentReleased[0]?.reserved_atoms !== "0") throw new Error("Final payment reservation did not release its balance hold.");
