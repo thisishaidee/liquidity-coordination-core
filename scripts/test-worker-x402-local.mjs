@@ -82,8 +82,8 @@ try {
   const migrationFiles = (await readdir("migrations"))
     .filter(file => /^\d{4}_[a-z0-9_-]+\.sql$/i.test(file))
     .sort();
-  if (migrationFiles.length !== 27) {
-    throw new Error("Expected 27 ordered D1 migration files; found " + migrationFiles.length);
+  if (migrationFiles.length !== 28) {
+    throw new Error("Expected 28 ordered D1 migration files; found " + migrationFiles.length);
   }
   const migrationSql = (await Promise.all(
     migrationFiles.map(async file => "-- " + file + "\n" + await readFile(join("migrations", file), "utf8"))
@@ -102,6 +102,7 @@ try {
   const roleOwnershipTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_wallet_role_requires_verified_owner_insert', 'trg_wallet_role_requires_verified_owner_update')", "inspectWalletRoleOwnershipTriggers");
   const fundingLegTable = queryD1("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'operation_funding_legs'", "inspectFundingLegTable");
   const reservationColumns = queryD1("PRAGMA table_info(reservations)", "inspectReservationColumns");
+  const managedReservationTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_managed_reservation_reserve_balance', 'trg_managed_reservation_release_balance', 'trg_managed_reservation_identity_immutable', 'trg_managed_reservation_active_delete_block')", "inspectManagedReservationTriggers");
   const fundingLegTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_funding_leg_identity_immutable', 'trg_funding_leg_transaction_hash_immutable', 'trg_funding_leg_state_transition', 'trg_funding_leg_submitted_requires_hash', 'trg_funding_leg_confirmed_requires_hash')", "inspectFundingLegTriggers");
   const schemaChecks = {
     ownershipVerifiedAtColumn: walletColumns.some(row => row.name === "ownership_verified_at"),
@@ -112,6 +113,8 @@ try {
     roleOwnershipGuards: roleOwnershipTriggers.length === 2,
     fundingLegTable: fundingLegTable.length === 1,
     reservationFundingLegLink: reservationColumns.some(row => row.name === "funding_leg_id"),
+    managedReservationSourceColumn: reservationColumns.some(row => row.name === "reservation_source"),
+    managedReservationTriggers: managedReservationTriggers.length === 4,
     fundingLegSafetyTriggers: fundingLegTriggers.length === 5
   };
   output.steps.walletOwnershipSchema = { checks: schemaChecks };
