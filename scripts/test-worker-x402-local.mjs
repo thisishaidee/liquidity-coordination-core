@@ -83,7 +83,7 @@ try {
     .filter(file => /^\d{4}_[a-z0-9_-]+\.sql$/i.test(file))
     .sort();
   if (migrationFiles.length !== 26) {
-    throw new Error("Expected 25 ordered D1 migration files; found " + migrationFiles.length);
+    throw new Error("Expected 26 ordered D1 migration files; found " + migrationFiles.length);
   }
   const migrationSql = (await Promise.all(
     migrationFiles.map(async file => "-- " + file + "\n" + await readFile(join("migrations", file), "utf8"))
@@ -94,6 +94,22 @@ try {
     ["d1", "execute", "liquidity-coordination", "--local", "--file", migrationFile],
     "applyLocalD1Migrations"
   );
+
+  const walletColumns = queryD1("PRAGMA table_info(wallets)", "inspectWalletSchema");
+  const ownershipTables = queryD1("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'wallet_ownership_challenges'", "inspectOwnershipChallengeTable");
+  const roleTables = queryD1("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'wallet_role_assignments'", "inspectWalletRoleTable");
+  const ownershipTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'trg_wallet_ownership_reset_on_identity_change'", "inspectOwnershipResetTrigger");
+  const schemaChecks = {
+    ownershipVerifiedAtColumn: walletColumns.some(row => row.name === "ownership_verified_at"),
+    ownershipVerifiedOriginColumn: walletColumns.some(row => row.name === "ownership_verified_origin"),
+    ownershipChallengeTable: ownershipTables.length === 1,
+    walletRoleAssignmentTable: roleTables.length === 1,
+    identityChangeResetTrigger: ownershipTriggers.length === 1
+  };
+  output.steps.walletOwnershipSchema = { checks: schemaChecks };
+  if (Object.values(schemaChecks).some(value => value !== true)) {
+    throw new Error("Wallet ownership migration schema verification failed: " + JSON.stringify(schemaChecks));
+  }
 
   const hermesFixture = JSON.parse(await readFile("artifacts/hermes-402/response.json", "utf8"));
   if (hermesFixture.status !== 402 || typeof hermesFixture.body !== "string") {
