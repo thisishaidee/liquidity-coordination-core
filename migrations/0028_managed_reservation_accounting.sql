@@ -11,6 +11,14 @@ CREATE TRIGGER IF NOT EXISTS trg_managed_reservation_reserve_balance
 BEFORE INSERT ON reservations
 WHEN NEW.reservation_source = 'managed' AND NEW.status = 'active'
 BEGIN
+  SELECT CASE WHEN NEW.amount_atoms IS NULL
+    OR NEW.amount_atoms = ''
+    OR NEW.amount_atoms GLOB '*[^0-9]*'
+    OR substr(NEW.amount_atoms, 1, 1) = '0'
+    OR length(NEW.amount_atoms) > 19
+    OR (length(NEW.amount_atoms) = 19 AND NEW.amount_atoms > '9223372036854775807')
+    THEN RAISE(ABORT, 'managed_reservation_amount_invalid') END;
+
   SELECT CASE WHEN NOT EXISTS (
     SELECT 1
     FROM wallet_balances b
