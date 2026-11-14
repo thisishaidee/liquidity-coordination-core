@@ -2,7 +2,7 @@
 
 ## Status
 
-Architecture and dependency choice only. No unsigned transaction builder, wallet transaction-signing UI, multi-wallet signing handoff, broadcast route, or real-wallet test is implemented yet.
+The unsigned USDC transaction builder and owner-only prepare endpoint are implemented on the draft branch with unit coverage. The wallet transaction-signing UI, multi-wallet sign/return handoff, signed-transaction broadcast route, and real-wallet device test are not implemented yet.
 
 The draft branch pins:
 - `@solana/web3.js` 3.2.1
@@ -14,7 +14,7 @@ Use the v3 SDK family and generated Token Program instructions. Do not combine w
 
 Build only one USDC SPL Token Program transfer for one immutable funding leg. No SOL conversion, swap, Token-2022, arbitrary instructions, or batched multi-leg transaction.
 
-All authoritative values come from the authenticated intent, funding leg, business wallet registrations, configured USDC mint and on-chain state. Never trust browser-supplied amount, mint, source, destination, fee payer or token-account address.
+All authoritative values come from the authenticated intent, funding leg, business wallet registrations, configured USDC mint and on-chain state. The route is `POST /v1/admin/payment-intents/:intentId/funding-legs/:legId/prepare?businessId=...`. It returns an unsigned base64 transaction, message digest, blockhash lifetime, fee estimate and required signer addresses. It does not change ledger state, request signatures or broadcast. Never trust browser-supplied amount, mint, source, destination, fee payer or token-account address.
 
 ## Pre-build checks
 
@@ -33,7 +33,7 @@ The transaction may contain only:
 - No arbitrary System Program, Memo, swap, token approval, delegate, close-account, authority-change or unknown program instruction.
 - No priority-fee or compute-budget instruction until a separately reviewed policy defines its maximum and accounts for the additional fee.
 
-Set the fee payer before compiling the message. Estimate the message fee from RPC after all instructions and required signers are fixed. Reject if the estimate exceeds the per-transaction cap or remaining aggregate fee budget. D1 reservation remains the authoritative ceiling.
+Set the fee payer before compiling the message. Estimate the message fee from RPC after all instructions and required signers are fixed. Reject if the estimate exceeds the per-transaction cap or remaining aggregate fee budget. Also verify finalized source-token balance covers all active USDC reservations plus the source wallet's configured minimum remaining balance, and finalized fee-payer SOL covers all active SOL reservations plus its configured minimum. D1 reservation remains the authoritative ceiling.
 
 ## Frozen-message and multi-wallet signing
 
@@ -50,7 +50,7 @@ An ownership challenge, provider connection, Telegram identity or admin session 
 
 ## Submission and settlement
 
-- A future submit endpoint must compare the completed signed transaction with the frozen draft and independently verify every required signature before broadcast. It is not implemented yet.
+- The current submit endpoint still accepts a client-broadcast transaction signature; it does not yet accept a signed serialized transaction or compare it to the returned message digest before broadcast. A hardened signed-transaction relay and multi-wallet UI remain release gates.
 - After broadcast, store the signature against the funding leg and fee-ledger row atomically. A timeout after broadcast is ambiguous; query the signature before retrying.
 - Existing finalized-RPC reconciliation remains the source of truth: exact SPL transfer, source-owner signer, fee-payer signer, actual fee, fee cap, slot, signature and finalized balance deltas.
 - Reject additional transfers and unapproved instructions.
