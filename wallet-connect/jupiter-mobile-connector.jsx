@@ -6,6 +6,7 @@ import { createTransferCheckedInstruction, getAssociatedTokenAddressSync } from 
 
 const REOWN_PROJECT_ID = "13a7a3c0065f86dab70a544edc8ed07d";
 const MAINNET_ADDRESS_PREFIX = "solana:";
+const preparedX402Transactions = new Map();
 
 function JupiterMobileBridge() {
   const { jupiterAdapter } = useWrappedReownAdapter({
@@ -56,7 +57,7 @@ function JupiterMobileBridge() {
         }
         return signature;
       },
-      async createX402PaymentHeader(requirement, expectedAddress) {
+      async prepareX402Payment(requirement, expectedAddress) {
         const address = adapter.publicKey?.toBase58?.() || "";
         if (!adapter.connected || address !== expectedAddress) {
           throw new Error("The active Jupiter Mobile session does not match the registered x402 payment wallet.");
@@ -69,7 +70,7 @@ function JupiterMobileBridge() {
             typeof requirement.maxTimeoutSeconds !== "number" || requirement.maxTimeoutSeconds < 1 || requirement.maxTimeoutSeconds > 120 ||
             requirement.asset !== "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" ||
             !/^\d{1,18}$/.test(String(requirement.maxAmountRequired || "")) ||
-            BigInt(requirement.maxAmountRequired) > 10000n ||
+            BigInt(requirement.maxAmountRequired) <= 0n || BigInt(requirement.maxAmountRequired) > 10000n ||
             !requirement.payTo || !requirement.extra?.feePayer) {
           throw new Error("Swap.io returned an unsupported or incomplete Solana USDC payment requirement.");
         }
@@ -104,8 +105,29 @@ function JupiterMobileBridge() {
           recentBlockhash: latest.blockhash,
           instructions
         }).compileToV0Message();
-        const transaction = new VersionedTransaction(message);
-        const signed = await adapter.signTransaction(transaction);
+        const preparationId = crypto.randomUUID();
+        const expiresAt = Date.now() + Math.max(0, requirement.maxTimeoutSeconds - 15) * 1000;
+        preparedX402Transactions.set(preparationId, {
+          transaction: new VersionedTransaction(message),
+          address,
+          expiresAt
+        });
+        return { preparationId, expiresAt };
+      },
+      async signPreparedX402Payment(preparationId, expectedAddress) {
+        const address = adapter.publicKey?.toBase58?.() || "";
+        const prepared = preparedX402Transactions.get(preparationId);
+        if (!prepared) throw new Error("The prepared x402 payment is missing. Request a fresh quote challenge.");
+        if (!adapter.connected || address !== expectedAddress || address !== prepared.address) {
+          preparedX402Transactions.delete(preparationId);
+          throw new Error("Reconnect Jupiter Mobile to the selected x402 payment wallet, then request a fresh quote.");
+        }
+        if (Date.now() >= prepared.expiresAt) {
+          preparedX402Transactions.delete(preparationId);
+          throw new Error("The x402 payment challenge expired. Request a fresh quote before signing.");
+        }
+        const signed = await adapter.signTransaction(prepared.transaction);
+        preparedX402Transactions.delete(preparationId);
         const bytes = signed.serialize();
         let binary = "";
         for (let offset = 0; offset < bytes.length; offset += 0x8000) {
