@@ -54,6 +54,10 @@ export async function fetchFinalizedSolanaTransaction(
   );
   const status = statuses.value?.[0];
   if (!status) return { state: "pending", reason: "Transaction signature is not indexed by the RPC yet." };
+  // An execution error is final only after the cluster reaches finalized commitment.
+  if (status.confirmationStatus !== "finalized") {
+    return { state: "pending", reason: "Transaction has not reached finalized commitment." };
+  }
   // Fetch metadata for both successful and failed finalized transactions:
   // Solana charges the network fee even when instruction execution fails.
   const transaction = await rpc<Record<string, unknown> | null>(
