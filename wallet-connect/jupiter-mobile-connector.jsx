@@ -1,7 +1,7 @@
 import React, { useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { useWrappedReownAdapter } from "@jup-ag/jup-mobile-adapter";
-import { Connection, ComputeBudgetProgram, PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
+import { Connection, ComputeBudgetProgram, PublicKey, Transaction } from "@solana/web3.js";
 import { createTransferCheckedInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 
 const REOWN_PROJECT_ID = "13a7a3c0065f86dab70a544edc8ed07d";
@@ -113,15 +113,14 @@ function JupiterMobileBridge() {
           )
         ];
         const latest = await connection.getLatestBlockhash("confirmed");
-        const message = new TransactionMessage({
-          payerKey: feePayer,
-          recentBlockhash: latest.blockhash,
-          instructions
-        }).compileToV0Message();
+        const transaction = new Transaction({
+          feePayer,
+          recentBlockhash: latest.blockhash
+        }).add(...instructions);
         const preparationId = crypto.randomUUID();
         const expiresAt = Date.now() + Math.max(0, requirement.maxTimeoutSeconds - 15) * 1000;
         preparedX402Transactions.set(preparationId, {
-          transaction: new VersionedTransaction(message),
+          transaction,
           address,
           signer,
           expiresAt
@@ -166,16 +165,26 @@ function JupiterMobileBridge() {
           signed = await signer.provider.signTransaction(prepared.transaction);
         } else {
           const feature = signer.wallet.features["solana:signTransaction"];
+          const serialized = new Uint8Array(prepared.transaction.serialize({
+            requireAllSignatures: false,
+            verifySignatures: false
+          }));
           const result = await feature.signTransaction({
             account: signer.account,
-            transaction: prepared.transaction,
+            transaction: serialized,
             chain: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
           });
-          signed = result?.signedTransaction || result?.[0]?.signedTransaction || result?.[0];
+          const signedBytes = result?.signedTransaction || result?.[0]?.signedTransaction || result?.[0];
+          if (!(signedBytes instanceof Uint8Array)) throw new Error("Wallet Standard did not return signed transaction bytes.");
+          signed = Transaction.from(signedBytes);
         }
         if (!signed || typeof signed.serialize !== "function") throw new Error("The selected wallet did not return a signed Solana transaction.");
+        const userSignature = signed.signatures?.find(item => item.publicKey?.toBase58?.() === expectedAddress)?.signature;
+        if (!(userSignature instanceof Uint8Array) || userSignature.every(byte => byte === 0)) {
+          throw new Error("The selected wallet returned a transaction without the expected USDC transfer-authority signature.");
+        }
         preparedX402Transactions.delete(preparationId);
-        const bytes = signed.serialize();
+        const bytes = signed.serialize({ requireAllSignatures: false, verifySignatures: false });
         let binary = "";
         for (let offset = 0; offset < bytes.length; offset += 0x8000) {
           binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
