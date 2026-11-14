@@ -66,14 +66,14 @@ async function mockConnection(options: {
     rentEpoch: 0
   });
   const getAccountInfo = vi.fn(async (key: PublicKey) => {
-    if (key.equals(mintKey)) return accountInfo(mintData) as never;
+    if (key.equals(mintKey)) return accountInfo(new Uint8Array(mintData)) as never;
     if (key.equals(sourceKey)) {
       if (options.missingSource) return null;
-      return accountInfo(tokenData(options.sourceOwner ?? SOURCE, options.sourceAmount ?? 10_000_000n, options.sourceMint ?? MINT)) as never;
+      return accountInfo(new Uint8Array(tokenData(options.sourceOwner ?? SOURCE, options.sourceAmount ?? 10_000_000n, options.sourceMint ?? MINT))) as never;
     }
     if (key.equals(destinationKey)) {
       if (options.missingDestination) return null;
-      return accountInfo(tokenData(options.destinationOwner ?? DESTINATION, 0n, options.destinationMint ?? MINT)) as never;
+      return accountInfo(new Uint8Array(tokenData(options.destinationOwner ?? DESTINATION, 0n, options.destinationMint ?? MINT))) as never;
     }
     return null;
   });
