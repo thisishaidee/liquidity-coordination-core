@@ -3753,7 +3753,7 @@ async function releaseOperation(request: Request, env: Env, operationId: string)
     ).bind(reservation.id).run();
     if ((claim.meta?.changes ?? 0) !== 1) continue;
 
-    if (reservation.reservation_source !== "managed") {
+    if ((reservation.reservation_source !== "managed" && reservation.reservation_source !== "managed_fee")) {
       const debit = await env.DB.prepare(`
         UPDATE wallet_balances
         SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?
@@ -3833,7 +3833,7 @@ async function completeOperation(request: Request, env: Env, operationId: string
     ).bind(reservation.id).run();
     if ((claim.meta?.changes ?? 0) !== 1) continue;
 
-    if (reservation.reservation_source !== "managed") {
+    if ((reservation.reservation_source !== "managed" && reservation.reservation_source !== "managed_fee")) {
       const debit = await env.DB.prepare(`
         UPDATE wallet_balances
         SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?, observed_at = datetime('now', '-10 minutes')
@@ -4288,7 +4288,7 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
         "UPDATE reservations SET status = 'released', released_at = datetime('now') WHERE id = ? AND status = 'active'"
       ).bind(targetReservation.id).run();
       if ((claimTarget.meta?.changes ?? 0) === 1) {
-        if (targetReservation.reservation_source !== "managed") {
+        if ((targetReservation.reservation_source !== "managed" && targetReservation.reservation_source !== "managed_fee")) {
           const debitTarget = await env.DB.prepare(
             "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)"
           ).bind(targetReservation.amount_atoms, targetReservation.wallet_balance_id, targetReservation.amount_atoms).run();
