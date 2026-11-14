@@ -299,7 +299,10 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       const connectedKey=connected?.publicKey?.toString?.()||provider.publicKey?.toString?.()||"";
       if(connectedKey!==address)throw new Error("The connected wallet address does not match this registered wallet. Switch to the matching wallet and try again.");
       const challenge=await apiWrite("/v1/admin/wallet-ownership/challenge",{businessId:state.businessId,walletId});
+      if(challenge.address!==address)throw new Error("The server challenge no longer matches this registered wallet. Refresh and try again.");
       const signed=await provider.signMessage(new TextEncoder().encode(challenge.message),"utf8");
+      const signedKey=signed?.publicKey?.toString?.()||provider.publicKey?.toString?.()||connectedKey;
+      if(signedKey!==address)throw new Error("The signing wallet changed accounts. Reconnect the registered wallet and try again.");
       const rawSignature=signed?.signature??signed;
       const signatureBytes=rawSignature instanceof Uint8Array?rawSignature:ArrayBuffer.isView(rawSignature)?new Uint8Array(rawSignature.buffer,rawSignature.byteOffset,rawSignature.byteLength):null;
       if(!signatureBytes||signatureBytes.length!==64)throw new Error("The connected wallet returned an unsupported message-signature format.");
