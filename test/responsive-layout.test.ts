@@ -81,6 +81,8 @@ describe("responsive page source contracts", () => {
     expect(businessDashboardHtml).toContain('overflow-wrap:anywhere');
     expect(businessDashboardHtml).toContain('const canManagePayments = ["owner","admin"].includes(state.role);');
     expect(businessDashboardHtml).toContain('for (const signerAddress of prepared.requiredSigners || [])');
+    expect(businessDashboardHtml).toContain("function extractLegacyMessageBytes(transactionBytes)");
+    expect(businessDashboardHtml).toContain("sha256Hex(extractLegacyMessageBytes(signedTransaction)) !== prepared.messageSha256");
     expect(businessDashboardHtml).toContain('["planned","blocked","reserved"].includes(leg.status)');
     expect(businessDashboardHtml).toContain(".wallet-role-help{margin-top:9px;color:var(--muted);font-size:10px;line-height:1.6;overflow-wrap:anywhere;word-break:break-word}");
   });
