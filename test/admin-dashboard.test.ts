@@ -720,6 +720,7 @@ describe("browser page script syntax", () => {
     expect(jupiterJs).toContain("createX402PaymentHeader");
     expect(jupiterJs).toContain("createTransferCheckedInstruction");
     expect(jupiterJs).toContain("The active Jupiter Mobile session does not match the registered x402 payment wallet.");
+    expect(jupiterJs).toContain("The x402 payment wallet must be distinct from Swap.io recipient and facilitator fee payer.");
     expect(jupiterJs).not.toContain("createAssociatedTokenAccountIdempotentInstruction");
     expect(() => new Function(jupiterJs)).not.toThrow();
     for (const path of ["/", "/dashboard", "/control"]) {
