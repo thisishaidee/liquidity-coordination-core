@@ -21,6 +21,7 @@ import { fetchFinalizedSolanaTransaction } from "./solana-finalized-transaction"
 import { verifySolanaTokenTransfer, type SolanaPaymentTransaction } from "./payment-settlement";
 import { verifySolanaNetworkFee } from "./solana-network-fee";
 import { FINALIZED_TRANSACTION_READ_OPTIONS } from "./solana-rpc-options";
+import { buildUsdcFundingTransaction } from "./solana-funding-transaction";
 import { fetchFinalizedSplTokenBalance } from "./solana-finalized-balance";
 
 interface Env {
@@ -2453,7 +2454,7 @@ type FundingLegSettlementRow = {
   destination_wallet_status: string | null; destination_wallet_scope: string | null;
   destination_verified_at: string | null; reservation_id: string | null;
   source_role_authorized: number; destination_role_authorized: number;
-  fee_payer_address: string | null; fee_payer_wallet_status: string | null;
+  fee_payer_wallet_id: string; fee_payer_address: string | null; fee_payer_wallet_status: string | null;
   fee_payer_verified_at: string | null; fee_payer_scope: string | null;
   fee_payer_role_authorized: number; network_fee_lamports: string;
   network_fee_budget_lamports: string; fee_reservation_amount: string | null;
@@ -2470,6 +2471,7 @@ async function getFundingLegSettlementRow(
            i.id AS intent_id, i.status AS intent_status, i.action AS intent_action,
            i.expires_at AS intent_expires_at, i.destination AS intent_destination,
            i.mint AS intent_mint, i.payment_atoms, i.network_fee_lamports, i.network_fee_budget_lamports,
+           fee_wallet.id AS fee_payer_wallet_id,
            fee_wallet.address AS fee_payer_address,
            fee_wallet.status AS fee_payer_wallet_status,
            fee_wallet.ownership_verified_at AS fee_payer_verified_at,
