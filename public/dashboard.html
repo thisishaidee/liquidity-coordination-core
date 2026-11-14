@@ -126,7 +126,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
             <label>x402 fee wallet<select id="x402PaymentWallet" class="input"></select></label>
             <label>Quote size (SOL)<input id="x402SourceAmount" class="input" inputmode="decimal" value="0.1" /></label>
           </div>
-          <div class="actions" style="margin-top:12px"><button type="button" class="btn primary" id="x402GetQuote">Request 402 quote</button></div>
+          <div class="actions" style="margin-top:12px"><button type="button" class="btn" id="x402SyncBalances">Sync on-chain balances</button><button type="button" class="btn primary" id="x402GetQuote" disabled>Request 402 quote</button></div>
           <div id="x402DemoStatus" class="wallet-role-help" role="status" aria-live="polite" style="margin-top:10px">Verify an operating wallet and register a separate x402 fee reserve wallet to begin.</div>
           <div id="x402DemoPayment" hidden class="note" style="margin-top:10px">
             <strong id="x402DemoFee"></strong>
