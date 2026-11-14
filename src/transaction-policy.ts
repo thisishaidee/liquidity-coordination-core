@@ -326,8 +326,9 @@ export function evaluatePaymentIntentPolicy(
           : aboveFloor;
         const availableAtoms = minBigInt(aboveFloor, cap);
         if (availableAtoms > 0n) {
-          const previous = conversionByWallet.get(source.walletId);
-          if (!previous || source.role === "reserve") conversionByWallet.set(source.walletId, {
+          const conversionKey = source.walletId + ":" + source.mint;
+          const previous = conversionByWallet.get(conversionKey);
+          if (!previous || source.role === "reserve") conversionByWallet.set(conversionKey, {
             walletId: source.walletId, mint: source.mint, availableAtoms
           });
         }
