@@ -199,6 +199,17 @@ try {
   const managedSecondReservationId = "res_" + randomBytes(16).toString("hex");
   const managedReserveAddress = "8bN6v5Kj3dQx4sW7mR2pL9cF1aT6uH5eG3iJ7kM9nPq";
   const managedPaymentAddress = "9cP7w6Lm4eRy5tX8nS3qM1dG2bU7vI6fH4jK8lN2oQr";
+  const managedSecondReserveWalletId = "wal_" + randomBytes(16).toString("hex");
+  const managedSecondReserveBalanceId = "bal_" + randomBytes(16).toString("hex");
+  const managedThirdLegId = "leg_" + randomBytes(16).toString("hex");
+  const managedFourthLegId = "leg_" + randomBytes(16).toString("hex");
+  const managedThirdReservationId = "res_" + randomBytes(16).toString("hex");
+  const managedFourthReservationId = "res_" + randomBytes(16).toString("hex");
+  const managedFifthLegId = "leg_" + randomBytes(16).toString("hex");
+  const managedSixthLegId = "leg_" + randomBytes(16).toString("hex");
+  const managedFifthReservationId = "res_" + randomBytes(16).toString("hex");
+  const managedSixthReservationId = "res_" + randomBytes(16).toString("hex");
+  const managedSecondReserveAddress = "7aM5v4Kj2dQx3sW6mR1pL8cF9aT5uH4eG2iJ6kM8nPq";
 
   queryD1(`INSERT INTO wallets
     (id, business_id, agent_id, network, address, scope, purpose, ownership_verified_at, ownership_verified_origin)
@@ -214,6 +225,14 @@ try {
     VALUES ('${managedReserveBalanceId}', '${managedReserveWalletId}', 'USDC', '5000000', '0', datetime('now'), 'managed_reservation_fixture')`, "insertManagedReserveBalance");
   queryD1(`INSERT INTO wallet_balances (id, wallet_id, token, confirmed_atoms, reserved_atoms, observed_at, source)
     VALUES ('bal_${randomBytes(16).toString("hex")}', '${managedPaymentWalletId}', 'USDC', '1000000', '0', datetime('now'), 'managed_reservation_fixture')`, "insertManagedPaymentBalance");
+  queryD1(`INSERT INTO wallets
+    (id, business_id, agent_id, network, address, scope, purpose, ownership_verified_at, ownership_verified_origin)
+    VALUES ('${managedSecondReserveWalletId}', '${businessId}', NULL, 'solana', '${managedSecondReserveAddress}', 'business', 'operating', datetime('now'), 'https://neritth.pages.dev')`, "insertManagedSecondReserveWallet");
+  queryD1(`INSERT INTO wallet_role_assignments (business_id, wallet_id, role, enabled)
+    VALUES ('${businessId}', '${managedSecondReserveWalletId}', 'reserve', 1)`, "assignManagedSecondReserveRole");
+  queryD1(`INSERT INTO wallet_balances (id, wallet_id, token, confirmed_atoms, reserved_atoms, observed_at, source)
+    VALUES ('${managedSecondReserveBalanceId}', '${managedSecondReserveWalletId}', 'USDC', '4000000', '0', datetime('now'), 'managed_reservation_fixture')`, "insertManagedSecondReserveBalance");
+
   queryD1(`INSERT INTO operations
     (id, business_id, agent_id, task_id, network, token, amount_atoms, purpose, status, action, available_atoms, shortfall_atoms)
     VALUES ('${managedOperationId}', '${businessId}', '${agentId}', 'managed-reservation-test', 'solana', 'USDC', '3000000', 'payment', 'reserved', 'replenish_then_pay', '0', '3000000')`, "insertManagedReservationOperation");
@@ -277,6 +296,58 @@ try {
     if (!fundingLegRegressionRejected) throw error;
   }
   if (!fundingLegRegressionRejected) throw new Error("Funding leg state machine allowed a confirmed leg to regress.");
+  // A valid two-wallet replenishment reserves both sources in one D1 statement.
+  queryD1(`INSERT INTO operation_funding_legs
+    (id, operation_id, leg_index, kind, source_wallet_id, destination_wallet_id, destination_address, asset_mint, amount_atoms)
+    VALUES
+    ('${managedThirdLegId}', '${managedOperationId}', 2, 'reserve_replenishment', '${managedReserveWalletId}', '${managedPaymentWalletId}', '${managedPaymentAddress}', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '2000000'),
+    ('${managedFourthLegId}', '${managedOperationId}', 3, 'reserve_replenishment', '${managedSecondReserveWalletId}', '${managedPaymentWalletId}', '${managedPaymentAddress}', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '2000000')`, "insertMultiWalletFundingLegs");
+  queryD1(`INSERT INTO reservations
+    (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
+    VALUES
+    ('${managedThirdReservationId}', '${managedOperationId}', '${managedReserveBalanceId}', '2000000', 'USDC', 'active', datetime('now', '+15 minutes'), '${managedThirdLegId}', 'managed'),
+    ('${managedFourthReservationId}', '${managedOperationId}', '${managedSecondReserveBalanceId}', '2000000', 'USDC', 'active', datetime('now', '+15 minutes'), '${managedFourthLegId}', 'managed')`, "reserveAcrossMultipleWallets");
+  const multiWalletReserved = queryD1(`SELECT id, reserved_atoms FROM wallet_balances
+    WHERE id IN ('${managedReserveBalanceId}', '${managedSecondReserveBalanceId}') ORDER BY id`, "verifyMultiWalletReservation");
+  if (multiWalletReserved.length !== 2 || multiWalletReserved.some(row => row.reserved_atoms !== "2000000")) {
+    throw new Error("Atomic multi-wallet reservation did not reserve the expected amount from both source wallets.");
+  }
+  queryD1(`UPDATE reservations SET status = 'released', released_at = datetime('now')
+    WHERE id IN ('${managedThirdReservationId}', '${managedFourthReservationId}') AND status = 'active'`, "releaseMultiWalletReservations");
+  const multiWalletReleased = queryD1(`SELECT id, reserved_atoms FROM wallet_balances
+    WHERE id IN ('${managedReserveBalanceId}', '${managedSecondReserveBalanceId}') ORDER BY id`, "verifyMultiWalletRelease");
+  if (multiWalletReleased.length !== 2 || multiWalletReleased.some(row => row.reserved_atoms !== "0")) {
+    throw new Error("Multi-wallet reservation release did not restore both source balances.");
+  }
+
+  // The first source can reserve; the second cannot. SQLite must roll back the
+  // first trigger update and insert when the second row fails.
+  queryD1(`UPDATE wallet_balances SET confirmed_atoms = '1000000' WHERE id = '${managedSecondReserveBalanceId}'`, "reduceSecondReserveForAtomicFailure");
+  queryD1(`INSERT INTO operation_funding_legs
+    (id, operation_id, leg_index, kind, source_wallet_id, destination_wallet_id, destination_address, asset_mint, amount_atoms)
+    VALUES
+    ('${managedFifthLegId}', '${managedOperationId}', 4, 'reserve_replenishment', '${managedReserveWalletId}', '${managedPaymentWalletId}', '${managedPaymentAddress}', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '2000000'),
+    ('${managedSixthLegId}', '${managedOperationId}', 5, 'reserve_replenishment', '${managedSecondReserveWalletId}', '${managedPaymentWalletId}', '${managedPaymentAddress}', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '2000000')`, "insertAtomicFailureFundingLegs");
+  let crossWalletAtomicFailure = false;
+  try {
+    queryD1(`INSERT INTO reservations
+      (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
+      VALUES
+      ('${managedFifthReservationId}', '${managedOperationId}', '${managedReserveBalanceId}', '2000000', 'USDC', 'active', datetime('now', '+15 minutes'), '${managedFifthLegId}', 'managed'),
+      ('${managedSixthReservationId}', '${managedOperationId}', '${managedSecondReserveBalanceId}', '2000000', 'USDC', 'active', datetime('now', '+15 minutes'), '${managedSixthLegId}', 'managed')`, "rejectCrossWalletAtomicReservation");
+  } catch (error) {
+    crossWalletAtomicFailure = String(error).includes("managed_reservation_insufficient_balance");
+    if (!crossWalletAtomicFailure) throw error;
+  }
+  const afterCrossWalletFailure = queryD1(`SELECT id, reserved_atoms FROM wallet_balances
+    WHERE id IN ('${managedReserveBalanceId}', '${managedSecondReserveBalanceId}') ORDER BY id`, "verifyCrossWalletAtomicRollback");
+  const failedCrossWalletRows = queryD1(`SELECT COUNT(*) AS count FROM reservations
+    WHERE id IN ('${managedFifthReservationId}', '${managedSixthReservationId}')`, "verifyNoCrossWalletPartialRows");
+  if (!crossWalletAtomicFailure || afterCrossWalletFailure.some(row => row.reserved_atoms !== "0") ||
+      Number(failedCrossWalletRows[0]?.count ?? 0) !== 0) {
+    throw new Error("Cross-wallet reservation failure left a partial reservation or balance update.");
+  }
+
   output.steps.managedReservationBehavior = {
     initialReservationAtoms: reservedAfterInsert[0].reserved_atoms,
     rejectedOverReservation: insufficientManagedReservationRejected,
@@ -285,7 +356,11 @@ try {
     atomicMultiRowReservationRejected,
     reservedAfterAtomicFailure: afterAtomicFailure[0].reserved_atoms,
     fundingLegConfirmed: true,
-    confirmedLegRegressionRejected: fundingLegRegressionRejected
+    confirmedLegRegressionRejected: fundingLegRegressionRejected,
+    multiWalletReservationSucceeded: multiWalletReserved.length === 2,
+    multiWalletReleaseRestoredBalances: multiWalletReleased.every(row => row.reserved_atoms === "0"),
+    crossWalletAtomicFailureRejected: crossWalletAtomicFailure,
+    crossWalletAtomicRollbackRestoredBalances: afterCrossWalletFailure.every(row => row.reserved_atoms === "0")
   };
 
 
