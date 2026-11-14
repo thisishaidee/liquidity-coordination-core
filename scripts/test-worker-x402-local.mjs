@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const baseUrl = "http://127.0.0.1:8787";
+const wranglerCli = join(process.cwd(), "node_modules", "wrangler", "bin", "wrangler.js");
 const evidenceDir = "artifacts/worker-x402";
 const output = {
   startedAt: new Date().toISOString(),
@@ -24,7 +25,7 @@ const output = {
 await mkdir(evidenceDir, { recursive: true });
 
 function runWrangler(args, label) {
-  const result = spawnSync("npx", ["wrangler", ...args], {
+  const result = spawnSync(process.execPath, [wranglerCli, ...args], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 120_000,
@@ -94,7 +95,7 @@ try {
     "applyLocalD1Migrations"
   );
 
-  worker = spawn("npx", ["wrangler", "dev", "--local", "--port", "8787", "--ip", "127.0.0.1"], {
+  worker = spawn(process.execPath, [wranglerCli, "dev", "--local", "--port", "8787", "--ip", "127.0.0.1"], {
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" }
   });
