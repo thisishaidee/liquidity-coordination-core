@@ -2829,6 +2829,20 @@ async function submitSignedFundingLegTransaction(
       row.fee_reservation_amount !== row.network_fee_budget_lamports) {
     return json({ error: "funding_leg_wallet_or_reservation_invalid" }, 409);
   }
+  if (row.leg_kind !== "reserve_replenishment" && row.leg_kind !== "final_payment") {
+    return json({ error: "funding_leg_kind_not_supported" }, 409);
+  }
+  if (row.leg_kind === "reserve_replenishment" &&
+      (!row.destination_wallet_id || row.destination_wallet_status !== "active" ||
+       row.destination_wallet_scope !== "business" || !row.destination_verified_at ||
+       row.destination_role_authorized !== 1 || row.destination_address !== row.destination_wallet_address)) {
+    return json({ error: "funding_leg_destination_wallet_invalid" }, 409);
+  }
+  if (row.leg_kind === "final_payment" &&
+      (row.destination_address !== row.intent_destination ||
+       row.asset_mint !== row.intent_mint || row.amount_atoms !== row.payment_atoms)) {
+    return json({ error: "funding_leg_intent_identity_mismatch" }, 409);
+  }
   const destinationOwner = row.leg_kind === "reserve_replenishment"
     ? row.destination_wallet_address : row.destination_address;
   if (!destinationOwner) return json({ error: "funding_leg_destination_invalid" }, 409);
