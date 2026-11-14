@@ -45,7 +45,10 @@ describe("multi-wallet USDC replenishment planning", () => {
     ]);
     expect(plan.status).toBe("insufficient_authorized_usdc");
     expect(plan.totalPlannedAtoms).toBe(300n);
-    expect(plan.legs).toEqual([{ sourceWalletId: "reserve-a", amountAtoms: 200n }]);
+    expect(plan.legs).toEqual([
+      { sourceWalletId: "reserve-a", amountAtoms: 200n },
+      { sourceWalletId: "reserve-b", amountAtoms: 100n }
+    ]);
   });
 
   it("honours per-source transfer caps and rejects invalid amounts", () => {
