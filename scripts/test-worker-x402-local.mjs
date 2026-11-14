@@ -351,6 +351,7 @@ try {
       Number(failedCrossWalletRows[0]?.count ?? 0) !== 0) {
     throw new Error("Cross-wallet reservation failure left a partial reservation or balance update.");
   }
+  queryD1(`UPDATE wallet_balances SET confirmed_atoms = '4000000' WHERE id = '${managedSecondReserveBalanceId}'`, "restoreSecondReserveAfterAtomicRollbackTest");
 
   const managedGateOperationId = "op_" + randomBytes(16).toString("hex");
   const managedGateReserveLegOneId = "leg_" + randomBytes(16).toString("hex");
