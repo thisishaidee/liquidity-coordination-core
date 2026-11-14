@@ -2211,6 +2211,12 @@ async function prepareFinalPaymentAfterReplenishment(
            payment_wallet.status AS payment_wallet_status, payment_wallet.scope AS payment_wallet_scope,
            payment_wallet.ownership_verified_at,
            balance.id AS balance_id, balance.reserved_atoms,
+           (SELECT role.minimum_remaining_atoms FROM wallet_role_assignments role
+            WHERE role.business_id = i.business_id AND role.wallet_id = payment_wallet.id
+              AND role.role = 'payment' AND role.enabled = 1 LIMIT 1) AS payment_minimum_remaining_atoms,
+           (SELECT role.maximum_transfer_atoms FROM wallet_role_assignments role
+            WHERE role.business_id = i.business_id AND role.wallet_id = payment_wallet.id
+              AND role.role = 'payment' AND role.enabled = 1 LIMIT 1) AS payment_maximum_transfer_atoms,
            EXISTS (
              SELECT 1 FROM wallet_role_assignments role
              WHERE role.business_id = i.business_id AND role.wallet_id = payment_wallet.id
@@ -2237,6 +2243,7 @@ async function prepareFinalPaymentAfterReplenishment(
     payment_wallet_id: string; payment_wallet_address: string;
     payment_wallet_status: string; payment_wallet_scope: string;
     ownership_verified_at: string | null; balance_id: string; reserved_atoms: string;
+    payment_minimum_remaining_atoms: string | null; payment_maximum_transfer_atoms: string | null;
     payment_role_authorized: number; reserve_leg_count: number;
     confirmed_reserve_leg_count: number; conversion_leg_count: number;
   }>();
@@ -2291,6 +2298,54 @@ async function prepareFinalPaymentAfterReplenishment(
       error: "finalized_payment_wallet_balance_unavailable",
       message: "Reserve transfers are confirmed, but NERITH could not obtain a finalized payment-wallet balance. No final-payment reservation was created."
     }, 503);
+  }
+
+  const preposition = await env.DB.prepare(`
+    SELECT COALESCE(SUM(CAST(amount_atoms AS INTEGER)), 0) AS amount_atoms
+    FROM reservations
+    WHERE operation_id = ? AND wallet_balance_id = ? AND funding_leg_id IS NULL
+      AND reservation_source = 'managed' AND status = 'active'
+  `).bind(row.operation_id, row.balance_id).first<{ amount_atoms: string }>();
+  const prepositionAtoms = BigInt(preposition?.amount_atoms ?? "0");
+  const currentlyReservedAtoms = BigInt(row.reserved_atoms);
+  if (prepositionAtoms > currentlyReservedAtoms) {
+    return json({ error: "payment_wallet_reservation_ledger_mismatch" }, 409);
+  }
+  const reservedAfterPrepositionRelease = currentlyReservedAtoms - prepositionAtoms;
+  const finalizedAtoms = BigInt(balance.amountAtoms);
+  const spendableAfterRefresh = finalizedAtoms > reservedAfterPrepositionRelease
+    ? finalizedAtoms - reservedAfterPrepositionRelease : 0n;
+  const minimumRemainingAtoms = BigInt(row.payment_minimum_remaining_atoms ?? "0");
+  const maximumTransferAtoms = row.payment_maximum_transfer_atoms
+    ? BigInt(row.payment_maximum_transfer_atoms) : 9_223_372_036_854_775_807n;
+  if (BigInt(row.payment_atoms) > maximumTransferAtoms ||
+      spendableAfterRefresh < BigInt(row.payment_atoms) + minimumRemainingAtoms) {
+    try {
+      await env.DB.batch([
+        env.DB.prepare(`
+          UPDATE wallet_balances
+          SET confirmed_atoms = ?, observed_at = datetime('now'), source = 'solana_rpc_finalized'
+          WHERE id = ? AND wallet_id = ? AND token = 'USDC'
+        `).bind(balance.amountAtoms, row.balance_id, row.payment_wallet_id),
+        env.DB.prepare(`
+          UPDATE reservations SET status = 'released', released_at = datetime('now')
+          WHERE operation_id = ? AND wallet_balance_id = ? AND funding_leg_id IS NULL
+            AND reservation_source = 'managed' AND status = 'active'
+        `).bind(row.operation_id, row.balance_id)
+      ]);
+    } catch {
+      return json({ error: "payment_wallet_balance_refresh_conflict" }, 409);
+    }
+    return json({
+      intentId,
+      status: "replenishing",
+      error: "finalized_payment_wallet_balance_insufficient",
+      finalizedUSDCBalanceAtoms: balance.amountAtoms,
+      spendableAfterExistingReservationsAtoms: spendableAfterRefresh.toString(),
+      requiredPaymentAtoms: row.payment_atoms,
+      minimumRemainingAtoms: minimumRemainingAtoms.toString(),
+      note: "The finalized balance snapshot was refreshed and the temporary preposition hold released, but the payment amount plus required reserve floor is not available. The final-payment leg remains blocked."
+    }, 409);
   }
 
   const reservationId = "res_" + crypto.randomUUID().replaceAll("-", "");
