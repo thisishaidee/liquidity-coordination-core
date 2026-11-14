@@ -28,6 +28,21 @@ The UI should depend on one small provider interface rather than wallet-brand-sp
 
 Vendor integrations belong behind adapters. Initial candidates for device testing are OKX, Phantom, Solflare and Backpack, but availability and Solana transaction-signing support must be confirmed per platform and SDK version. A provider appearing in a detection list is not evidence of a working handoff.
 
+## Multiple required signers
+
+A funding transaction may require two different business wallets: the registered SOL fee payer and the USDC source-token owner. They are separate roles and must not be treated as one wallet merely because the UI has connected one provider.
+
+Before a transaction builder is introduced, its signing contract must:
+
+- Set the approved fee-payer wallet as the transaction's first account and fee payer.
+- Derive the complete required-signer set from the compiled message; require both the registered fee payer and source-token owner when they are distinct.
+- Request signatures from each wallet independently, sequentially, over the exact same compiled message. Each wallet signs only for its own public key.
+- Preserve signatures already collected when passing the partially signed transaction to the next wallet. Reject any wallet response that changes the message bytes, fee payer, account keys, instructions, recent blockhash or required-signer set.
+- Treat cancellation, provider switching, stale blockhashes and partial signature collection as an unsigned/incomplete operation. Do not submit until every required signature is present and cryptographically valid.
+- Never ask one wallet to sign on behalf of another, and never interpret a connected session or ownership challenge as transaction authorization.
+
+The Worker must independently verify the finalized fee payer and source-wallet signatures, exact fee, and transfer contents. The fee payer signature is not interchangeable with the source owner's SPL-token authority signature. This is an implementation requirement, not a claim that multi-wallet signing is already available.
+
 ## Transaction trust boundary
 
 - NERITH must show the exact source wallet, destination, asset, amount, network, network-fee cap and operation reference before the wallet opens.
