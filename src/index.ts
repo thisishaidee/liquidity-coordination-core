@@ -3785,6 +3785,8 @@ async function releaseOperation(request: Request, env: Env, operationId: string)
     processed.push({ ...reservation, debited: true });
   }
 
+  await env.DB.prepare("UPDATE business_payment_intents SET status = 'cancelled' WHERE operation_id = ? AND status IN ('reserved', 'replenishing', 'awaiting_owner_approval', 'awaiting_signature')").bind(operationId).run();
+
   const released = processed.map((item) => ({
     amount: formatTokenAmount(BigInt(item.amount_atoms), item.token === "SOL" ? 9 : 6),
     token: item.token
@@ -3807,6 +3809,10 @@ async function completeOperation(request: Request, env: Env, operationId: string
     "SELECT id, status FROM operations WHERE id = ? AND agent_id = ?"
   ).bind(operationId, agent.id).first<{ id: string; status: string }>();
   if (!operation) return json({ error: "operation_not_found" }, 404);
+  const paymentIntent = await env.DB.prepare("SELECT id, status FROM business_payment_intents WHERE operation_id = ? LIMIT 1")
+    .bind(operationId).first<{ id: string; status: string }>();
+  if (paymentIntent) return json({ error: "payment_confirmation_required", paymentIntentId: paymentIntent.id, paymentStatus: paymentIntent.status }, 409);
+
   if (operation.status !== "reserved" && operation.status !== "conversion_settled") {
     return json({ error: "operation_not_completable", status: operation.status }, 409);
   }
@@ -4000,6 +4006,8 @@ async function expireReservations(env: Env): Promise<{ expired: number; skipped:
       skipped++;
       continue;
     }
+    await env.DB.prepare("UPDATE business_payment_intents SET status = 'expired' WHERE operation_id = ? AND status IN ('reserved', 'replenishing', 'awaiting_owner_approval', 'awaiting_signature')").bind(operation.id).run();
+
     await notifyBusiness(
       env,
       operation.business_id,
