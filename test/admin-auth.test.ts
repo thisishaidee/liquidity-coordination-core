@@ -24,6 +24,16 @@ describe("business-scoped admin route classification", () => {
       .toEqual({ kind: "invalid" });
   });
 
+  it("requires business-scoped POST for final-payment preparation", () => {
+    const path = "/v1/admin/payment-intents/bpi_123/prepare-final-payment";
+    expect(describeAdminRoute("POST", path, new URLSearchParams("businessId=biz_a"), null))
+      .toEqual({ kind: "business", businessId: "biz_a" });
+    expect(describeAdminRoute("POST", path, new URLSearchParams(), null))
+      .toEqual({ kind: "invalid" });
+    expect(describeAdminRoute("GET", path, new URLSearchParams("businessId=biz_a"), null))
+      .toEqual({ kind: "invalid" });
+  });
+
   it("binds resource-id actions to server-resolved ownership", () => {
     expect(describeAdminRoute("POST", "/v1/admin/agents/agt_123/disable", new URLSearchParams(), null)).toEqual({ kind: "business", businessId: null, resource: { table: "agents", id: "agt_123" } });
     expect(describeAdminRoute("POST", "/v1/admin/wallets/wal_123/disable", new URLSearchParams(), null)).toEqual({ kind: "business", businessId: null, resource: { table: "wallets", id: "wal_123" } });
