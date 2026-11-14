@@ -338,9 +338,18 @@ try {
     throw new Error("Cross-wallet reservation failure left a partial reservation or balance update.");
   }
 
+  const managedGateOperationId = "op_" + randomBytes(16).toString("hex");
+  const managedGateReserveLegOneId = "leg_" + randomBytes(16).toString("hex");
+  const managedGateReserveLegTwoId = "leg_" + randomBytes(16).toString("hex");
+  queryD1(`INSERT INTO operations
+    (id, business_id, agent_id, task_id, network, token, amount_atoms, purpose, status, action, available_atoms, shortfall_atoms)
+    VALUES ('${managedGateOperationId}', '${businessId}', '${agentId}', 'managed-final-payment-gate', 'solana', 'USDC', '4000000', 'payment', 'reserved', 'replenish_then_pay', '0', '4000000')`, "insertFinalPaymentGateOperation");
   queryD1(`INSERT INTO operation_funding_legs
-    (id, operation_id, leg_index, kind, source_wallet_id, destination_address, asset_mint, amount_atoms)
-    VALUES ('${managedFinalPaymentLegId}', '${managedOperationId}', 6, 'final_payment', '${managedPaymentWalletId}', '7dN4k3Jm2pQx8sW6vR1aT5uH9cF2eG4iL7oP6bK8mZq', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '1000000')`, "insertFinalPaymentFundingLeg");
+    (id, operation_id, leg_index, kind, source_wallet_id, destination_wallet_id, destination_address, asset_mint, amount_atoms)
+    VALUES
+    ('${managedGateReserveLegOneId}', '${managedGateOperationId}', 0, 'reserve_replenishment', '${managedReserveWalletId}', '${managedPaymentWalletId}', '${managedPaymentAddress}', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '2000000'),
+    ('${managedGateReserveLegTwoId}', '${managedGateOperationId}', 1, 'reserve_replenishment', '${managedSecondReserveWalletId}', '${managedPaymentWalletId}', '${managedPaymentAddress}', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '2000000'),
+    ('${managedFinalPaymentLegId}', '${managedGateOperationId}', 2, 'final_payment', '${managedPaymentWalletId}', NULL, '7dN4k3Jm2pQx8sW6vR1aT5uH9cF2eG4iL7oP6bK8mZq', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '1000000')`, "insertFinalPaymentFundingLegs");
   let finalPaymentGateRejected = false;
   try {
     queryD1(`UPDATE operation_funding_legs SET status = 'reserved' WHERE id = '${managedFinalPaymentLegId}'`, "rejectPrematureFinalPayment");
@@ -350,7 +359,7 @@ try {
   }
   if (!finalPaymentGateRejected) throw new Error("Final payment leg was allowed to reserve before funding legs confirmed.");
 
-  for (const [legId, label] of [[managedThirdLegId, "First"], [managedFourthLegId, "Second"]]) {
+  for (const [legId, label] of [[managedGateReserveLegOneId, "First"], [managedGateReserveLegTwoId, "Second"]]) {
     queryD1(`UPDATE operation_funding_legs SET status = 'reserved' WHERE id = '${legId}'`, "funding" + label + "LegReserved");
     queryD1(`UPDATE operation_funding_legs SET status = 'awaiting_signature' WHERE id = '${legId}'`, "funding" + label + "LegAwaitingSignature");
     queryD1(`UPDATE operation_funding_legs SET transaction_hash = 'local-' || lower('${label}') || '-signature', status = 'submitted' WHERE id = '${legId}'`, "funding" + label + "LegSubmitted");
