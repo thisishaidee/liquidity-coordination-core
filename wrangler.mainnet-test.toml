@@ -1,0 +1,28 @@
+# Isolated NERITH mainnet testing Worker.
+# Uses a dedicated D1 database and Solana mainnet RPC.
+# This is NOT production and has no scheduled jobs or production database binding.
+
+name = "nerith-mainnet-testing"
+main = "src/index.ts"
+compatibility_date = "2026-11-11"
+workers_dev = true
+
+[vars]
+NERITH_SUPPORT_URL = "https://neritth.pages.dev"
+NERITH_PUBLIC_URL = "https://nerith-mainnet-testing.haideecoded-e0f.workers.dev"
+ADMIN_ALLOWED_ORIGINS = "https://nerith-mainnet-testing.haideecoded-e0f.workers.dev"
+SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com"
+SOLANA_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "nerith-mainnet-testing"
+database_id = "b6c15e88-5fb8-43b2-98b6-e2ee45338abd"
+migrations_dir = "migrations"
+
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
