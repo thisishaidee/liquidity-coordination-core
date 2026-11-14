@@ -18,7 +18,7 @@ async function initialize() {
 }
 
 async function connect() {
-  const provider = await initialize();
+  const provider = universalProvider || await initialize();
   if (!provider.connected()) {
     await provider.connect({
       namespaces: {
@@ -36,7 +36,7 @@ async function connect() {
 }
 
 async function signMessage(message, expectedAddress) {
-  const provider = await initialize();
+  const provider = universalProvider || await initialize();
   if (!provider.connected()) throw new Error("OKX Wallet session is not connected. Reconnect and try again.");
   const account = solanaProvider.getAccount(MAINNET_CHAIN);
   if (!account?.address || account.address !== expectedAddress) {
