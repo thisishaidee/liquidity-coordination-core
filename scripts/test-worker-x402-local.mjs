@@ -85,8 +85,8 @@ try {
     throw new Error("Expected 24 ordered D1 migration files; found " + migrationFiles.length);
   }
   const migrationSql = (await Promise.all(
-    migrationFiles.map(async file => "-- " + file + "\\n" + await readFile(join("migrations", file), "utf8"))
-  )).join("\\n\\n");
+    migrationFiles.map(async file => "-- " + file + "\n" + await readFile(join("migrations", file), "utf8"))
+  )).join("\n\n");
   const migrationFile = join(tmpdir(), "nerith-track2-migrations-" + randomBytes(8).toString("hex") + ".sql");
   await writeFile(migrationFile, migrationSql, "utf8");
   runWrangler(
