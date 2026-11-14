@@ -1,6 +1,7 @@
 import { dashboardHtml } from "./dashboard";
 import { businessDashboardHtml } from "./business-dashboard";
 import { okxWalletConnectorJs } from "./okx-wallet-connector";
+import { jupiterMobileConnectorJs } from "./jupiter-mobile-connector";
 import { pixelFieldSvg } from "./pixel-field";
 import { landingHtml } from "./landing";
 import { controlHtml } from "./control";
@@ -6431,6 +6432,16 @@ export default {
         }
       });
     }
+    if (request.method === "GET" && url.pathname === "/assets/jupiter-mobile-connector.js") {
+      return new Response(jupiterMobileConnectorJs, {
+        headers: {
+          "content-type": "text/javascript; charset=utf-8",
+          "cache-control": "public, max-age=300",
+          "x-content-type-options": "nosniff",
+          "referrer-policy": "no-referrer"
+        }
+      });
+    }
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/app" || url.pathname === "/control" || url.pathname === "/dashboard")) {
       const page = url.pathname === "/app" ? dashboardHtml : url.pathname === "/control" ? controlHtml : url.pathname === "/dashboard" ? businessDashboardHtml : landingHtml;
       return new Response(page, {
@@ -6439,7 +6450,7 @@ export default {
           "cache-control": "no-store",
           "x-content-type-options": "nosniff",
           "referrer-policy": "no-referrer",
-          "content-security-policy": "default-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' https://*.okx.com https://*.okx.pro wss://*.okx.com wss://*.okx.pro https://relay.walletconnect.com wss://relay.walletconnect.com https://rpc.walletconnect.com; base-uri 'none'; frame-ancestors 'none'"
+          "content-security-policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.okx.com https://*.okx.pro wss://*.okx.com wss://*.okx.pro https://relay.walletconnect.com wss://relay.walletconnect.com https://rpc.walletconnect.com https://*.walletconnect.com https://*.walletconnect.org https://*.reown.com https://api.web3modal.org https://api.reown.com https://explorer-api.walletconnect.com https://verify.walletconnect.com; worker-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'"
         }
       });
     }
