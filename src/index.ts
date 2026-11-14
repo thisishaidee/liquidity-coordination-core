@@ -2139,6 +2139,15 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
         VALUES (?, ?, ?, ?, 'USDC', 'active', ?, ?, 'managed')
       `).bind(paymentReservationId, operationId, paymentWalletRow.balance_id, finalLegAmount, expiresAt.toISOString(), finalLegId));
       reservationDetails.push({ id: paymentReservationId, fundingLegId: finalLegId, walletId: decision.paymentWalletId, token: "USDC", amountAtoms: finalLegAmount });
+    } else if (decision.paymentWalletAvailableAtoms > 0n) {
+      const prepositionReservationId = "res_" + crypto.randomUUID().replaceAll("-", "");
+      const prepositionAtoms = decision.paymentWalletAvailableAtoms.toString();
+      statements.push(env.DB.prepare(`
+        INSERT INTO reservations
+          (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
+        VALUES (?, ?, ?, ?, 'USDC', 'active', ?, NULL, 'managed')
+      `).bind(prepositionReservationId, operationId, paymentWalletRow.balance_id, prepositionAtoms, expiresAt.toISOString()));
+      reservationDetails.push({ id: prepositionReservationId, fundingLegId: null, walletId: decision.paymentWalletId, token: "USDC", amountAtoms: prepositionAtoms });
     }
     fundingLegDetails.push({ id: finalLegId, kind: "final_payment", sourceWalletId: decision.paymentWalletId, destinationWalletId: null, amountAtoms: finalLegAmount, status: needsReplenishment ? "planned" : "reserved" });
   }
