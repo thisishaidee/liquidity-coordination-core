@@ -1910,6 +1910,7 @@ async function setBusinessPaymentPolicy(request: Request, env: Env): Promise<Res
 async function createBusinessPaymentIntent(request: Request, env: Env): Promise<Response> {
   const agent = await authenticate(request, env.DB);
   if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
+  if (agent.can_use_business_treasury !== 1) return json({ error: "business_treasury_permission_required" }, 403);
   const limited = await enforceAgentRateLimit(env, agent.id, "payment_prepare", 10, 60);
   if (limited) return limited;
   const body = await readJson(request);
@@ -1937,21 +1938,26 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
   catch (error) { return json({ error: "invalid_amount", message: error instanceof Error ? error.message : "Invalid amount" }, 400); }
 
   const existingIntent = await env.DB.prepare(`
-    SELECT id, operation_id, destination, mint, requested_atoms, fee_payer_wallet_id,
-           network_fee_lamports, action, status
-    FROM business_payment_intents
-    WHERE business_id = ? AND idempotency_key = ?
+    SELECT i.id, i.operation_id, i.destination, i.mint, i.requested_atoms, i.fee_payer_wallet_id,
+           i.network_fee_lamports, i.allow_partial_payment, i.slippage_bps,
+           i.action, i.status, op.task_id
+    FROM business_payment_intents i
+    JOIN operations op ON op.id = i.operation_id
+    WHERE i.business_id = ? AND i.idempotency_key = ?
     LIMIT 1
   `).bind(agent.business_id, idempotencyKey).first<{
     id: string; operation_id: string; destination: string; mint: string;
     requested_atoms: string; fee_payer_wallet_id: string; network_fee_lamports: string;
-    action: string; status: string;
+    allow_partial_payment: number; slippage_bps: number | null; action: string; status: string; task_id: string;
   }>();
   if (existingIntent) {
     const sameRequest = existingIntent.destination === destination && existingIntent.mint === mint &&
       existingIntent.requested_atoms === requestedAtoms.toString() &&
       existingIntent.fee_payer_wallet_id === feePayerWalletId &&
-      existingIntent.network_fee_lamports === networkFeeLamports;
+      existingIntent.network_fee_lamports === networkFeeLamports &&
+      existingIntent.allow_partial_payment === (allowPartialPayment ? 1 : 0) &&
+      existingIntent.slippage_bps === (slippageBps as number | null) &&
+      existingIntent.task_id === taskId;
     if (!sameRequest) return json({ error: "idempotency_key_conflict" }, 409);
     return json({
       intentId: existingIntent.id, operationId: existingIntent.operation_id,
@@ -2062,12 +2068,12 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
       INSERT INTO business_payment_intents (
         id, business_id, operation_id, idempotency_key, destination, mint,
         requested_atoms, payment_atoms, fee_payer_wallet_id, network_fee_lamports,
-        action, status, policy_version, policy_snapshot, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        allow_partial_payment, slippage_bps, action, status, policy_version, policy_snapshot, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       paymentIntentId, agent.business_id, operationId, idempotencyKey, destination, mint,
       requestedAtoms.toString(), paymentAtoms.toString(), feePayerWalletId, networkFeeLamports,
-      paymentAction, intentStatus, policyRow.version,
+      allowPartialPayment ? 1 : 0, slippageBps, paymentAction, intentStatus, policyRow.version,
       JSON.stringify({ ...policy, committedTodayAtoms: committedTodayAtoms.toString() }),
       expiresAt.toISOString()
     )
@@ -2124,14 +2130,17 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
     await env.DB.batch(statements);
   } catch (error) {
     const existing = await env.DB.prepare(`
-      SELECT id, operation_id, destination, mint, requested_atoms, fee_payer_wallet_id,
-             network_fee_lamports, action, status
-      FROM business_payment_intents
-      WHERE business_id = ? AND idempotency_key = ? LIMIT 1
-    `).bind(agent.business_id, idempotencyKey).first<{ id: string; operation_id: string; destination: string; mint: string; requested_atoms: string; fee_payer_wallet_id: string; network_fee_lamports: string; action: string; status: string }>();
+      SELECT i.id, i.operation_id, i.destination, i.mint, i.requested_atoms, i.fee_payer_wallet_id,
+             i.network_fee_lamports, i.allow_partial_payment, i.slippage_bps,
+             i.action, i.status, op.task_id
+      FROM business_payment_intents i JOIN operations op ON op.id = i.operation_id
+      WHERE i.business_id = ? AND i.idempotency_key = ? LIMIT 1
+    `).bind(agent.business_id, idempotencyKey).first<{ id: string; operation_id: string; destination: string; mint: string; requested_atoms: string; fee_payer_wallet_id: string; network_fee_lamports: string; allow_partial_payment: number; slippage_bps: number | null; action: string; status: string; task_id: string }>();
     if (existing && existing.destination === destination && existing.mint === mint &&
         existing.requested_atoms === requestedAtoms.toString() && existing.fee_payer_wallet_id === feePayerWalletId &&
-        existing.network_fee_lamports === networkFeeLamports) {
+        existing.network_fee_lamports === networkFeeLamports &&
+        existing.allow_partial_payment === (allowPartialPayment ? 1 : 0) &&
+        existing.slippage_bps === (slippageBps as number | null) && existing.task_id === taskId) {
       return json({ intentId: existing.id, operationId: existing.operation_id, action: existing.action, status: existing.status, reused: true });
     }
     return json({ error: "payment_intent_persistence_failed", message: error instanceof Error ? error.message : String(error) }, 409);
