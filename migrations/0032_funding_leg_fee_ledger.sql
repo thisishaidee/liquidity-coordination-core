@@ -48,6 +48,16 @@ CREATE TABLE IF NOT EXISTS operation_funding_leg_fees (
 CREATE INDEX IF NOT EXISTS idx_funding_leg_fees_operation_status
   ON operation_funding_leg_fees(operation_id, status);
 
+CREATE TRIGGER IF NOT EXISTS trg_funding_leg_fee_insert_requires_reserved
+BEFORE INSERT ON operation_funding_leg_fees
+WHEN NEW.status <> 'reserved'
+  OR NEW.actual_fee_lamports IS NOT NULL
+  OR NEW.transaction_hash IS NOT NULL
+  OR NEW.finalized_slot IS NOT NULL
+BEGIN
+  SELECT RAISE(ABORT, 'funding_leg_fee_insert_must_be_unsubmitted');
+END;
+
 CREATE TRIGGER IF NOT EXISTS trg_funding_leg_fee_identity_immutable
 BEFORE UPDATE OF operation_id, funding_leg_id, fee_payer_wallet_id, maximum_fee_lamports, created_at
 ON operation_funding_leg_fees
