@@ -290,7 +290,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       const roles=state.walletRoles.filter(r=>r.walletId===w.walletId);
       const roleMarkup=roles.length?'<div class="wallet-role-current">'+roles.map(r=>{
         const limits=r.role==="reserve"?' · floor '+moneyAtoms(BigInt(r.minimumRemainingAtoms||"0"))+' USDC'+(r.maximumTransferAtoms?' · cap '+moneyAtoms(BigInt(r.maximumTransferAtoms))+' USDC':''):'';
-        return '<span class="chip '+(r.enabled?'lemon':'off')+'">'+escapeHtml(r.role.replaceAll("_"," "))+' · '+(r.enabled?'enabled':'disabled')+escapeHtml(limits)+'</span>';
+        return '<span class="chip '+(r.enabled?'lemon':'off')+'">'+escapeHtml(r.role.replaceAll("_"," "))+' · '+(r.enabled?'enabled':'disabled')+escapeHtml(limits)+'</span>'+(canManage&&r.enabled&&r.role!=="api_payment"?' <button type="button" class="btn" data-disable-wallet-role="'+escapeHtml(r.walletId)+'" data-role="'+escapeHtml(r.role)+'">Disable</button>':'');
       }).join("")+'</div>':'<div class="wallet-role-help">No role assignment yet.</div>';
       if(w.purpose==="api_payment")return '<article class="wallet-card"><div class="panel-head"><strong>API fee wallet</strong><span class="chip">Isolated</span></div><div class="wallet-address mono">'+escapeHtml(w.address)+'</div>'+roleMarkup+'<div class="wallet-role-help">Dedicated to Hermes x402 API fees. It is excluded from business payment and reserve liquidity.</div></article>';
       const selected=roles.find(r=>r.enabled&&["payment","reserve","operating","receiving"].includes(r.role))?.role||"reserve";
@@ -422,10 +422,10 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     const role=form.elements.role.value;
     const minimumText=form.elements.minimumRemaining.value.trim()||"0";
     const maximumText=form.elements.maximumTransfer.value.trim();
-    const validAmount=value=>/^(0|[1-9]\\d*)(\\.\\d{1,6})?$/.test(value);
+    const validAmount=value=>/^(0|[1-9]\d*)(\.\d{1,6})?$/.test(value);
     if(!validAmount(minimumText)||(maximumText&&!validAmount(maximumText))){showError("Enter valid USDC amounts with up to six decimal places.");return;}
-    const minimumRemainingAtoms=parseDecimalAtoms(minimumText,6).toString();
-    const maximumTransferAtoms=maximumText?parseDecimalAtoms(maximumText,6).toString():null;
+    const minimumRemainingAtoms=role==="reserve"?parseDecimalAtoms(minimumText,6).toString():"0";
+    const maximumTransferAtoms=role==="reserve"&&maximumText?parseDecimalAtoms(maximumText,6).toString():null;
     if(maximumTransferAtoms==="0"){showError("Maximum transfer must be greater than zero, or leave it blank for no cap.");return;}
     const submit=form.querySelector('button[type="submit"]');submit.disabled=true;
     try{
@@ -433,6 +433,21 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       await loadAll();
     }catch(error){showError("Could not save wallet role: "+String(error.message||error));}
     finally{submit.disabled=false;}
+  });
+
+  document.addEventListener("click",async event=>{
+    const button=event.target.closest("[data-disable-wallet-role]");
+    if(!button)return;
+    if(state.role!=="admin"){showError("Only workspace admins can change wallet roles.");return;}
+    const walletId=button.dataset.disableWalletRole;
+    const role=button.dataset.role;
+    const current=state.walletRoles.find(item=>item.walletId===walletId&&item.role===role);
+    if(!current)return;
+    button.disabled=true;
+    try{
+      await apiWrite("/v1/admin/wallet-roles",{businessId:state.businessId,walletId,role,enabled:false,priority:current.priority,minimumRemainingAtoms:current.minimumRemainingAtoms,maximumTransferAtoms:current.maximumTransferAtoms});
+      await loadAll();
+    }catch(error){showError("Could not disable wallet role: "+String(error.message||error));button.disabled=false;}
   });
   document.addEventListener("click",event=>{
     const button=event.target.closest("[data-page]");
