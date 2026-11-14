@@ -9,7 +9,7 @@ CHECK (reservation_source IN ('legacy', 'managed', 'managed_fee'));
 -- and the enclosing batch, preventing partial multi-wallet reservations.
 CREATE TRIGGER IF NOT EXISTS trg_managed_reservation_reserve_balance
 BEFORE INSERT ON reservations
-WHEN NEW.reservation_source = 'managed' AND NEW.status = 'active'
+WHEN NEW.reservation_source = 'managed' AND NEW.status = 'active' AND NEW.funding_leg_id IS NOT NULL
 BEGIN
   SELECT CASE WHEN NEW.amount_atoms IS NULL
     OR NEW.amount_atoms = ''
@@ -117,6 +117,55 @@ BEGIN
   END;
 END;
 
+-- A payment wallet's currently spendable USDC is held while reserve transfers
+-- are in flight. The final-payment reservation replaces this preposition hold
+-- only after every replenishment leg has been confirmed.
+CREATE TRIGGER IF NOT EXISTS trg_managed_payment_wallet_preposition_reserve
+BEFORE INSERT ON reservations
+WHEN NEW.reservation_source = 'managed' AND NEW.status = 'active' AND NEW.funding_leg_id IS NULL
+BEGIN
+  SELECT CASE WHEN NEW.amount_atoms IS NULL
+    OR NEW.amount_atoms = ''
+    OR NEW.amount_atoms GLOB '*[^0-9]*'
+    OR substr(NEW.amount_atoms, 1, 1) = '0'
+    OR length(NEW.amount_atoms) > 19
+    OR (length(NEW.amount_atoms) = 19 AND NEW.amount_atoms > '9223372036854775807')
+    THEN RAISE(ABORT, 'managed_preposition_amount_invalid') END;
+
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1
+    FROM wallet_balances b
+    JOIN wallets payment_wallet ON payment_wallet.id = b.wallet_id
+    JOIN operations op ON op.id = NEW.operation_id
+    JOIN business_payment_intents intent ON intent.operation_id = op.id
+    JOIN operation_funding_legs final_leg ON final_leg.operation_id = op.id AND final_leg.kind = 'final_payment'
+    JOIN wallet_role_assignments payment_role
+      ON payment_role.business_id = payment_wallet.business_id
+      AND payment_role.wallet_id = payment_wallet.id
+      AND payment_role.role = 'payment' AND payment_role.enabled = 1
+    WHERE b.id = NEW.wallet_balance_id
+      AND b.token = 'USDC'
+      AND payment_wallet.id = final_leg.source_wallet_id
+      AND payment_wallet.business_id = op.business_id
+      AND payment_wallet.scope = 'business'
+      AND payment_wallet.status = 'active'
+      AND payment_wallet.network = 'solana'
+      AND payment_wallet.ownership_verified_at IS NOT NULL
+      AND intent.business_id = op.business_id
+      AND intent.action = 'replenish_then_pay'
+      AND intent.status = 'replenishing'
+      AND CAST(NEW.amount_atoms AS INTEGER) <= CAST(intent.payment_atoms AS INTEGER)
+  ) THEN RAISE(ABORT, 'managed_preposition_wallet_not_authorized') END;
+
+  UPDATE wallet_balances
+  SET reserved_atoms = CAST(reserved_atoms AS INTEGER) + CAST(NEW.amount_atoms AS INTEGER)
+  WHERE id = NEW.wallet_balance_id
+    AND CAST(confirmed_atoms AS INTEGER) - CAST(reserved_atoms AS INTEGER) >= CAST(NEW.amount_atoms AS INTEGER)
+    AND CAST(reserved_atoms AS INTEGER) <= 9223372036854775807 - CAST(NEW.amount_atoms AS INTEGER);
+  SELECT CASE WHEN changes() <> 1
+    THEN RAISE(ABORT, 'managed_preposition_insufficient_balance')
+  END;
+END;
 -- A managed reservation releases its aggregate hold exactly once when its
 -- status leaves active. A mismatch aborts the state change.
 CREATE TRIGGER IF NOT EXISTS trg_managed_reservation_release_balance
