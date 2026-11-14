@@ -21,6 +21,7 @@ function intent(overrides: Partial<PaymentIntent> = {}): PaymentIntent {
     createdAt: new Date(now - 30_000).toISOString(),
     expiresAt: new Date(now + 120_000).toISOString(),
     allowPartialPayment: false,
+    networkFeeLamports: "5000",
     ...overrides
   };
 }
@@ -30,7 +31,9 @@ function policy(overrides: Partial<PaymentPolicy> = {}): PaymentPolicy {
     businessId: "biz_a",
     allowedMints: [MINT],
     allowedDestinations: [DESTINATION],
+    allowedConversionMints: ["So11111111111111111111111111111111111111112"],
     maxTransactionAtoms: "10000000",
+    maxNetworkFeeLamports: "10000",
     maxDailyAtoms: "20000000",
     committedTodayAtoms: "0",
     maxBalanceAgeSeconds: 300,
@@ -143,13 +146,40 @@ describe("deterministic payment intent policy", () => {
       confirmedAtoms: "2000000",
       maximumTransferAtoms: "1000000"
     });
-    const result = evaluatePaymentIntentPolicy(intent(), policy({ allowConversion: true }), [payment, reserve], now);
+    const solReserve = wallet({
+      walletId: "wallet_sol_reserve",
+      role: "reserve",
+      mint: "So11111111111111111111111111111111111111112",
+      confirmedAtoms: "1000000000",
+      minimumRemainingAtoms: "100000000",
+      maximumTransferAtoms: "500000000"
+    });
+    const result = evaluatePaymentIntentPolicy(intent({ slippageBps: 50 }), policy({ allowConversion: true }), [payment, reserve, solReserve], now);
     expect(result.eligible).toBe(true);
     if (result.eligible) {
       expect(result.action).toBe("conversion_required");
       expect(result.conversionShortfallAtoms).toBe(2_000_000n);
       expect(result.ownerApprovalRequired).toBe(true);
+      expect(result.conversionSourceWallets).toEqual([{ walletId: "wallet_sol_reserve", mint: "So11111111111111111111111111111111111111112", availableAtoms: 500_000_000n }]);
     }
+  });
+
+  it("rejects estimated network fees above the business cap", () => {
+    expect(evaluatePaymentIntentPolicy(intent({ networkFeeLamports: "10001" }), policy(), [wallet()], now))
+      .toMatchObject({ eligible: false, code: "network_fee_limit_exceeded" });
+  });
+
+  it("requires an approved conversion asset and slippage before returning conversion_required", () => {
+    const payment = wallet({ confirmedAtoms: "2000000" });
+    const noSource = evaluatePaymentIntentPolicy(intent({ slippageBps: 50 }), policy({ allowConversion: true }), [payment], now);
+    const noSlippage = evaluatePaymentIntentPolicy(
+      intent(),
+      policy({ allowConversion: true }),
+      [payment, wallet({ walletId: "sol", role: "reserve", mint: "So11111111111111111111111111111111111111112" })],
+      now
+    );
+    expect(noSource).toMatchObject({ eligible: false, code: "no_authorized_conversion_source" });
+    expect(noSlippage).toMatchObject({ eligible: false, code: "conversion_slippage_required" });
   });
 
   it("allows partial payment only when both intent and business policy enable it", () => {
