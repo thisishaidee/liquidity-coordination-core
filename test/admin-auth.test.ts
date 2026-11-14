@@ -19,6 +19,16 @@ describe("business-scoped admin route classification", () => {
     expect(describeAdminRoute("POST", "/v1/admin/x402/reconcile", new URLSearchParams(), { reservationId: "x4r_123" })).toEqual({ kind: "business", businessId: null, resource: { table: "x402_payment_reservations", id: "x4r_123" } });
   });
 
+  it("binds wallet-role writes to the owning business wallet", () => {
+    expect(describeAdminRoute("GET", "/v1/admin/wallet-roles", new URLSearchParams("businessId=biz_a"), null))
+      .toEqual({ kind: "business", businessId: "biz_a" });
+    expect(describeAdminRoute("GET", "/v1/admin/wallet-roles", new URLSearchParams(), null))
+      .toEqual({ kind: "invalid" });
+    expect(describeAdminRoute("POST", "/v1/admin/wallet-roles", new URLSearchParams(), {
+      businessId: "biz_a", walletId: "wal_123", role: "reserve"
+    })).toEqual({ kind: "business", businessId: "biz_a", resource: { table: "wallets", id: "wal_123" } });
+  });
+
   it("isolates platform-wide routes behind the bootstrap token", () => {
     expect(describeAdminRoute("POST", "/v1/admin/bootstrap", new URLSearchParams(), {})).toEqual({ kind: "global" });
     expect(describeAdminRoute("POST", "/v1/admin/telegram/setup", new URLSearchParams(), {})).toEqual({ kind: "global" });
