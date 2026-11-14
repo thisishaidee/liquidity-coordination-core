@@ -43,12 +43,30 @@ describe("fetchFinalizedSolanaTransaction", () => {
     expect(result.state).toBe("pending");
   });
 
-  it("reports a finalized on-chain failure", async () => {
-    const fetcher: typeof fetch = async () => response({
-      result: { value: [{ confirmationStatus: "finalized", err: { InstructionError: [0, "Custom"] }, slot: 12 }] }
-    });
+  it("fetches finalized metadata and retains the actual fee for failed transactions", async () => {
+    const calls: string[] = [];
+    const fetcher: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body));
+      calls.push(body.method);
+      return body.method === "getSignatureStatuses"
+        ? response({ result: { value: [{ confirmationStatus: "finalized", err: { InstructionError: [0, "Custom"] }, slot: 12 }] } })
+        : response({
+          result: {
+            slot: 12,
+            transaction: { signatures: [SIGNATURE] },
+            meta: { err: { InstructionError: [0, "Custom"] }, fee: 5000 }
+          }
+        });
+    };
     const result = await fetchFinalizedSolanaTransaction(ENDPOINT, SIGNATURE, fetcher);
     expect(result.state).toBe("failed");
+    if (result.state === "failed") {
+      expect(result.slot).toBe(12);
+      expect(result.transaction.meta).toEqual({
+        err: { InstructionError: [0, "Custom"] }, fee: 5000
+      });
+    }
+    expect(calls).toEqual(["getSignatureStatuses", "getTransaction"]);
   });
 
   it("fetches parsed transaction only after finalized status and matches signature", async () => {
