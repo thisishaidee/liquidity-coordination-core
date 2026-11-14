@@ -64,6 +64,8 @@ jobs:
         with:
           node-version: 22
       - run: npm install
+      - name: Build embedded dashboard modules required by the Worker
+        run: npm run build:dashboard
       - name: Check the local integration test script syntax
         run: node --check scripts/test-worker-x402-local.mjs
       - name: Apply migrations, seed isolated fixtures, and test Worker-to-Hermes relay
