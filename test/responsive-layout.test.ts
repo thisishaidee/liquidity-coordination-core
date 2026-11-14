@@ -58,6 +58,10 @@ describe("responsive page source contracts", () => {
     expect(businessDashboardHtml).toContain('/v1/admin/wallet-ownership/verify');
     expect(businessDashboardHtml).toContain('window.okxwallet?.solana');
     expect(businessDashboardHtml).toContain('window.phantom?.solana');
+    expect(businessDashboardHtml).toContain('wallet-standard:register-wallet');
+    expect(businessDashboardHtml).toContain('wallet-standard:app-ready');
+    expect(businessDashboardHtml).toContain('solana:signMessage');
+    expect(businessDashboardHtml).toContain('solana:mainnet');
     expect(businessDashboardHtml).toContain('const canManage=["owner","admin"].includes(state.role)');
     expect(businessDashboardHtml).toContain("The signing wallet changed accounts.");
     expect(businessDashboardHtml).toContain('A workspace admin must sign a short-lived message');
