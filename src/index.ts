@@ -2079,7 +2079,21 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
     )
   ];
 
-  const reservationDetails: Array<{ id: string; fundingLegId: string; walletId: string; amountAtoms: string }> = [];
+  if (decision.action !== "conversion_required" && BigInt(networkFeeLamports) > 0n) {
+    const feePayerWalletRow = (walletRows.results ?? []).find(row =>
+      row.wallet_id === feePayerWalletId && row.token === "SOL" &&
+      (row.role === "payment" || row.role === "operating")
+    );
+    if (!feePayerWalletRow) return json({ error: "network_fee_balance_missing" }, 409);
+    const feeReservationId = "res_" + crypto.randomUUID().replaceAll("-", "");
+    statements.push(env.DB.prepare(`
+      INSERT INTO reservations
+        (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
+      VALUES (?, ?, ?, ?, 'SOL', 'active', ?, NULL, 'managed_fee')
+    `).bind(feeReservationId, operationId, feePayerWalletRow.balance_id, networkFeeLamports, expiresAt.toISOString()));
+    reservationDetails.push({ id: feeReservationId, fundingLegId: null, walletId: feePayerWalletId, token: "SOL", amountAtoms: networkFeeLamports });
+  }
+  const reservationDetails: Array<{ id: string; fundingLegId: string | null; walletId: string; token: string; amountAtoms: string }> = [];
   const fundingLegDetails: Array<{ id: string; kind: string; sourceWalletId: string; destinationWalletId: string | null; amountAtoms: string; status: string }> = [];
   for (const [index, planLeg] of replenishmentLegs.entries()) {
     const sourceRow = (walletRows.results ?? []).find(row =>
@@ -2103,7 +2117,7 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
       VALUES (?, ?, ?, ?, 'USDC', 'active', ?, ?, 'managed')
     `).bind(reservationId, operationId, sourceRow.balance_id, amountAtoms, expiresAt.toISOString(), legId));
     statements.push(env.DB.prepare("UPDATE operation_funding_legs SET status = 'reserved' WHERE id = ?").bind(legId));
-    reservationDetails.push({ id: reservationId, fundingLegId: legId, walletId: planLeg.sourceWalletId, amountAtoms });
+    reservationDetails.push({ id: reservationId, fundingLegId: legId, walletId: planLeg.sourceWalletId, token: "USDC", amountAtoms });
     fundingLegDetails.push({ id: legId, kind: "reserve_replenishment", sourceWalletId: planLeg.sourceWalletId, destinationWalletId: decision.paymentWalletId, amountAtoms, status: "reserved" });
   }
 
@@ -2121,7 +2135,7 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
           (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
         VALUES (?, ?, ?, ?, 'USDC', 'active', ?, ?, 'managed')
       `).bind(paymentReservationId, operationId, paymentWalletRow.balance_id, finalLegAmount, expiresAt.toISOString(), finalLegId));
-      reservationDetails.push({ id: paymentReservationId, fundingLegId: finalLegId, walletId: decision.paymentWalletId, amountAtoms: finalLegAmount });
+      reservationDetails.push({ id: paymentReservationId, fundingLegId: finalLegId, walletId: decision.paymentWalletId, token: "USDC", amountAtoms: finalLegAmount });
     }
     fundingLegDetails.push({ id: finalLegId, kind: "final_payment", sourceWalletId: decision.paymentWalletId, destinationWalletId: null, amountAtoms: finalLegAmount, status: needsReplenishment ? "planned" : "reserved" });
   }
