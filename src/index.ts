@@ -1863,6 +1863,8 @@ async function createWalletOwnershipChallenge(request: Request, env: Env): Promi
   if (!wallet) return json({ error: "active_business_wallet_not_found" }, 404);
   if (wallet.network !== "solana") return json({ error: "unsupported_wallet_network" }, 400);
 
+  await env.DB.prepare("UPDATE wallet_ownership_challenges SET consumed_at = datetime('now') WHERE wallet_id = ? AND consumed_at IS NULL").bind(wallet.id).run();
+
   const nonce = crypto.getRandomValues(new Uint8Array(32));
   const nonceText = encodeBase64Url(nonce);
   const challengeId = crypto.randomUUID();
@@ -1898,11 +1900,13 @@ async function verifyWalletOwnership(request: Request, env: Env): Promise<Respon
   const origin = request.headers.get("origin");
   if (!origin || !isAllowedAdminOrigin(origin, new URL(request.url).origin, env.ADMIN_ALLOWED_ORIGINS)) return json({ error: "origin_not_allowed" }, 403);
 
-  const challenge = await env.DB.prepare("SELECT c.id, c.address, c.origin, c.network, c.message, c.expires_at, w.address AS current_address FROM wallet_ownership_challenges c JOIN wallets w ON w.id = c.wallet_id AND w.business_id = c.business_id WHERE c.id = ? AND c.business_id = ? AND c.wallet_id = ? AND c.consumed_at IS NULL AND julianday(c.expires_at) > julianday('now') AND w.scope = 'business' AND w.status = 'active' LIMIT 1")
-    .bind(body.challengeId, body.businessId, body.walletId).first<{ id: string; address: string; origin: string; network: string; message: string; expires_at: string; current_address: string }>();
+  const challenge = await env.DB.prepare("SELECT c.id, c.address, c.origin, c.network, c.message, c.nonce_hash, c.expires_at, w.address AS current_address FROM wallet_ownership_challenges c JOIN wallets w ON w.id = c.wallet_id AND w.business_id = c.business_id WHERE c.id = ? AND c.business_id = ? AND c.wallet_id = ? AND c.consumed_at IS NULL AND julianday(c.expires_at) > julianday('now') AND w.scope = 'business' AND w.status = 'active' LIMIT 1")
+    .bind(body.challengeId, body.businessId, body.walletId).first<{ id: string; address: string; origin: string; network: string; message: string; nonce_hash: string; expires_at: string; current_address: string }>();
   if (!challenge) return json({ error: "challenge_expired_or_consumed" }, 409);
   if (challenge.origin !== origin) return json({ error: "challenge_origin_mismatch" }, 403);
   if (challenge.network !== "solana:mainnet-beta" || challenge.address !== challenge.current_address) return json({ error: "challenge_wallet_mismatch" }, 409);
+  const nonceLine = challenge.message.split(String.fromCharCode(10)).find(line => line.startsWith("Nonce: "));
+  if (!nonceLine || await sha256(nonceLine.slice(7)) !== challenge.nonce_hash) return json({ error: "challenge_integrity_failure" }, 409);
   if (!(await verifySolanaMessageSignature(challenge.address, challenge.message, body.signature))) return json({ error: "invalid_wallet_signature" }, 400);
 
   const verifiedAt = new Date().toISOString();
