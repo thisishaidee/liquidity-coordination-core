@@ -611,6 +611,11 @@ const businessPaymentIntentCount = queryD1(`SELECT COUNT(*) AS count FROM busine
     authorization: "Bearer " + paymentApiKey,
     "content-type": "application/json"
   };
+  const adminHeaders = {
+    "content-type": "application/json",
+    cookie: "nerith_admin_session=" + adminSessionToken,
+    origin: baseUrl
+  };
   const incomingPaymentHeaderPresent = Object.keys(authHeaders)
     .some(name => name.toLowerCase() === "x-payment");
   output.steps.incomingPaymentHeaderCheck = { present: incomingPaymentHeaderPresent };
