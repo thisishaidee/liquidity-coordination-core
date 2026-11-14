@@ -2527,6 +2527,174 @@ async function getFundingLegSettlementRow(
   `).bind(intentId, legId, businessId).first<FundingLegSettlementRow>();
 }
 
+async function prepareFundingLegTransaction(
+  request: Request, env: Env, intentId: string, legId: string
+): Promise<Response> {
+  if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  const businessId = new URL(request.url).searchParams.get("businessId") ?? "";
+  if (!businessId) return json({ error: "business_id_required" }, 400);
+  if (!env.SOLANA_RPC_URL || !env.SOLANA_USDC_MINT) {
+    return json({ error: "solana_rpc_or_usdc_mint_not_configured" }, 503);
+  }
+
+  const row = await getFundingLegSettlementRow(env, intentId, legId, businessId);
+  if (!row) return json({ error: "funding_leg_not_found" }, 404);
+  if (row.transaction_hash || row.leg_status === "submitted" || row.leg_status === "confirmed" ||
+      row.leg_status === "ambiguous") {
+    return json({ error: "funding_leg_already_submitted_or_terminal", status: row.leg_status }, 409);
+  }
+  if (row.intent_action === "conversion_required" || row.leg_kind === "conversion") {
+    return json({ error: "conversion_settlement_not_supported" }, 409);
+  }
+  if (Date.parse(row.intent_expires_at) <= Date.now()) return json({ error: "payment_intent_expired" }, 409);
+  if (row.intent_status !== "reserved" && row.intent_status !== "replenishing" &&
+      row.intent_status !== "awaiting_signature") {
+    return json({ error: "payment_intent_not_submittable", status: row.intent_status }, 409);
+  }
+  if (row.leg_status !== "reserved" && row.leg_status !== "awaiting_signature" &&
+      row.leg_status !== "authorized_for_execution") {
+    return json({ error: "funding_leg_not_submittable", status: row.leg_status }, 409);
+  }
+  if (!row.reservation_id || row.source_status !== "active" || row.source_scope !== "business" ||
+      !row.source_verified_at || row.source_role_authorized !== 1) {
+    return json({ error: "funding_leg_reservation_or_source_invalid" }, 409);
+  }
+  if (row.fee_payer_wallet_status !== "active" || row.fee_payer_scope !== "business" ||
+      !row.fee_payer_verified_at || row.fee_payer_role_authorized !== 1 ||
+      !row.fee_reservation_id || !row.fee_ledger_id || row.fee_ledger_status !== "reserved" ||
+      row.fee_maximum_fee_lamports !== row.network_fee_lamports ||
+      row.fee_reservation_amount !== row.network_fee_budget_lamports) {
+    return json({ error: "funding_leg_fee_wallet_or_reservation_invalid" }, 409);
+  }
+  if (row.asset_mint !== env.SOLANA_USDC_MINT || row.amount_atoms !== row.amount_atoms ||
+      !/^[1-9][0-9]{0,18}$/.test(row.amount_atoms)) {
+    return json({ error: "funding_leg_usdc_identity_invalid" }, 409);
+  }
+  if (row.leg_kind === "reserve_replenishment" &&
+      (!row.destination_wallet_id || row.destination_wallet_status !== "active" ||
+       row.destination_wallet_scope !== "business" || !row.destination_verified_at ||
+       row.destination_role_authorized !== 1 || row.destination_address !== row.destination_wallet_address)) {
+    return json({ error: "funding_leg_destination_wallet_invalid" }, 409);
+  }
+  if (row.leg_kind === "final_payment" &&
+      (row.destination_address !== row.intent_destination ||
+       row.asset_mint !== row.intent_mint || row.amount_atoms !== row.payment_atoms)) {
+    return json({ error: "funding_leg_intent_identity_mismatch" }, 409);
+  }
+  const destinationOwner = row.leg_kind === "reserve_replenishment"
+    ? row.destination_wallet_address : row.destination_address;
+  if (!destinationOwner || !row.fee_payer_address) {
+    return json({ error: "funding_leg_wallet_identity_missing" }, 409);
+  }
+
+  const feeRows = await env.DB.prepare(`
+    SELECT funding_leg_id, status, maximum_fee_lamports, actual_fee_lamports
+    FROM operation_funding_leg_fees WHERE operation_id = ?
+  `).bind(row.operation_id).all<{
+    funding_leg_id: string; status: string; maximum_fee_lamports: string; actual_fee_lamports: string | null;
+  }>();
+  const rows = feeRows.results ?? [];
+  const currentFeeRow = rows.find(item => item.funding_leg_id === legId);
+  if (!currentFeeRow || currentFeeRow.status !== "reserved" ||
+      currentFeeRow.maximum_fee_lamports !== row.fee_maximum_fee_lamports) {
+    return json({ error: "funding_leg_fee_ledger_invalid" }, 409);
+  }
+  let approvedFeeBudget = 0n;
+  let reconciledFeeTotal = 0n;
+  let otherOutstandingFeeCaps = 0n;
+  for (const item of rows) {
+    if (!/^(0|[1-9][0-9]{0,18})$/.test(item.maximum_fee_lamports)) {
+      return json({ error: "funding_leg_fee_ledger_invalid" }, 409);
+    }
+    const cap = BigInt(item.maximum_fee_lamports);
+    approvedFeeBudget += cap;
+    if (item.status === "reconciled") {
+      if (item.actual_fee_lamports === null ||
+          !/^(0|[1-9][0-9]{0,18})$/.test(item.actual_fee_lamports)) {
+        return json({ error: "funding_leg_fee_reconciliation_invalid" }, 409);
+      }
+      reconciledFeeTotal += BigInt(item.actual_fee_lamports);
+    } else if (["reserved", "submitted", "ambiguous"].includes(item.status)) {
+      if (item.funding_leg_id !== legId) otherOutstandingFeeCaps += cap;
+    } else if (item.status !== "not_required") {
+      return json({ error: "funding_leg_fee_ledger_invalid" }, 409);
+    }
+  }
+  const aggregateBudget = BigInt(row.network_fee_budget_lamports);
+  if (approvedFeeBudget !== aggregateBudget || reconciledFeeTotal + otherOutstandingFeeCaps > aggregateBudget) {
+    return json({ error: "funding_leg_aggregate_fee_budget_invalid" }, 409);
+  }
+  const remainingAggregateFeeLamports =
+    (aggregateBudget - reconciledFeeTotal - otherOutstandingFeeCaps).toString();
+
+  const [sourceBalance, feePayerBalance, sourceRoleFloor, feePayerRoleFloor] = await Promise.all([
+    env.DB.prepare("SELECT reserved_atoms FROM wallet_balances WHERE wallet_id = ? AND token = 'USDC' LIMIT 1")
+      .bind(row.source_wallet_id).first<{ reserved_atoms: string }>(),
+    env.DB.prepare("SELECT reserved_atoms FROM wallet_balances WHERE wallet_id = ? AND token = 'SOL' LIMIT 1")
+      .bind(row.fee_payer_wallet_id).first<{ reserved_atoms: string }>(),
+    env.DB.prepare(`
+      SELECT CAST(COALESCE(MAX(CAST(minimum_remaining_atoms AS INTEGER)), 0) AS TEXT) AS minimum_remaining_atoms
+      FROM wallet_role_assignments
+      WHERE business_id = ? AND wallet_id = ? AND enabled = 1 AND ${row.leg_kind === "final_payment"
+        ? "role = 'payment'" : "role IN ('reserve', 'operating')"}
+    `).bind(businessId, row.source_wallet_id).first<{ minimum_remaining_atoms: string }>(),
+    env.DB.prepare(`
+      SELECT CAST(COALESCE(MAX(CAST(minimum_remaining_atoms AS INTEGER)), 0) AS TEXT) AS minimum_remaining_atoms
+      FROM wallet_role_assignments
+      WHERE business_id = ? AND wallet_id = ? AND enabled = 1 AND role IN ('payment', 'operating')
+    `).bind(businessId, row.fee_payer_wallet_id).first<{ minimum_remaining_atoms: string }>()
+  ]);
+  if (!sourceBalance || !feePayerBalance ||
+      !/^(0|[1-9][0-9]{0,18})$/.test(sourceBalance.reserved_atoms) ||
+      !/^(0|[1-9][0-9]{0,18})$/.test(feePayerBalance.reserved_atoms)) {
+    return json({ error: "funding_leg_wallet_balance_reservation_missing" }, 409);
+  }
+  const sourceMinimum = BigInt(sourceBalance.reserved_atoms) +
+    BigInt(sourceRoleFloor?.minimum_remaining_atoms ?? "0");
+  const feePayerMinimum = BigInt(feePayerBalance.reserved_atoms) +
+    BigInt(feePayerRoleFloor?.minimum_remaining_atoms ?? "0");
+
+  try {
+    const prepared = await buildUsdcFundingTransaction({
+      rpcUrl: env.SOLANA_RPC_URL,
+      mintAddress: row.asset_mint,
+      sourceWalletAddress: row.source_address,
+      destinationOwnerAddress: destinationOwner,
+      feePayerAddress: row.fee_payer_address,
+      amountAtoms: row.amount_atoms,
+      maximumFeeLamports: row.fee_maximum_fee_lamports,
+      remainingAggregateFeeLamports,
+      minimumSourceBalanceAtoms: sourceMinimum.toString(),
+      minimumFeePayerBalanceLamports: feePayerMinimum.toString()
+    });
+    return json({
+      intentId,
+      fundingLegId: legId,
+      status: "unsigned_transaction_ready",
+      transactionBase64: prepared.transactionBase64,
+      messageSha256: prepared.messageSha256,
+      recentBlockhash: prepared.recentBlockhash,
+      lastValidBlockHeight: prepared.lastValidBlockHeight,
+      estimatedFeeLamports: prepared.estimatedFeeLamports,
+      requiredSigners: prepared.requiredSigners,
+      transfer: {
+        sourceWalletAddress: prepared.sourceWalletAddress,
+        sourceTokenAccount: prepared.sourceTokenAccount,
+        destinationOwnerAddress: prepared.destinationOwnerAddress,
+        destinationTokenAccount: prepared.destinationTokenAccount,
+        mintAddress: prepared.mintAddress,
+        amountAtoms: prepared.amountAtoms,
+        decimals: prepared.decimals,
+        feePayerAddress: prepared.feePayerAddress
+      },
+      note: "Unsigned transaction only. NERITH has not requested signatures or broadcast anything."
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Transaction preparation failed.";
+    return json({ error: "funding_transaction_preparation_failed", reason }, 502);
+  }
+}
+
 async function submitFundingLegTransaction(
   request: Request, env: Env, intentId: string, legId: string
 ): Promise<Response> {
