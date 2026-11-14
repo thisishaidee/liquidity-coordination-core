@@ -128,7 +128,7 @@ npm run typecheck
 npm test
 ```
 
-Use the dedicated Cloudflare D1 database already provisioned for this repository. Its ID is configured in `wrangler.toml`; migrations 0001 through 0025 are tracked in `migrations/`; apply all pending migrations and verify them in `d1_migrations`. For a fresh environment, create a D1 database and apply migrations:
+Use the dedicated Cloudflare D1 database already provisioned for this repository. Its ID is configured in `wrangler.toml`; migrations 0001 through 0026 are tracked in `migrations/`; apply all pending migrations and verify them in `d1_migrations`. For a fresh environment, create a D1 database and apply migrations:
 
 ```bash
 npx wrangler d1 create liquidity-coordination
