@@ -64,6 +64,8 @@ export type PaymentPolicyDecision =
       action: "conversion_required";
       paymentWalletId: string;
       requestedAtoms: bigint;
+      policyPermittedAtoms: bigint;
+      unpaidByPolicyAtoms: bigint;
       paymentWalletAvailableAtoms: bigint;
       replenishmentPlan: ReplenishmentPlan;
       conversionShortfallAtoms: bigint;
@@ -346,7 +348,9 @@ export function evaluatePaymentIntentPolicy(
       eligible: true,
       action: "conversion_required",
       paymentWalletId: paymentWallet.walletId,
-      requestedAtoms: policyAmountAtoms,
+      requestedAtoms,
+      policyPermittedAtoms: policyAmountAtoms,
+      unpaidByPolicyAtoms: requestedAtoms - policyAmountAtoms,
       paymentWalletAvailableAtoms: paymentAvailable,
       replenishmentPlan,
       conversionShortfallAtoms: replenishmentPlan.shortfallAtoms - replenishmentPlan.totalPlannedAtoms,
