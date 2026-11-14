@@ -121,7 +121,7 @@ try {
     fundingLegSafetyTriggers: fundingLegTriggers.length === 5,
     finalPaymentFundingGates: finalPaymentTriggers.length === 2,
     businessPaymentTables: paymentIntentTables.length === 2,
-    businessPaymentTriggers: paymentIntentTriggers.length === 2
+    businessPaymentTriggers: paymentIntentTriggers.length === 3
   };
   output.steps.walletOwnershipSchema = { checks: schemaChecks };
   if (Object.values(schemaChecks).some(value => value !== true)) {
@@ -167,7 +167,7 @@ try {
     PRAGMA foreign_keys = ON;
     INSERT INTO businesses (id, name) VALUES ('${businessId}', 'NERITH Track Two Test');
     INSERT INTO agents (id, business_id, name, api_key_hash, can_use_business_treasury)
-      VALUES ('${agentId}', '${businessId}', 'Track Two Agent', '${apiKeyHash}', 0);
+      VALUES ('${agentId}', '${businessId}', 'Track Two Agent', '${apiKeyHash}', 1);
     INSERT INTO wallets (id, business_id, agent_id, network, address, scope, purpose)
       VALUES ('${operatingWalletId}', '${businessId}', '${agentId}', 'solana', '${operatingAddress}', 'agent', 'operating');
     INSERT INTO wallets (id, business_id, agent_id, network, address, scope, purpose)
@@ -186,6 +186,7 @@ try {
   const managedPaymentWalletId = "wal_" + randomBytes(16).toString("hex");
   const managedReserveBalanceId = "bal_" + randomBytes(16).toString("hex");
   const managedPaymentBalanceId = "bal_" + randomBytes(16).toString("hex");
+  const managedPaymentSolBalanceId = "bal_" + randomBytes(16).toString("hex");
   const managedFinalPaymentReservationId = "res_" + randomBytes(16).toString("hex");
   const managedOperationId = "op_" + randomBytes(16).toString("hex");
   const managedLegId = "leg_" + randomBytes(16).toString("hex");
@@ -221,6 +222,8 @@ try {
     VALUES ('${managedReserveBalanceId}', '${managedReserveWalletId}', 'USDC', '5000000', '0', datetime('now'), 'managed_reservation_fixture')`, "insertManagedReserveBalance");
   queryD1(`INSERT INTO wallet_balances (id, wallet_id, token, confirmed_atoms, reserved_atoms, observed_at, source)
     VALUES ('${managedPaymentBalanceId}', '${managedPaymentWalletId}', 'USDC', '1000000', '0', datetime('now'), 'managed_reservation_fixture')`, "insertManagedPaymentBalance");
+  queryD1(`INSERT INTO wallet_balances (id, wallet_id, token, confirmed_atoms, reserved_atoms, observed_at, source)
+    VALUES ('${managedPaymentSolBalanceId}', '${managedPaymentWalletId}', 'SOL', '1000000000', '0', datetime('now'), 'managed_reservation_fixture')`, "insertManagedPaymentSolBalance");
   queryD1(`INSERT INTO wallets
     (id, business_id, agent_id, network, address, scope, purpose, ownership_verified_at, ownership_verified_origin)
     VALUES ('${managedSecondReserveWalletId}', '${businessId}', NULL, 'solana', '${managedSecondReserveAddress}', 'business', 'operating', datetime('now'), 'https://neritth.pages.dev')`, "insertManagedSecondReserveWallet");
@@ -489,6 +492,75 @@ try {
     .some(name => name.toLowerCase() === "x-payment");
   output.steps.incomingPaymentHeaderCheck = { present: incomingPaymentHeaderPresent };
   if (incomingPaymentHeaderPresent) throw new Error("Test request unexpectedly contains X-PAYMENT.");
+
+  const directPaymentPayload = {
+    taskId: "direct-payment-" + suffix,
+    idempotencyKey: "direct-idem-" + suffix,
+    destination: "7dN4k3Jm2pQx8sW6vR1aT5uH9cF2eG4iL7oP6bK8mZq",
+    amount: "0.5",
+    feePayerWalletId: managedPaymentWalletId,
+    networkFeeLamports: "5000"
+  };
+  const directPaymentResponse = await fetch(baseUrl + "/v1/payments/prepare", {
+    method: "POST", headers: authHeaders, body: JSON.stringify(directPaymentPayload)
+  });
+  const directPaymentBody = await directPaymentResponse.json();
+  if (directPaymentResponse.status !== 201 || directPaymentBody.action !== "direct_payment" || directPaymentBody.status !== "reserved") {
+    throw new Error("Direct business payment preparation failed: " + JSON.stringify(directPaymentBody));
+  }
+  const directPaymentReservation = queryD1(`SELECT r.amount_atoms, r.reservation_source, l.kind, l.status, b.reserved_atoms
+    FROM reservations r JOIN operation_funding_legs l ON l.id = r.funding_leg_id
+    JOIN wallet_balances b ON b.id = r.wallet_balance_id WHERE r.operation_id = '${directPaymentBody.operationId}'`, "verifyDirectPaymentReservation");
+  if (directPaymentReservation.length !== 1 || directPaymentReservation[0].amount_atoms !== "500000" ||
+      directPaymentReservation[0].reservation_source !== "managed" || directPaymentReservation[0].kind !== "final_payment" ||
+      directPaymentReservation[0].status !== "reserved" || directPaymentReservation[0].reserved_atoms !== "500000") {
+    throw new Error("Direct payment did not create a correctly guarded payment-wallet reservation.");
+  }
+  const directReplayResponse = await fetch(baseUrl + "/v1/payments/prepare", {
+    method: "POST", headers: authHeaders, body: JSON.stringify(directPaymentPayload)
+  });
+  const directReplayBody = await directReplayResponse.json();
+  if (directReplayResponse.status !== 200 || directReplayBody.reused !== true || directReplayBody.intentId !== directPaymentBody.intentId) {
+    throw new Error("Business payment idempotent replay did not return the original intent.");
+  }
+  const directConflictResponse = await fetch(baseUrl + "/v1/payments/prepare", {
+    method: "POST", headers: authHeaders, body: JSON.stringify({ ...directPaymentPayload, amount: "0.6" })
+  });
+  if (directConflictResponse.status !== 409) throw new Error("Payment idempotency key accepted a changed request payload.");
+
+  const multiWalletPaymentResponse = await fetch(baseUrl + "/v1/payments/prepare", {
+    method: "POST", headers: authHeaders, body: JSON.stringify({
+      taskId: "multi-wallet-payment-" + suffix,
+      idempotencyKey: "multi-idem-" + suffix,
+      destination: directPaymentPayload.destination, amount: "6",
+      feePayerWalletId: managedPaymentWalletId, networkFeeLamports: "5000"
+    })
+  });
+  const multiWalletPaymentBody = await multiWalletPaymentResponse.json();
+  if (multiWalletPaymentResponse.status !== 201 || multiWalletPaymentBody.action !== "replenish_then_pay" ||
+      multiWalletPaymentBody.status !== "replenishing" || multiWalletPaymentBody.fundingLegs?.filter(leg => leg.kind === "reserve_replenishment").length !== 2) {
+    throw new Error("Multi-wallet payment preparation did not create two replenishment legs: " + JSON.stringify(multiWalletPaymentBody));
+  }
+  const multiWalletPaymentRows = queryD1(`SELECT l.kind, l.status, r.amount_atoms, b.wallet_id, b.reserved_atoms
+    FROM operation_funding_legs l JOIN reservations r ON r.funding_leg_id = l.id
+    JOIN wallet_balances b ON b.id = r.wallet_balance_id WHERE l.operation_id = '${multiWalletPaymentBody.operationId}'
+    ORDER BY l.leg_index`, "verifyMultiWalletPaymentReservations");
+  if (multiWalletPaymentRows.length !== 2 || multiWalletPaymentRows.some(row => row.kind !== "reserve_replenishment" || row.status !== "reserved") ||
+      multiWalletPaymentRows.reduce((sum, row) => sum + BigInt(row.amount_atoms), 0n) !== 5500000n) {
+    throw new Error("Multi-wallet payment reservations did not match the planned 5.5 USDC shortfall.");
+  }
+  const unreservedFinalLeg = queryD1(`SELECT status FROM operation_funding_legs WHERE operation_id = '${multiWalletPaymentBody.operationId}' AND kind = 'final_payment'`, "verifyFinalPaymentWaitsForReplenishment");
+  if (unreservedFinalLeg[0]?.status !== "planned") throw new Error("Final payment was not held behind replenishment confirmation.");
+  output.steps.businessPaymentPreparation = {
+    directPaymentPrepared: true,
+    directPaymentReservationAtoms: directPaymentReservation[0].amount_atoms,
+    idempotentReplayReusedOriginal: directReplayBody.reused === true,
+    changedIdempotencyPayloadRejected: directConflictResponse.status === 409,
+    multiWalletReplenishmentLegs: multiWalletPaymentBody.fundingLegs.filter(leg => leg.kind === "reserve_replenishment").length,
+    multiWalletReservedAtoms: multiWalletPaymentRows.reduce((sum, row) => sum + BigInt(row.amount_atoms), 0n).toString(),
+    finalPaymentHeldUntilReplenishment: unreservedFinalLeg[0]?.status === "planned"
+  };
+
 
   const liquidityResponse = await fetch(baseUrl + "/v1/liquidity/requests", {
     method: "POST",
