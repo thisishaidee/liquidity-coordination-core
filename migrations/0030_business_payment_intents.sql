@@ -51,7 +51,7 @@ CREATE INDEX IF NOT EXISTS idx_business_payment_intents_status_expiry
 CREATE TRIGGER IF NOT EXISTS trg_business_payment_intent_identity_immutable
 BEFORE UPDATE OF business_id, operation_id, idempotency_key, destination, mint,
                  requested_atoms, payment_atoms, fee_payer_wallet_id,
-                 network_fee_lamports, allow_partial_payment, slippage_bps, action, policy_version, policy_snapshot
+                 network_fee_lamports, allow_partial_payment, slippage_bps, action, policy_version, policy_snapshot, expires_at, created_at
 ON business_payment_intents
 WHEN NEW.business_id IS NOT OLD.business_id
   OR NEW.operation_id IS NOT OLD.operation_id
@@ -67,6 +67,8 @@ WHEN NEW.business_id IS NOT OLD.business_id
   OR NEW.action IS NOT OLD.action
   OR NEW.policy_version IS NOT OLD.policy_version
   OR NEW.policy_snapshot IS NOT OLD.policy_snapshot
+  OR NEW.expires_at IS NOT OLD.expires_at
+  OR NEW.created_at IS NOT OLD.created_at
 BEGIN
   SELECT RAISE(ABORT, 'business_payment_intent_identity_immutable');
 END;
@@ -99,7 +101,15 @@ BEGIN
       AND fee_wallet.business_id = NEW.business_id
       AND fee_wallet.scope = 'business'
       AND fee_wallet.status = 'active'
+      AND fee_wallet.network = 'solana'
       AND fee_wallet.ownership_verified_at IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM wallet_role_assignments fee_role
+        WHERE fee_role.business_id = fee_wallet.business_id
+          AND fee_role.wallet_id = fee_wallet.id
+          AND fee_role.enabled = 1
+          AND fee_role.role IN ('payment', 'operating')
+      )
   ) THEN RAISE(ABORT, 'business_payment_intent_scope_invalid') END;
 
   SELECT CASE WHEN NOT EXISTS (
@@ -115,6 +125,13 @@ END;
 CREATE TRIGGER IF NOT EXISTS trg_business_payment_intent_policy_guard
 BEFORE INSERT ON business_payment_intents
 BEGIN
+  SELECT CASE WHEN NEW.network_fee_lamports IS NULL
+    OR NEW.network_fee_lamports = ''
+    OR NEW.network_fee_lamports GLOB '*[^0-9]*'
+    OR length(NEW.network_fee_lamports) > 19
+    OR (length(NEW.network_fee_lamports) = 19 AND NEW.network_fee_lamports > '9223372036854775807')
+    THEN RAISE(ABORT, 'business_payment_network_fee_invalid') END;
+
   SELECT CASE WHEN NEW.requested_atoms IS NULL
     OR NEW.requested_atoms = ''
     OR NEW.requested_atoms GLOB '*[^0-9]*'
