@@ -4,23 +4,37 @@ import { OKXSolanaProvider } from "@okxconnect/solana-provider";
 const MAINNET_CHAIN = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
 let universalProvider;
 let solanaProvider;
+let initializationPromise;
 
 async function initialize() {
-  if (universalProvider) return universalProvider;
-  universalProvider = await OKXUniversalProvider.init({
-    dappMetaData: {
-      name: "NERITH",
-      icon: "https://neritth.pages.dev/favicon.ico"
-    }
-  });
-  solanaProvider = new OKXSolanaProvider(universalProvider);
-  return universalProvider;
+  if (universalProvider && solanaProvider) return universalProvider;
+  if (!initializationPromise) {
+    initializationPromise = OKXUniversalProvider.init({
+      dappMetaData: {
+        name: "NERITH",
+        icon: "https://neritth.pages.dev/favicon.ico"
+      }
+    }).then(provider => {
+      universalProvider = provider;
+      solanaProvider = new OKXSolanaProvider(provider);
+      return provider;
+    }).catch(error => {
+      initializationPromise = undefined;
+      throw error;
+    });
+  }
+  return initializationPromise;
 }
 
 async function connect() {
-  const provider = universalProvider || await initialize();
+  // Initialize during dashboard startup, not inside the click handler. Waiting
+  // here would consume Android's transient user gesture before OKX can launch.
+  const provider = universalProvider;
+  if (!provider || !solanaProvider) {
+    throw new Error("OKX Wallet is still initializing. Wait for the dashboard to finish loading, then retry.");
+  }
   if (!provider.connected()) {
-    await provider.connect({
+    const connection = provider.connect({
       namespaces: {
         solana: {
           chains: [MAINNET_CHAIN],
@@ -28,6 +42,7 @@ async function connect() {
         }
       }
     });
+    await connection;
   }
   const account = solanaProvider.getAccount(MAINNET_CHAIN);
   if (!account?.address) throw new Error("OKX Wallet connected without returning a Solana address.");
