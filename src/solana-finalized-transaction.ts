@@ -77,8 +77,9 @@ export async function fetchFinalizedSolanaTransaction(
   const slot = transaction.slot;
   const signatures = (transaction.transaction as { signatures?: unknown } | undefined)?.signatures;
   if (!Number.isSafeInteger(slot) || (slot as number) <= 0 ||
+      slot !== status.slot ||
       !Array.isArray(signatures) || !signatures.includes(signature)) {
-    return { state: "pending", reason: "RPC transaction response does not yet match the submitted signature and finalized slot." };
+    return { state: "pending", reason: "RPC transaction response does not yet match the submitted signature and finalized status slot." };
   }
   const meta = transaction.meta as { err?: unknown | null } | undefined;
   if (!meta || (meta.err !== null && meta.err !== undefined)) {
