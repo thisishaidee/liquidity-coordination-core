@@ -8,15 +8,15 @@ NERITH is not a wallet, a custody service, a trading terminal, or an autonomous 
 
 ## Agreed next architecture milestone
 
-The next milestone is documented in [AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md](AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md). Draft PR #51 adds the additive multi-wallet role schema, business-scoped role APIs, a responsive dashboard role-management surface, and deterministic USDC replenishment planning. These changes are branch-only and are not current production functionality until reviewed, merged and deployed with the D1 migration. The planner does not reserve balances or execute inter-wallet replenishment. The Worker still does not autonomously sign or broadcast transactions.
+The next milestone is documented in [AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md](AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md). Draft PR #52 adds the additive multi-wallet role schema, business-scoped role APIs, a responsive dashboard role-management surface, deterministic USDC replenishment planning, wallet ownership verification and payment-intent preparation. These changes are branch-only and are not current production functionality until reviewed, merged and deployed with the D1 migration. The planner does not reserve balances or execute inter-wallet replenishment. The Worker still does not autonomously sign or broadcast transactions.
 
 ## Multi-leg funding and atomic reservation status
 
-The draft adds an operation funding-leg table linked to the existing reservation ledger, plus a managed reservation mode. Managed rows are guarded by D1 triggers that verify business ownership, verified wallet control, enabled reserve/payment roles, available balance and bounded atom values. Multi-row inserts can reserve across multiple source wallets atomically; a failing source rolls back every row and balance update. Managed release updates the aggregate exactly once. The local integration suite is being expanded to exercise both successful multi-wallet reservation and cross-wallet rollback. No API currently creates these managed reservations or orchestrates the legs.
+The draft adds an operation funding-leg table linked to the existing reservation ledger, plus managed USDC and SOL-fee reservation modes. The `/v1/payments/prepare` API evaluates a business payment request, creates an immutable payment intent and its operation, and inserts the planned funding legs and required reservations in one D1 batch. Managed rows are guarded by D1 triggers for business scope, verified wallet control, enabled roles, reserve floors, transfer caps, available balance and bounded atom values. A failed leg rolls back the batch. SOL network fees are held separately from USDC payment liquidity. When reserve replenishment is required, the final-payment leg remains planned until replenishment is confirmed. This is an internal ledger hold, not an on-chain transfer.
 
 ## Deterministic payment policy status
 
-The draft also includes a pure payment-intent policy evaluator. It applies business and wallet scope, ownership verification, asset/destination allowlists, amount and daily caps, balance freshness, reserve floors, transfer caps, SOL network-fee payer policy, idempotency replay checks, and conditional conversion/slippage requirements. It produces plans only; it is not connected to a signer or fund-movement endpoint.
+The draft includes a deterministic payment-intent policy evaluator connected to payment preparation. It applies business and wallet scope, ownership verification, asset/destination allowlists, amount and daily caps, balance freshness, reserve floors, transfer caps, SOL network-fee payer policy, idempotency replay checks, and conditional conversion/slippage requirements. Database guards re-check the mutable allowlists and daily cap when the intent is inserted. Payment preparation does not build, sign or broadcast a Solana transaction. Conversion-required intents remain in owner-approval state; conversion and final-payment execution are not implemented.
 
 ## Wallet ownership verification status
 
@@ -40,7 +40,7 @@ A business can explicitly allow an agent to use an eligible business-scope opera
 
 ### 2. Wallet registry and balance snapshots
 
-NERITH's production registry currently classifies Solana wallets by scope and legacy purpose. Draft PR #51 adds a separate business-scoped role-assignment layer without changing that legacy purpose column:
+NERITH's production registry currently classifies Solana wallets by scope and legacy purpose. Draft PR #52 adds a separate business-scoped role-assignment layer without changing that legacy purpose column:
 
 - **Operating wallet:** liquidity available for business tasks and possible conversion.
 - **API-payment wallet:** a separate business wallet used by the x402 client to pay the Swap.io API. It is excluded from operating liquidity and forecasts.
@@ -57,7 +57,7 @@ NERITH evaluates fresh, authorized wallet snapshots and returns one of three bro
 - **Awaiting conversion:** USDC is short, but an eligible SOL source may be converted to cover the shortfall.
 - **Blocked:** the request cannot be safely covered by the currently eligible liquidity.
 
-Reservations are ledger holds, not blockchain transfers, escrow, or proof of payment. The current production V1 allocator still does not combine balances from multiple wallets. The draft branch now has a database-level atomic reservation primitive for managed funding legs, but it is not yet wired into a user-facing payment workflow.
+Reservations are ledger holds, not blockchain transfers, escrow, or proof of payment. The current production V1 allocator still does not combine balances from multiple wallets. The draft branch now uses the database-level atomic reservation primitive through the agent-authenticated payment-preparation API. The API returns an intent and reservation plan, not an executable or signed transaction.
 
 Reservations expire automatically through a one-minute Worker cron. Agents can also release or complete an operation. An agent-reported completion is not proof that an external payment occurred.
 
