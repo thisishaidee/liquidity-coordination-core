@@ -1932,6 +1932,7 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
     typeof feePayerWalletId !== "string" || !feePayerWalletId ||
     mint !== (env.SOLANA_USDC_MINT ?? "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v") ||
     !/^(0|[1-9][0-9]{0,18})$/.test(networkFeeLamports) ||
+    BigInt(networkFeeLamports || "0") === 0n ||
     BigInt(networkFeeLamports || "0") > 9_223_372_036_854_775_807n ||
     (slippageBps !== null && (!Number.isSafeInteger(slippageBps) || (slippageBps as number) < 0 || (slippageBps as number) > 10000)) ||
     purpose.length > 300
