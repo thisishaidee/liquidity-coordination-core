@@ -363,14 +363,6 @@ try {
   queryD1(`INSERT INTO operations
     (id, business_id, agent_id, task_id, network, token, amount_atoms, purpose, status, action, available_atoms, shortfall_atoms)
     VALUES ('${managedGateOperationId}', '${businessId}', '${agentId}', 'managed-final-payment-gate', 'solana', 'USDC', '4000000', 'payment', 'reserved', 'replenish_then_pay', '0', '4000000')`, "insertFinalPaymentGateOperation");
-  queryD1(`INSERT INTO business_payment_intents
-    (id, business_id, operation_id, idempotency_key, destination, mint, requested_atoms, payment_atoms,
-     fee_payer_wallet_id, network_fee_lamports, action, status, policy_version, policy_snapshot, expires_at)
-    VALUES ('bpi_${suffix}', '${businessId}', '${managedGateOperationId}', 'gate-intent-${suffix}',
-      '7dN4k3Jm2pQx8sW6vR1aT5uH9cF2eG4iL7oP6bK8mZq',
-      'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '1000000', '1000000',
-      '${managedPaymentWalletId}', '0', 'replenish_then_pay', 'replenishing', 1, '{}', datetime('now', '+15 minutes'))`,
-    "insertReplenishmentGateIntent");
   queryD1(`INSERT INTO operation_funding_legs
     (id, operation_id, leg_index, kind, source_wallet_id, destination_wallet_id, destination_address, asset_mint, amount_atoms)
     VALUES
@@ -452,6 +444,15 @@ try {
   queryD1(`INSERT INTO business_payment_policies
     (business_id, allowed_mints, allowed_destinations, allowed_conversion_mints, max_transaction_atoms, max_network_fee_lamports, allowed_fee_payer_wallet_ids, max_daily_atoms, max_balance_age_seconds, max_intent_lifetime_seconds, max_slippage_bps, allow_conversion, allow_partial_payment)
     VALUES ('${businessId}', json_array('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'), json_array('7dN4k3Jm2pQx8sW6vR1aT5uH9cF2eG4iL7oP6bK8mZq'), json_array(), '100000000', '5000', json_array('${managedPaymentWalletId}'), '500000000', 300, 900, 50, 0, 0)`, "insertBusinessPaymentPolicy");
+  queryD1(`INSERT INTO business_payment_intents
+    (id, business_id, operation_id, idempotency_key, destination, mint, requested_atoms, payment_atoms,
+     fee_payer_wallet_id, network_fee_lamports, action, status, policy_version, policy_snapshot, expires_at)
+    VALUES ('bpi_${suffix}', '${businessId}', '${managedGateOperationId}', 'gate-intent-${suffix}',
+      '7dN4k3Jm2pQx8sW6vR1aT5uH9cF2eG4iL7oP6bK8mZq',
+      'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '1000000', '1000000',
+      '${managedPaymentWalletId}', '0', 'replenish_then_pay', 'replenishing', 1, '{}', datetime('now', '+15 minutes'))`,
+    "insertReplenishmentGateIntent");
+
   queryD1(`INSERT INTO business_payment_intents
     (id, business_id, operation_id, idempotency_key, destination, mint, requested_atoms, payment_atoms, fee_payer_wallet_id, network_fee_lamports, action, status, policy_version, policy_snapshot, expires_at)
     VALUES ('${businessPaymentIntentId}', '${businessId}', '${managedGateOperationId}', 'business-idem-12345678', '7dN4k3Jm2pQx8sW6vR1aT5uH9cF2eG4iL7oP6bK8mZq', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '1000000', '1000000', '${managedPaymentWalletId}', '5000', 'replenish_then_pay', 'policy_checked', 1, '{}', datetime('now', '+15 minutes'))`, "insertBusinessPaymentIntent");
