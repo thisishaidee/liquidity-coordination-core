@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -84,12 +84,15 @@ try {
   if (migrationFiles.length !== 24) {
     throw new Error("Expected 24 ordered D1 migration files; found " + migrationFiles.length);
   }
-  for (const file of migrationFiles) {
-    runWrangler(
-      ["d1", "execute", "liquidity-coordination", "--local", "--file", join("migrations", file)],
-      "applyLocalMigration:" + file
-    );
-  }
+  const migrationSql = (await Promise.all(
+    migrationFiles.map(async file => "-- " + file + "\\n" + await readFile(join("migrations", file), "utf8"))
+  )).join("\\n\\n");
+  const migrationFile = join(tmpdir(), "nerith-track2-migrations-" + randomBytes(8).toString("hex") + ".sql");
+  await writeFile(migrationFile, migrationSql, "utf8");
+  runWrangler(
+    ["d1", "execute", "liquidity-coordination", "--local", "--file", migrationFile],
+    "applyLocalD1Migrations"
+  );
 
   worker = spawn("npx", ["wrangler", "dev", "--local", "--port", "8787", "--ip", "127.0.0.1"], {
     stdio: ["ignore", "pipe", "pipe"],
