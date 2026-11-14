@@ -6283,9 +6283,12 @@ export default {
     if (request.method === "POST" && finalPaymentPrepareRoute) {
       return prepareFinalPaymentAfterReplenishment(request, env, finalPaymentPrepareRoute[1]);
     }
-    const fundingLegRoute = url.pathname.match(/^\/v1\/admin\/payment-intents\/([a-zA-Z0-9_-]+)\/funding-legs\/([a-zA-Z0-9_-]+)\/(prepare|submit|reconcile)$/);
+    const fundingLegRoute = url.pathname.match(/^\/v1\/admin\/payment-intents\/([a-zA-Z0-9_-]+)\/funding-legs\/([a-zA-Z0-9_-]+)\/(prepare|submit-signed|submit|reconcile)$/);
     if (request.method === "POST" && fundingLegRoute && fundingLegRoute[3] === "prepare") {
       return prepareFundingLegTransaction(request, env, fundingLegRoute[1], fundingLegRoute[2]);
+    }
+    if (request.method === "POST" && fundingLegRoute && fundingLegRoute[3] === "submit-signed") {
+      return submitSignedFundingLegTransaction(request, env, fundingLegRoute[1], fundingLegRoute[2]);
     }
     if (request.method === "POST" && fundingLegRoute && fundingLegRoute[3] === "submit") {
       return submitFundingLegTransaction(request, env, fundingLegRoute[1], fundingLegRoute[2]);
