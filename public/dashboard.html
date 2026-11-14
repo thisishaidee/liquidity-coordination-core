@@ -641,8 +641,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
         ["WalletRoles",api("/v1/admin/wallet-roles?businessId="+id),value=>{state.walletRoles=requireArray(value,"roles","wallet_roles");}],
         ["Telegram connections",api("/v1/admin/telegram/connections?businessId="+id),value=>{state.telegram=requireArray(value,"connections","telegram_connections");}],
         ["Forecast",api("/v1/admin/forecast?businessId="+id),value=>{state.forecast=validateForecast(value);}],
-        ["Operations",api("/v1/admin/operations?"+operationParams.toString()),value=>{const data=validateOperations(value);state.operations=data.operations;state.nextCursor=data.nextCursor;state.operationCounts=data.statusCounts;}],,
-        ["PaymentIntents",api("/v1/admin/payment-intents?businessId="+id),value=>{if(!Array.isArray(value.intents))throw new Error("invalid_payment_intents_response");state.paymentIntents=value.intents;}]
+        ["Operations",api("/v1/admin/operations?"+operationParams.toString()),value=>{const data=validateOperations(value);state.operations=data.operations;state.nextCursor=data.nextCursor;state.operationCounts=data.statusCounts;}],
         ["PaymentIntents",api("/v1/admin/payment-intents?businessId="+id),value=>{if(!Array.isArray(value.intents))throw new Error("invalid_payment_intents_response");state.paymentIntents=value.intents;}]
       ];
       const results=await Promise.allSettled(requests.map(item=>item[1]));
