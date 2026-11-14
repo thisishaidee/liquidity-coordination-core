@@ -4404,9 +4404,19 @@ async function requestAdminX402DemoQuote(request: Request, env: Env): Promise<Re
     return json({ error: "source_amount_out_of_range", message: "The demo quote is limited to a maximum of 1 SOL." }, 400);
   }
 
-  const agent = await env.DB.prepare(
-    "SELECT id, business_id, status, can_use_business_treasury FROM agents WHERE business_id = ? AND status = 'active' ORDER BY id LIMIT 1"
-  ).bind(businessId).first<AgentRow>();
+  const agent = await env.DB.prepare(`
+    SELECT a.id, a.business_id, a.status, a.can_use_business_treasury
+    FROM agents a
+    WHERE a.business_id = ? AND a.status = 'active'
+      AND EXISTS (
+        SELECT 1 FROM wallets w
+        WHERE w.business_id = a.business_id AND w.network = 'solana'
+          AND w.address = ? AND w.status = 'active' AND w.purpose = 'operating'
+          AND w.ownership_verified_at IS NOT NULL
+          AND (w.scope = 'business' OR (w.scope = 'agent' AND w.agent_id = a.id))
+      )
+    ORDER BY a.id LIMIT 1
+  `).bind(businessId, operatingWalletAddress).first<AgentRow>();
   if (!agent) return json({ error: "active_agent_not_found" }, 404);
   const limited = await enforceAgentRateLimit(env, agent.id, "x402_demo_quote", 4, 600);
   if (limited) return limited;
