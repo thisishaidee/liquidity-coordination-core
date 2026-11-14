@@ -310,6 +310,7 @@ export function evaluatePaymentIntentPolicy(
         eligible: true,
         action: "partial_payment",
         paymentWalletId: paymentWallet.walletId,
+        feePayerWalletId: feePayerWallet.walletId,
         requestedAtoms,
         paymentAmountAtoms: policyAmountAtoms,
         unpaidAtoms: requestedAtoms - policyAmountAtoms,
