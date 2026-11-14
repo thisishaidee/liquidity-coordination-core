@@ -413,7 +413,21 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     if(!address)throw new Error("The wallet connected but did not return a public address.");
     return address;
   }
-  async function signOwnershipChallenge(address,message) {
+  async function signOwnershipChallenge(address,message,preferredWallet="") {
+    // Respect the wallet explicitly selected for this ownership check. A stale
+    // OKX session must never intercept a Jupiter verification request.
+    if(preferredWallet==="jupiter"){
+      if(!window.NERITHJUPITER?.connected||window.NERITHJUPITER.getAddress?.()!==address){
+        throw new Error("Jupiter Mobile is not connected to this registered address. Reconnect the matching Jupiter account and retry.");
+      }
+      return await window.NERITHJUPITER.signMessage(message,address);
+    }
+    if(preferredWallet==="okx"){
+      if(!window.NERITHOKX?.connected||window.NERITHOKX.getAddress?.()!==address){
+        throw new Error("OKX Wallet is not connected to this registered address. Reconnect the matching OKX account and retry.");
+      }
+      return await window.NERITHOKX.signMessage(message,address);
+    }
     if(window.NERITHOKX?.connected&&window.NERITHOKX?.getAddress){
       const okxAddress=window.NERITHOKX.getAddress();
       if(okxAddress===address)return await window.NERITHOKX.signMessage(message,address);
@@ -465,13 +479,13 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     walletOwnershipChallenges.set(walletId,challenge);
     return challenge;
   }
-  async function verifyWalletOwnershipWithWallet(walletId,address,button) {
+  async function verifyWalletOwnershipWithWallet(walletId,address,button,preferredWallet="") {
     button.disabled=true;
     try{
       const challenge=walletOwnershipChallenges.get(walletId);
       if(!challenge)throw new Error("The signing request is not ready yet. Wait for the verification prompt to finish preparing, then try again.");
       if(challenge.address!==address)throw new Error("The server challenge no longer matches this registered wallet. Refresh and try again.");
-      const signatureBytes=await signOwnershipChallenge(address,challenge.message);
+      const signatureBytes=await signOwnershipChallenge(address,challenge.message,preferredWallet);
       let binary="";for(const byte of signatureBytes)binary+=String.fromCharCode(byte);
       const signature=btoa(binary).replaceAll("+","-").replaceAll("/","_").replace(/=/g,"");
       await apiWrite("/v1/admin/wallet-ownership/verify",{businessId:state.businessId,walletId,challengeId:challenge.challengeId,signature});
@@ -1154,7 +1168,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
         }
         await prepareWalletOwnershipChallenge(pending.walletId,pending.address);
         if(pending.help)pending.help.textContent="Wallet connected. Approve the ownership message in the wallet app. No transaction or network fee is involved.";
-        await verifyWalletOwnershipWithWallet(pending.walletId,pending.address,pending.button);
+        await verifyWalletOwnershipWithWallet(pending.walletId,pending.address,pending.button,wallet);
         if(pending.help)pending.help.textContent="Address control verified. You can now assign a business role below.";
       }catch(error){
         const message=String(error.message||error);
