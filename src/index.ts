@@ -2455,6 +2455,7 @@ type FundingLegSettlementRow = {
   fee_payer_address: string | null; fee_payer_wallet_status: string | null;
   fee_payer_verified_at: string | null; fee_payer_scope: string | null;
   fee_payer_role_authorized: number; network_fee_lamports: string;
+  network_fee_budget_lamports: string; fee_reservation_amount: string | null;
   fee_reservation_id: string | null; fee_ledger_id: string | null;
   fee_ledger_status: string | null; fee_maximum_fee_lamports: string | null;
 };
@@ -2467,7 +2468,7 @@ async function getFundingLegSettlementRow(
            l.transaction_hash, l.amount_atoms, l.asset_mint, l.destination_address,
            i.id AS intent_id, i.status AS intent_status, i.action AS intent_action,
            i.expires_at AS intent_expires_at, i.destination AS intent_destination,
-           i.mint AS intent_mint, i.payment_atoms, i.network_fee_lamports,
+           i.mint AS intent_mint, i.payment_atoms, i.network_fee_lamports, i.network_fee_budget_lamports,
            fee_wallet.address AS fee_payer_address,
            fee_wallet.status AS fee_payer_wallet_status,
            fee_wallet.ownership_verified_at AS fee_payer_verified_at,
@@ -2502,6 +2503,7 @@ async function getFundingLegSettlementRow(
            ) ELSE 1 END AS destination_role_authorized,
            reservation.id AS reservation_id,
            fee_reservation.id AS fee_reservation_id,
+           fee_reservation.amount_atoms AS fee_reservation_amount,
            fee_ledger.id AS fee_ledger_id,
            fee_ledger.status AS fee_ledger_status,
            fee_ledger.maximum_fee_lamports AS fee_maximum_fee_lamports
@@ -2672,8 +2674,25 @@ async function reconcileFundingLegTransaction(
     row.fee_payer_address ?? "",
     row.fee_maximum_fee_lamports
   );
-  if (!feeVerification.verified) {
-    const reason = feeVerification.reason;
+  const feeLedgerRows = await env.DB.prepare(`
+    SELECT status, maximum_fee_lamports, actual_fee_lamports
+    FROM operation_funding_leg_fees WHERE operation_id = ?
+  `).bind(row.operation_id).all<{
+    status: string; maximum_fee_lamports: string; actual_fee_lamports: string | null;
+  }>();
+  const totalApprovedFeeBudget = (feeLedgerRows.results ?? [])
+    .reduce((sum, fee) => sum + BigInt(fee.maximum_fee_lamports), 0n);
+  const alreadyReconciledFeeTotal = (feeLedgerRows.results ?? [])
+    .filter(fee => fee.status === "reconciled" && fee.actual_fee_lamports !== null)
+    .reduce((sum, fee) => sum + BigInt(fee.actual_fee_lamports!), 0n);
+  const feeBudgetInvalid = totalApprovedFeeBudget !== BigInt(row.network_fee_budget_lamports) ||
+    row.fee_reservation_amount !== row.network_fee_budget_lamports ||
+    (feeVerification.verified &&
+      alreadyReconciledFeeTotal + BigInt(feeVerification.actualFeeLamports) > BigInt(row.network_fee_budget_lamports));
+  if (!feeVerification.verified || feeBudgetInvalid) {
+    const reason = feeVerification.verified
+      ? "Per-leg fee caps, aggregate fee reservation or cumulative fee total do not match the approved transaction budget."
+      : feeVerification.reason;
     try {
       await env.DB.batch([
         env.DB.prepare(`
