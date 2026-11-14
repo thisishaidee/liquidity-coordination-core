@@ -1,4 +1,5 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useMemo } from "react";
+import { WalletProvider } from "@solana/wallet-adapter-react";
 import { createRoot } from "react-dom/client";
 import { useWrappedReownAdapter } from "@jup-ag/jup-mobile-adapter";
 import { Connection, ComputeBudgetProgram, PublicKey, Transaction } from "@solana/web3.js";
@@ -8,8 +9,8 @@ const REOWN_PROJECT_ID = "13a7a3c0065f86dab70a544edc8ed07d";
 const MAINNET_ADDRESS_PREFIX = "solana:";
 const preparedX402Transactions = new Map();
 
-function JupiterMobileBridge() {
-  const { jupiterAdapter } = useWrappedReownAdapter({
+function JupiterWalletRoot() {
+  const { reownAdapter, jupiterAdapter } = useWrappedReownAdapter({
     appKitOptions: {
       metadata: {
         name: "NERITH",
@@ -27,6 +28,19 @@ function JupiterMobileBridge() {
     }
   });
 
+
+  const wallets = useMemo(
+    () => [reownAdapter, jupiterAdapter].filter(Boolean),
+    [reownAdapter, jupiterAdapter]
+  );
+  return React.createElement(
+    WalletProvider,
+    { wallets, autoConnect: true },
+    React.createElement(JupiterMobileBridge, { jupiterAdapter })
+  );
+}
+
+function JupiterMobileBridge({ jupiterAdapter }) {
   useEffect(() => {
     if (!jupiterAdapter) return;
     const adapter = jupiterAdapter;
@@ -227,4 +241,4 @@ function JupiterMobileBridge() {
 }
 
 const mount = document.getElementById("jupiterWalletMount");
-if (mount) createRoot(mount).render(React.createElement(JupiterMobileBridge));
+if (mount) createRoot(mount).render(React.createElement(JupiterWalletRoot));
