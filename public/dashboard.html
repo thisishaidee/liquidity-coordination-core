@@ -429,15 +429,16 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       target.innerHTML = '<div class="panel"><div class="empty">No payment requests yet. An authorised agent creates a request through the payment preparation API. New requests will appear here for business review.</div></div>';
       return;
     }
+    const canManagePayments = ["owner","admin"].includes(state.role);
     target.innerHTML = state.paymentIntents.map(intent => {
       const legs = intent.fundingLegs || [];
       const legMarkup = legs.map(leg => {
         const destination = leg.destinationWalletAddress || leg.destinationAddress || "—";
         const source = leg.sourceAddress || "—";
-        const canPrepare = ["reserved","awaiting_signature","authorized_for_execution"].includes(leg.status) &&
+        const canPrepare = canManagePayments && ["reserved","awaiting_signature","authorized_for_execution"].includes(leg.status) &&
           ["reserved","replenishing","awaiting_signature"].includes(intent.status) &&
           intent.action !== "conversion_required";
-        const canReconcile = leg.status === "submitted" && !!leg.transactionHash;
+        const canReconcile = canManagePayments && leg.status === "submitted" && !!leg.transactionHash;
         const amount = moneyAtoms(leg.amountAtoms, 6) + " USDC";
         return '<article class="wallet-card"><div class="panel-head"><strong>' + escapeHtml(leg.kind.replaceAll("_"," ")) + '</strong><span class="chip">' + escapeHtml(leg.status.replaceAll("_"," ")) + '</span></div>' +
           '<div class="balance-row"><span>Amount</span><strong>' + escapeHtml(amount) + '</strong></div>' +
@@ -448,7 +449,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
           (canReconcile ? '<button type="button" class="btn" data-reconcile-funding-leg="' + escapeHtml(leg.id) + '" data-intent-id="' + escapeHtml(intent.intentId) + '">Check finalized settlement</button>' : '') +
           '</div></article>';
       }).join("");
-      const replenishmentReady = intent.action === "replenish_then_pay" &&
+      const replenishmentReady = canManagePayments && intent.action === "replenish_then_pay" &&
         legs.some(leg => leg.kind === "reserve_replenishment") &&
         legs.filter(leg => leg.kind === "reserve_replenishment").every(leg => leg.status === "confirmed") &&
         legs.some(leg => leg.kind === "final_payment" && leg.status === "reserved");
