@@ -68,19 +68,17 @@ If any conditional statement changes zero rows, treat it as a concurrency/state 
 
 ## Network-fee accounting release gate
 
-**Not yet implemented for multi-transaction intents.** The current intent has one SOL fee reservation and reconciliation verifies the fee only for the final-payment leg. Reserve-replenishment transfers are separate Solana transactions, so their network fees can be charged before the final payment. A single final-payment-only reconciliation is not a complete fee budget.
+**Aggregate per-transaction fee accounting is implemented on this draft branch, with production release still blocked.** Migration `0032_funding_leg_fee_ledger.sql` introduces an immutable aggregate fee budget and one fee-ledger row per non-conversion funding leg. The per-transaction policy cap remains separate from the aggregate hold.
 
-Before signing or execution is enabled, make the fee policy explicit and enforce it per transaction:
-
-- Treat the business policy's `max_network_fee_lamports` as a maximum for each transaction, not as an unqualified one-transaction total.
-- Derive the maximum transaction count from the prepared plan (every reserve-replenishment leg plus the final-payment leg). Reserve a checked aggregate SOL budget for that count before any signature is requested; reject overflow and insufficient fee-payer balance.
-- Persist fee payer identity, actual fee and reconciliation state per submitted funding leg. Verify every finalized transaction's first account key and `meta.fee`, including finalized failed transactions, because failed transactions can still consume fees.
-- Reconcile actual fees cumulatively against the aggregate budget. Never release the unused fee reserve while any leg is submitted, pending finality or ambiguous. An ambiguous leg retains the remaining fee hold for owner review.
-- Once every fee-paying leg is finalized, release only the unused budget and mark the fee ledger complete. Make this transition atomic and idempotent.
-- A reserve transfer that fails at finalized commitment must still settle its actual network fee even though its USDC reservation is released and the payment intent fails.
+- The plan reserves a checked aggregate SOL budget for every reserve-replenishment leg plus the final-payment leg before any signature is requested.
+- Each fee row binds the operation, funding leg, verified fee-payer wallet and per-transaction maximum. The database guards identity, transaction signature, status transitions, finalized fee evidence and reconciliation immutability.
+- Submission binds the ledger row to the same transaction signature as its funding leg. Reconciliation verifies the finalized transaction's first account key and actual `meta.fee`, including finalized failed transactions.
+- Actual fees are reconciled per leg and cumulatively against the aggregate budget. The aggregate fee hold is retained while any row is reserved, submitted or ambiguous; only terminal rows permit unused budget release.
+- A finalized failed reserve transfer still records its actual network fee even though its USDC transfer failed.
+- Pre-migration submitted/replenishing intents with submitted legs lacking ledger rows are marked ambiguous during migration. Their existing holds are deliberately preserved for manual reconciliation rather than inventing fee evidence.
 - Conversion remains excluded until its separate transaction/fee accounting and swap settlement verifier exist.
 
-Until these invariants, migration constraints, and failure/replay tests are implemented, the payment-preparation flow is not safe to enable for real transaction signing.
+The latest CI run passed typecheck, unit tests, Wrangler dry-run, the unpaid Hermes 402 evidence check, and the isolated local Worker/D1 integration suite. These checks validate the candidate implementation, not a funded-wallet transaction or a live paid x402 swap. Do not enable real signing, merge, or deploy until the remaining database failure/replay cases and wallet handoff tests are complete.
 
 ## Balance observations
 
