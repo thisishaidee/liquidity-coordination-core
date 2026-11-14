@@ -66,7 +66,7 @@ export async function fetchFinalizedSolanaTransaction(
     [signature, {
       commitment: "finalized",
       encoding: "jsonParsed",
-      maxSupportedTransactionVersion: 0
+      maxSupportedTransactionVersion: 1
     }],
     fetcher
   );
