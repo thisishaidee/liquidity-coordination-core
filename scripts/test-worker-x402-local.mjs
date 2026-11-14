@@ -82,8 +82,8 @@ try {
   const migrationFiles = (await readdir("migrations"))
     .filter(file => /^\d{4}_[a-z0-9_-]+\.sql$/i.test(file))
     .sort();
-  if (migrationFiles.length !== 29) {
-    throw new Error("Expected 29 ordered D1 migration files; found " + migrationFiles.length);
+  if (migrationFiles.length !== 30) {
+    throw new Error("Expected 30 ordered D1 migration files; found " + migrationFiles.length);
   }
   const migrationSql = (await Promise.all(
     migrationFiles.map(async file => "-- " + file + "\n" + await readFile(join("migrations", file), "utf8"))
@@ -105,6 +105,8 @@ try {
   const managedReservationTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_managed_reservation_reserve_balance', 'trg_managed_reservation_release_balance', 'trg_managed_reservation_identity_immutable', 'trg_managed_reservation_active_delete_block')", "inspectManagedReservationTriggers");
   const fundingLegTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_funding_leg_identity_immutable', 'trg_funding_leg_transaction_hash_immutable', 'trg_funding_leg_state_transition', 'trg_funding_leg_submitted_requires_hash', 'trg_funding_leg_confirmed_requires_hash')", "inspectFundingLegTriggers");
   const finalPaymentTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_final_payment_leg_requires_confirmed_funding', 'trg_final_payment_reservation_requires_confirmed_funding')", "inspectFinalPaymentFundingTriggers");
+  const paymentIntentTables = queryD1("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('business_payment_policies', 'business_payment_intents')", "inspectBusinessPaymentTables");
+  const paymentIntentTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_business_payment_intent_identity_immutable', 'trg_business_payment_intent_state_transition')", "inspectBusinessPaymentTriggers");
   const schemaChecks = {
     ownershipVerifiedAtColumn: walletColumns.some(row => row.name === "ownership_verified_at"),
     ownershipVerifiedOriginColumn: walletColumns.some(row => row.name === "ownership_verified_origin"),
@@ -117,7 +119,9 @@ try {
     managedReservationSourceColumn: reservationColumns.some(row => row.name === "reservation_source"),
     managedReservationTriggers: managedReservationTriggers.length === 4,
     fundingLegSafetyTriggers: fundingLegTriggers.length === 5,
-    finalPaymentFundingGates: finalPaymentTriggers.length === 2
+    finalPaymentFundingGates: finalPaymentTriggers.length === 2,
+    businessPaymentTables: paymentIntentTables.length === 2,
+    businessPaymentTriggers: paymentIntentTriggers.length === 2
   };
   output.steps.walletOwnershipSchema = { checks: schemaChecks };
   if (Object.values(schemaChecks).some(value => value !== true)) {
