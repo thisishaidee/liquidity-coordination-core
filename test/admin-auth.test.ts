@@ -29,6 +29,17 @@ describe("business-scoped admin route classification", () => {
     })).toEqual({ kind: "business", businessId: "biz_a", resource: { table: "wallets", id: "wal_123" } });
   });
 
+  it("binds wallet ownership challenge and verification to the registered wallet business", () => {
+    for (const path of ["/v1/admin/wallet-ownership/challenge", "/v1/admin/wallet-ownership/verify"]) {
+      expect(describeAdminRoute("POST", path, new URLSearchParams(), {
+        businessId: "biz_a", walletId: "wal_123"
+      })).toEqual({ kind: "business", businessId: "biz_a", resource: { table: "wallets", id: "wal_123" } });
+      expect(describeAdminRoute("POST", path, new URLSearchParams(), {
+        businessId: "biz_a"
+      })).toEqual({ kind: "invalid" });
+    }
+  });
+
   it("isolates platform-wide routes behind the bootstrap token", () => {
     expect(describeAdminRoute("POST", "/v1/admin/bootstrap", new URLSearchParams(), {})).toEqual({ kind: "global" });
     expect(describeAdminRoute("POST", "/v1/admin/telegram/setup", new URLSearchParams(), {})).toEqual({ kind: "global" });
