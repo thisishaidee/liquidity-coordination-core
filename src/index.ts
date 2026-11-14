@@ -28,6 +28,8 @@ interface Env {
   TELEGRAM_TOTP_ENCRYPTION_KEY?: string;
   NERITH_SUPPORT_URL?: string;
   NERITH_PUBLIC_URL?: string;
+  NERITH_TEST_MODE?: string;
+  HERMES_TEST_402_FIXTURE?: string;
 }
 
 type AgentRow = {
@@ -2391,11 +2393,60 @@ async function proxyHermes(
 
   let upstream: Response;
   try {
-    upstream = await fetch(`https://hermes.swap.io${path}`, {
-      method: "POST", headers, body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(12_000), redirect: "error"
-    });
-  } catch {
+    const localTestRequest = new URL(request.url).hostname === "127.0.0.1";
+    const testFixture = localTestRequest && x402Context?.env.NERITH_TEST_MODE === "true"
+      ? x402Context.env.HERMES_TEST_402_FIXTURE
+      : undefined;
+    if (testFixture) {
+      // CI-only replay of a real, previously captured unpaid Hermes 402 response.
+      // Validate the exact request built by the quote handler before replaying the fixture.
+      // Production must leave NERITH_TEST_MODE unset and always use the live Hermes host.
+      const input = payload.input as { token?: unknown; amount?: unknown; chainKey?: unknown } | undefined;
+      const output = payload.output as { token?: unknown; chainKey?: unknown } | undefined;
+      const expectedUserAddress = "BPz2u6eoWLervxEqfpsMCVmKk7h6fEVsd7L5rvEibMfD";
+      const validOutgoingQuote =
+        path === "/v1/swap/quote" &&
+        input?.token === SOL_MINT &&
+        input?.amount === "1000000000" &&
+        input?.chainKey === "sol" &&
+        output?.token === USDC_MINT &&
+        output?.chainKey === "sol" &&
+        payload.userAddress === expectedUserAddress &&
+        payload.slippageBps === 50;
+      if (!validOutgoingQuote) {
+        throw new Error("Local Hermes fixture rejected an unexpected outgoing quote payload.");
+      }
+      console.log("nerith_test_hermes_request_validated", JSON.stringify({
+        path,
+        inputToken: input.token,
+        inputAmount: input.amount,
+        inputChain: input.chainKey,
+        outputToken: output.token,
+        outputChain: output.chainKey,
+        userAddress: payload.userAddress,
+        slippageBps: payload.slippageBps
+      }));
+      const fixture = JSON.parse(atob(testFixture)) as {
+        status?: number;
+        body?: string;
+        headers?: Record<string, string>;
+      };
+      if (fixture.status !== 402 || typeof fixture.body !== "string") {
+        throw new Error("Invalid local Hermes 402 test fixture.");
+      }
+      upstream = new Response(fixture.body, {
+        status: 402,
+        headers: fixture.headers ?? { "content-type": "application/json" }
+      });
+    } else {
+      upstream = await fetch(new URL(path, "https://hermes.swap.io"), {
+        method: "POST", headers, body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(12_000), redirect: "error"
+      });
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown upstream fetch error";
+    console.error("hermes_upstream_fetch_failed", { path, error: message.slice(0, 240) });
     // A timeout after forwarding a payment is ambiguous. Keep its budget reservation
     // pending rather than incorrectly making the same daily allowance available again.
     return json({ error: "swap_provider_unavailable", message: "Hermes did not respond within the allowed time." }, 504);
@@ -2706,7 +2757,7 @@ async function prepareSwapTransaction(request: Request, env: Env): Promise<Respo
       UPDATE wallet_balances
       SET reserved_atoms = CAST(reserved_atoms AS INTEGER) + ?
       WHERE id = ?
-        AND CAST(confirmed_atoms AS INTEGER) - CAST(reserved_atoms AS INTEGER) >= ?
+        AND CAST(confirmed_atoms AS INTEGER) - CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
     `).bind(context.sourceAtoms.toString(), context.walletBalanceId, context.sourceAtoms.toString()).run();
 
     if ((reserve.meta?.changes ?? 0) !== 1) {
@@ -2736,7 +2787,7 @@ async function prepareSwapTransaction(request: Request, env: Env): Promise<Respo
         "UPDATE operations SET status = 'awaiting_conversion', source_reservation_id = NULL, provider_key = NULL, build_quote_id = NULL WHERE id = ? AND status = 'preparing_conversion' AND source_reservation_id = ?"
       ).bind(context.operationId, reservationId).run();
       await env.DB.prepare(
-        "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?"
+        "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)"
       ).bind(context.sourceAtoms.toString(), context.walletBalanceId, context.sourceAtoms.toString()).run();
       await env.DB.prepare("DELETE FROM reservations WHERE id = ? AND status = 'active'").bind(reservationId).run();
       return json({ error: "source_reservation_failed" }, 409);
@@ -2871,7 +2922,7 @@ async function createLiquidityRequest(request: Request, env: Env, trustedAgent?:
       UPDATE wallet_balances
       SET reserved_atoms = CAST(reserved_atoms AS INTEGER) + ?
       WHERE id = ?
-        AND CAST(confirmed_atoms AS INTEGER) - CAST(reserved_atoms AS INTEGER) >= ?
+        AND CAST(confirmed_atoms AS INTEGER) - CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
     `).bind(requestedAtoms.toString(), candidate.row.balance_id, requestedAtoms.toString()).run();
 
     if ((reserved.meta?.changes ?? 0) !== 1) {
@@ -2900,7 +2951,7 @@ async function createLiquidityRequest(request: Request, env: Env, trustedAgent?:
       ]);
     } catch {
       await env.DB.prepare(
-        "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?"
+        "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)"
       ).bind(requestedAtoms.toString(), candidate.row.balance_id, requestedAtoms.toString()).run();
       await env.DB.prepare("DELETE FROM operations WHERE id = ?").bind(operationId).run();
       return json({ error: "reservation_persistence_failed" }, 500);
@@ -2947,7 +2998,7 @@ async function createLiquidityRequest(request: Request, env: Env, trustedAgent?:
       UPDATE wallet_balances
       SET reserved_atoms = CAST(reserved_atoms AS INTEGER) + ?
       WHERE id = ?
-        AND CAST(confirmed_atoms AS INTEGER) - CAST(reserved_atoms AS INTEGER) >= ?
+        AND CAST(confirmed_atoms AS INTEGER) - CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
     `).bind(targetReservedAtoms.toString(), targetBalanceId, targetReservedAtoms.toString()).run();
 
     if ((reserveTarget.meta?.changes ?? 0) !== 1) {
@@ -2987,7 +3038,7 @@ async function createLiquidityRequest(request: Request, env: Env, trustedAgent?:
   } catch {
     if (targetReservationId && targetBalanceId && targetReservedAtoms > 0n) {
       await env.DB.prepare(
-        "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?"
+        "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)"
       ).bind(targetReservedAtoms.toString(), targetBalanceId, targetReservedAtoms.toString()).run();
     }
     return json({ error: "operation_not_created" }, 409);
@@ -3067,7 +3118,7 @@ async function releaseOperation(request: Request, env: Env, operationId: string)
     const debit = await env.DB.prepare(`
       UPDATE wallet_balances
       SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?
-      WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?
+      WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
     `).bind(reservation.amount_atoms, reservation.wallet_balance_id, reservation.amount_atoms).run();
 
     if ((debit.meta?.changes ?? 0) !== 1) {
@@ -3144,7 +3195,7 @@ async function completeOperation(request: Request, env: Env, operationId: string
     const debit = await env.DB.prepare(`
       UPDATE wallet_balances
       SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?, observed_at = datetime('now', '-10 minutes')
-      WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?
+      WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
     `).bind(reservation.amount_atoms, reservation.wallet_balance_id, reservation.amount_atoms).run();
 
     if ((debit.meta?.changes ?? 0) !== 1) {
@@ -3277,7 +3328,7 @@ async function expireReservations(env: Env): Promise<{ expired: number; skipped:
       const debit = await env.DB.prepare(`
         UPDATE wallet_balances
         SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ?
-        WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?
+        WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)
       `).bind(reservation.amount_atoms, reservation.wallet_balance_id, reservation.amount_atoms).run();
 
       if ((debit.meta?.changes ?? 0) !== 1) {
@@ -3548,7 +3599,7 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
 
     const amount = BigInt(reservation.amount_atoms);
     const debit = await env.DB.prepare(
-      "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?"
+      "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)"
     ).bind(amount.toString(), reservation.wallet_balance_id, amount.toString()).run();
 
     if ((debit.meta?.changes ?? 0) !== 1) {
@@ -3594,7 +3645,7 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
       ).bind(targetReservation.id).run();
       if ((claimTarget.meta?.changes ?? 0) === 1) {
         const debitTarget = await env.DB.prepare(
-          "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= ?"
+          "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)"
         ).bind(targetReservation.amount_atoms, targetReservation.wallet_balance_id, targetReservation.amount_atoms).run();
         if ((debitTarget.meta?.changes ?? 0) !== 1) {
           await env.DB.prepare(
