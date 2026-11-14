@@ -112,22 +112,37 @@ export function verifyExactSplTokenTransfer(
 
   const sourcePre = pre.get(sourceIndex);
   const sourcePost = post.get(sourceIndex);
+  const destinationPre = pre.get(destinationIndex);
   const destinationPost = post.get(destinationIndex);
   const instructionMint = info.mint;
   const mint = typeof instructionMint === "string" ? instructionMint : sourcePre?.mint;
+  const sourcePreBalance = meta.preTokenBalances.find(balance => balance.accountIndex === sourceIndex);
+  const sourcePostBalance = meta.postTokenBalances.find(balance => balance.accountIndex === sourceIndex);
+  const destinationPreBalance = meta.preTokenBalances.find(balance => balance.accountIndex === destinationIndex);
+  const destinationPostBalance = meta.postTokenBalances.find(balance => balance.accountIndex === destinationIndex);
   if (
     sourcePre?.owner !== expected.sourceOwner ||
     sourcePost?.owner !== expected.sourceOwner ||
     sourcePre?.mint !== expected.mint ||
     sourcePost?.mint !== expected.mint ||
+    (destinationPre && (destinationPre.owner !== expected.destinationOwner || destinationPre.mint !== expected.mint)) ||
     destinationPost?.owner !== expected.destinationOwner ||
     destinationPost?.mint !== expected.mint ||
-    mint !== expected.mint
+    mint !== expected.mint ||
+    !sourcePreBalance?.uiTokenAmount?.amount ||
+    !sourcePostBalance?.uiTokenAmount?.amount ||
+    !destinationPostBalance?.uiTokenAmount?.amount
   ) {
     return fail("Token transfer mint or token-account ownership does not match the registered wallets.");
   }
 
   const actualAmountAtoms = BigInt(amountInfo);
+  const sourceDebit = BigInt(sourcePreBalance.uiTokenAmount.amount) - BigInt(sourcePostBalance.uiTokenAmount.amount);
+  const destinationCredit = BigInt(destinationPostBalance.uiTokenAmount.amount) -
+    BigInt(destinationPreBalance?.uiTokenAmount?.amount ?? "0");
+  if (sourceDebit !== actualAmountAtoms || destinationCredit !== actualAmountAtoms) {
+    return fail("Token-account balance deltas do not reconcile exactly to the parsed transfer instruction.");
+  }
   if (actualAmountAtoms !== expected.amountAtoms) {
     return {
       verified: false,
