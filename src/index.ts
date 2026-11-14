@@ -922,18 +922,18 @@ async function handleTelegramCommand(
 
   if (command === "/operations") {
     const rows = await env.DB.prepare(`
-      SELECT a.name AS agent_name, o.task_id, o.token, o.amount_atoms, o.status, o.action, o.created_at
+      SELECT a.name AS agent_name, o.task_id, o.token, o.amount_atoms, o.status, o.action, o.created_at, o.transaction_hash
       FROM operations o
       JOIN agents a ON a.id = o.agent_id
       WHERE o.business_id = ?
       ORDER BY o.created_at DESC
       LIMIT 8
-    `).bind(businessId).all<{ agent_name: string; task_id: string; token: string; amount_atoms: string; status: string; action: string; created_at: string }>();
+    `).bind(businessId).all<{ agent_name: string; task_id: string; token: string; amount_atoms: string; status: string; action: string; created_at: string; transaction_hash: string | null }>();
     const operations = rows.results ?? [];
     await sendTelegramMessage(
       env,
       chatId,
-      `Recent operations · ${connection.business_name}\n\n${operations.length ? operations.map((operation) => `• ${operation.agent_name} · ${formatTokenAmount(BigInt(operation.amount_atoms), 6)} ${operation.token}\n  ${operation.action} · ${operation.status} · ${operation.created_at}`).join("\n") : "No operations recorded yet."}`
+      `Recent operations · ${connection.business_name}\n\n${operations.length ? operations.map((operation) => { const tx = operation.transaction_hash ? `\n  Transaction: ${operation.transaction_hash}\n  Solscan: https://solscan.io/tx/${encodeURIComponent(operation.transaction_hash)}` : ""; return `• ${operation.agent_name} · ${formatTokenAmount(BigInt(operation.amount_atoms), operation.token === "SOL" ? 9 : 6)} ${operation.token}\n  ${operation.action} · ${operation.status} · ${operation.created_at}${tx}`; }).join("\n\n") : "No operations recorded yet."}`
     );
     return;
   }
@@ -3415,7 +3415,7 @@ async function trackSwapTransaction(request: Request, env: Env): Promise<Respons
   await notifyBusiness(
     env,
     agent.business_id,
-    `Swap transaction submitted for operation ${operationId}. Awaiting final confirmation.`
+    `Swap transaction submitted for operation ${operationId}.\nTransaction hash: ${transactionHash}\nSolscan: https://solscan.io/tx/${encodeURIComponent(transactionHash)}\nAwaiting final confirmation.`
   );
 
   return json({
@@ -3669,7 +3669,7 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
     await notifyBusiness(
       env,
       agent.business_id,
-      `Conversion update for ${operationId}: ${nextStatus}. ${outputAtoms > 0n ? formatTokenAmount(outputAtoms, 6) + " USDC received." : ""}`
+      `Conversion update for ${operationId}: ${nextStatus}.\nTransaction hash: ${operation.transaction_hash}\nSolscan: https://solscan.io/tx/${encodeURIComponent(operation.transaction_hash ?? "")}\n${outputAtoms > 0n ? formatTokenAmount(outputAtoms, 6) + " USDC received." : settlementNote ?? "No verified USDC receipt."}`
     );
   }
 
