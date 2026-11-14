@@ -46,8 +46,8 @@ async function mockConnection(options: {
   destinationMint?: string;
   missingSource?: boolean;
   missingDestination?: boolean;
-  fee?: number | null;
-  feePayerBalance?: number;
+  fee?: bigint | null;
+  feePayerBalance?: bigint;
 } = {}) {
   const [sourceAta] = await findAssociatedTokenPda({
     mint: address(MINT), owner: address(SOURCE), tokenProgram: TOKEN_PROGRAM_ADDRESS
@@ -80,8 +80,8 @@ async function mockConnection(options: {
   const connection = {
     getAccountInfo,
     getLatestBlockhash: vi.fn(async () => ({ blockhash: BLOCKHASH, lastValidBlockHeight: 99 })),
-    getFeeForMessage: vi.fn(async () => ({ value: options.fee === undefined ? 5_000 : options.fee })),
-    getBalance: vi.fn(async () => options.feePayerBalance ?? 1_000_000)
+    getFeeForMessage: vi.fn(async () => ({ value: options.fee === undefined ? 5_000n : options.fee })),
+    getBalance: vi.fn(async () => options.feePayerBalance ?? 1_000_000n)
   } as unknown as Connection;
   return { connection, sourceAta, destinationAta, getAccountInfo };
 }
@@ -156,7 +156,7 @@ describe("buildUsdcFundingTransaction", () => {
   });
 
   it("protects the fee payer's aggregate active SOL reservations", async () => {
-    const { connection } = await mockConnection({ feePayerBalance: 9000 });
+    const { connection } = await mockConnection({ feePayerBalance: 9000n });
     await expect(buildUsdcFundingTransaction({
       ...baseInput,
       minimumFeePayerBalanceLamports: "10000"
@@ -164,10 +164,10 @@ describe("buildUsdcFundingTransaction", () => {
   });
 
   it("rejects a fee estimate above either approved fee limit", async () => {
-    const { connection } = await mockConnection({ fee: 5001 });
+    const { connection } = await mockConnection({ fee: 5001n });
     await expect(buildUsdcFundingTransaction(baseInput, connection))
       .rejects.toThrow("exceeds the approved");
-    const { connection: aggregateConnection } = await mockConnection({ fee: 4000 });
+    const { connection: aggregateConnection } = await mockConnection({ fee: 4000n });
     await expect(buildUsdcFundingTransaction({
       ...baseInput,
       remainingAggregateFeeLamports: "3999"
@@ -175,7 +175,7 @@ describe("buildUsdcFundingTransaction", () => {
   });
 
   it("rejects when the fee payer lacks finalized SOL for the estimated fee", async () => {
-    const { connection } = await mockConnection({ feePayerBalance: 4999 });
+    const { connection } = await mockConnection({ feePayerBalance: 4999n });
     await expect(buildUsdcFundingTransaction(baseInput, connection))
       .rejects.toThrow("active fee reservations");
   });
