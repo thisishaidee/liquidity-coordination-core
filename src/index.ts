@@ -1777,6 +1777,7 @@ type BusinessPaymentPolicyRow = {
   allow_conversion: number;
   allow_partial_payment: number;
   version: number;
+  updated_at: string;
 };
 
 function toPaymentPolicy(row: BusinessPaymentPolicyRow, committedTodayAtoms: bigint): PaymentPolicy {
