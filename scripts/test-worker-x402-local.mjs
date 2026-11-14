@@ -102,7 +102,7 @@ try {
   const roleOwnershipTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_wallet_role_requires_verified_owner_insert', 'trg_wallet_role_requires_verified_owner_update')", "inspectWalletRoleOwnershipTriggers");
   const fundingLegTable = queryD1("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'operation_funding_legs'", "inspectFundingLegTable");
   const reservationColumns = queryD1("PRAGMA table_info(reservations)", "inspectReservationColumns");
-  const managedReservationTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_managed_reservation_reserve_balance', 'trg_managed_reservation_release_balance', 'trg_managed_reservation_identity_immutable', 'trg_managed_reservation_active_delete_block', 'trg_managed_fee_reservation_reserve_balance')", "inspectManagedReservationTriggers");
+  const managedReservationTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_managed_reservation_reserve_balance', 'trg_managed_reservation_release_balance', 'trg_managed_reservation_identity_immutable', 'trg_managed_reservation_active_delete_block', 'trg_managed_fee_reservation_reserve_balance', 'trg_managed_payment_wallet_preposition_reserve')", "inspectManagedReservationTriggers");
   const fundingLegTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_funding_leg_identity_immutable', 'trg_funding_leg_transaction_hash_immutable', 'trg_funding_leg_state_transition', 'trg_funding_leg_submitted_requires_hash', 'trg_funding_leg_confirmed_requires_hash')", "inspectFundingLegTriggers");
   const fundingLegTransactionHashIndex = queryD1("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_funding_legs_transaction_hash'", "inspectFundingLegTransactionHashIndex");
   const finalPaymentTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_final_payment_leg_requires_confirmed_funding', 'trg_final_payment_reservation_requires_confirmed_funding')", "inspectFinalPaymentFundingTriggers");
@@ -118,7 +118,7 @@ try {
     fundingLegTable: fundingLegTable.length === 1,
     reservationFundingLegLink: reservationColumns.some(row => row.name === "funding_leg_id"),
     managedReservationSourceColumn: reservationColumns.some(row => row.name === "reservation_source"),
-    managedReservationTriggers: managedReservationTriggers.length === 5,
+    managedReservationTriggers: managedReservationTriggers.length === 6,
     fundingLegSafetyTriggers: fundingLegTriggers.length === 5,
     uniqueFundingLegTransactionHash: fundingLegTransactionHashIndex.length === 1 && fundingLegTransactionHashIndex[0].sql.includes("CREATE UNIQUE INDEX"),
     finalPaymentFundingGates: finalPaymentTriggers.length === 2,
@@ -637,6 +637,13 @@ const businessPaymentIntentCount = queryD1(`SELECT COUNT(*) AS count FROM busine
       paymentIntentDetail.fundingLegs?.find(leg => leg.kind === "final_payment")?.status !== "planned" ||
       !paymentIntentDetail.reservations?.some(reservation => reservation.source === "managed_fee" && reservation.token === "SOL")) {
     throw new Error("Agent payment detail endpoint did not return the scoped funding and fee reservation state.");
+  }
+  const prepositionHold = queryD1(`SELECT r.amount_atoms, r.funding_leg_id, r.reservation_source, b.reserved_atoms
+    FROM reservations r JOIN wallet_balances b ON b.id = r.wallet_balance_id
+    WHERE r.operation_id = '${multiWalletPaymentBody.operationId}' AND r.token = 'USDC' AND r.funding_leg_id IS NULL`, "verifyPaymentWalletPrepositionHold");
+  if (prepositionHold.length !== 1 || prepositionHold[0].amount_atoms !== "1000000" ||
+      prepositionHold[0].reservation_source !== "managed" || prepositionHold[0].reserved_atoms !== "1000000") {
+    throw new Error("Existing payment-wallet liquidity was not held while reserve replenishment is in flight.");
   }
   const multiWalletPaymentRows = queryD1(`SELECT l.kind, l.status, r.amount_atoms, b.wallet_id, b.reserved_atoms
     FROM operation_funding_legs l JOIN reservations r ON r.funding_leg_id = l.id
