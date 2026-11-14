@@ -758,9 +758,12 @@ describe("browser page script syntax", () => {
         expect(html).toContain('purpose.value="api_payment"');
         expect(html).toContain("A closed Wallet Standard adapter must not block other wallet providers.");
         expect(html).toContain("Retry ownership check");
-        expect(html).toContain("Connect the wallet that owns this exact address");
-        expect(html).toContain("const connectedAddress=await connectSolanaWallet()");
-        expect(html).toContain("connectedAddress!==button.dataset.address");
+        expect(html).toContain("Choose the wallet that owns this exact address. Select Jupiter Mobile");
+        expect(html).toContain("const connectedAddress=await connectSolanaWallet(wallet===");
+        expect(html).toContain("connectedAddress!==pending.address");
+        expect(html).toContain("pendingWalletVerification={walletId:registeredWalletId,address,preferredWallet}");
+        expect(html).toContain("verifyWalletOwnershipWithWallet(registeredWalletId,address,button,preferredWallet)");
+        expect(html).toContain('pending.preferredWallet||""');
         expect(html).toContain("Wallet connected. Approve the ownership message in the wallet app.");
         expect(html).toContain("if(!injected&&window.NERITHOKX?.connect)return await window.NERITHOKX.connect()");
         expect(html).toContain("Start the OKX App Connect handoff before awaiting Wallet Standard adapters.");
