@@ -181,6 +181,8 @@ try {
   const managedReserveWalletId = "wal_" + randomBytes(16).toString("hex");
   const managedPaymentWalletId = "wal_" + randomBytes(16).toString("hex");
   const managedReserveBalanceId = "bal_" + randomBytes(16).toString("hex");
+  const managedPaymentBalanceId = "bal_" + randomBytes(16).toString("hex");
+  const managedFinalPaymentReservationId = "res_" + randomBytes(16).toString("hex");
   const managedOperationId = "op_" + randomBytes(16).toString("hex");
   const managedLegId = "leg_" + randomBytes(16).toString("hex");
   const managedSecondLegId = "leg_" + randomBytes(16).toString("hex");
@@ -214,7 +216,7 @@ try {
   queryD1(`INSERT INTO wallet_balances (id, wallet_id, token, confirmed_atoms, reserved_atoms, observed_at, source)
     VALUES ('${managedReserveBalanceId}', '${managedReserveWalletId}', 'USDC', '5000000', '0', datetime('now'), 'managed_reservation_fixture')`, "insertManagedReserveBalance");
   queryD1(`INSERT INTO wallet_balances (id, wallet_id, token, confirmed_atoms, reserved_atoms, observed_at, source)
-    VALUES ('bal_${randomBytes(16).toString("hex")}', '${managedPaymentWalletId}', 'USDC', '1000000', '0', datetime('now'), 'managed_reservation_fixture')`, "insertManagedPaymentBalance");
+    VALUES ('${managedPaymentBalanceId}', '${managedPaymentWalletId}', 'USDC', '1000000', '0', datetime('now'), 'managed_reservation_fixture')`, "insertManagedPaymentBalance");
   queryD1(`INSERT INTO wallets
     (id, business_id, agent_id, network, address, scope, purpose, ownership_verified_at, ownership_verified_origin)
     VALUES ('${managedSecondReserveWalletId}', '${businessId}', NULL, 'solana', '${managedSecondReserveAddress}', 'business', 'operating', datetime('now'), 'https://neritth.pages.dev')`, "insertManagedSecondReserveWallet");
@@ -350,6 +352,17 @@ try {
     ('${managedGateReserveLegOneId}', '${managedGateOperationId}', 0, 'reserve_replenishment', '${managedReserveWalletId}', '${managedPaymentWalletId}', '${managedPaymentAddress}', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '2000000'),
     ('${managedGateReserveLegTwoId}', '${managedGateOperationId}', 1, 'reserve_replenishment', '${managedSecondReserveWalletId}', '${managedPaymentWalletId}', '${managedPaymentAddress}', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '2000000'),
     ('${managedFinalPaymentLegId}', '${managedGateOperationId}', 2, 'final_payment', '${managedPaymentWalletId}', NULL, '7dN4k3Jm2pQx8sW6vR1aT5uH9cF2eG4iL7oP6bK8mZq', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '1000000')`, "insertFinalPaymentFundingLegs");
+  let prematureFinalPaymentReservationRejected = false;
+  try {
+    queryD1(`INSERT INTO reservations
+      (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
+      VALUES ('${managedFinalPaymentReservationId}', '${managedGateOperationId}', '${managedPaymentBalanceId}', '1000000', 'USDC', 'active', datetime('now', '+15 minutes'), '${managedFinalPaymentLegId}', 'managed')`, "rejectPrematureFinalPaymentReservation");
+  } catch (error) {
+    prematureFinalPaymentReservationRejected = String(error).includes("final_payment_requires_confirmed_funding");
+    if (!prematureFinalPaymentReservationRejected) throw error;
+  }
+  if (!prematureFinalPaymentReservationRejected) throw new Error("Final payment reservation was allowed before replenishment confirmation.");
+
   let finalPaymentGateRejected = false;
   try {
     queryD1(`UPDATE operation_funding_legs SET status = 'reserved' WHERE id = '${managedFinalPaymentLegId}'`, "rejectPrematureFinalPayment");
@@ -368,6 +381,15 @@ try {
   queryD1(`UPDATE operation_funding_legs SET status = 'reserved' WHERE id = '${managedFinalPaymentLegId}'`, "allowFinalPaymentAfterFundingConfirmed");
   const finalPaymentLegState = queryD1(`SELECT status FROM operation_funding_legs WHERE id = '${managedFinalPaymentLegId}'`, "verifyFinalPaymentGate");
   if (finalPaymentLegState[0]?.status !== "reserved") throw new Error("Final payment did not become reservable after all funding legs confirmed.");
+  queryD1(`INSERT INTO reservations
+    (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
+    VALUES ('${managedFinalPaymentReservationId}', '${managedGateOperationId}', '${managedPaymentBalanceId}', '1000000', 'USDC', 'active', datetime('now', '+15 minutes'), '${managedFinalPaymentLegId}', 'managed')`, "reserveFinalPaymentAfterFundingConfirmed");
+  const finalPaymentReserved = queryD1(`SELECT reserved_atoms FROM wallet_balances WHERE id = '${managedPaymentBalanceId}'`, "verifyFinalPaymentReservation");
+  if (finalPaymentReserved[0]?.reserved_atoms !== "1000000") throw new Error("Final payment reservation did not hold the payment wallet balance.");
+  queryD1(`UPDATE reservations SET status = 'released', released_at = datetime('now') WHERE id = '${managedFinalPaymentReservationId}' AND status = 'active'`, "releaseFinalPaymentReservation");
+  const finalPaymentReleased = queryD1(`SELECT reserved_atoms FROM wallet_balances WHERE id = '${managedPaymentBalanceId}'`, "verifyFinalPaymentReservationRelease");
+  if (finalPaymentReleased[0]?.reserved_atoms !== "0") throw new Error("Final payment reservation did not release its balance hold.");
+
   output.steps.managedReservationBehavior = {
     initialReservationAtoms: reservedAfterInsert[0].reserved_atoms,
     rejectedOverReservation: insufficientManagedReservationRejected,
@@ -382,7 +404,9 @@ try {
     crossWalletAtomicFailureRejected: crossWalletAtomicFailure,
     crossWalletAtomicRollbackRestoredBalances: afterCrossWalletFailure.every(row => row.reserved_atoms === "0"),
     finalPaymentBlockedUntilFundingConfirmed: finalPaymentGateRejected,
-    finalPaymentAllowedAfterFundingConfirmed: finalPaymentLegState[0]?.status === "reserved"
+    prematureFinalPaymentReservationRejected,
+    finalPaymentAllowedAfterFundingConfirmed: finalPaymentLegState[0]?.status === "reserved",
+    finalPaymentReservationReleased: finalPaymentReleased[0]?.reserved_atoms === "0"
   };
 
 
