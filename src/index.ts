@@ -2300,13 +2300,13 @@ async function prepareFinalPaymentAfterReplenishment(
     }, 503);
   }
 
-  const preposition = await env.DB.prepare(`
-    SELECT COALESCE(SUM(CAST(amount_atoms AS INTEGER)), 0) AS amount_atoms
-    FROM reservations
+  const prepositionRows = await env.DB.prepare(`
+    SELECT amount_atoms FROM reservations
     WHERE operation_id = ? AND wallet_balance_id = ? AND funding_leg_id IS NULL
       AND reservation_source = 'managed' AND status = 'active'
-  `).bind(row.operation_id, row.balance_id).first<{ amount_atoms: string }>();
-  const prepositionAtoms = BigInt(preposition?.amount_atoms ?? "0");
+  `).bind(row.operation_id, row.balance_id).all<{ amount_atoms: string }>();
+  const prepositionAtoms = (prepositionRows.results ?? [])
+    .reduce((sum, reservation) => sum + BigInt(reservation.amount_atoms), 0n);
   const currentlyReservedAtoms = BigInt(row.reserved_atoms);
   if (prepositionAtoms > currentlyReservedAtoms) {
     return json({ error: "payment_wallet_reservation_ledger_mismatch" }, 409);
