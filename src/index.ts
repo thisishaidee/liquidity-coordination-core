@@ -4470,12 +4470,36 @@ async function releaseOperation(request: Request, env: Env, operationId: string)
     return json({ error: "operation_not_releasable", status: operation.status }, 409);
   }
 
+  const pendingFunding = await env.DB.prepare(`
+    SELECT COUNT(*) AS count FROM operation_funding_legs
+    WHERE operation_id = ? AND status IN ('submitted', 'ambiguous')
+  `).bind(operationId).first<{ count: number }>();
+  if ((pendingFunding?.count ?? 0) > 0) {
+    return json({ error: "operation_has_submitted_or_ambiguous_funding_legs" }, 409);
+  }
+
   const operationClaim = await env.DB.prepare(
     "UPDATE operations SET status = 'released' WHERE id = ? AND agent_id = ? AND status = ?"
   ).bind(operationId, agent.id, operation.status).run();
   if ((operationClaim.meta?.changes ?? 0) !== 1) {
     return json({ error: "operation_state_changed" }, 409);
   }
+
+  await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE operation_funding_leg_fees SET status = 'not_required', updated_at = datetime('now')
+      WHERE operation_id = ? AND status = 'reserved'
+    `).bind(operationId),
+    env.DB.prepare(`
+      UPDATE operation_funding_legs SET status = 'cancelled', failure_reason = 'Operation released before submission.',
+        updated_at = datetime('now')
+      WHERE operation_id = ? AND status IN ('planned', 'reserved', 'awaiting_signature', 'authorized_for_execution')
+    `).bind(operationId),
+    env.DB.prepare(`
+      UPDATE business_payment_intents SET status = 'cancelled', updated_at = datetime('now')
+      WHERE operation_id = ? AND status IN ('policy_checked', 'reserved', 'replenishing', 'awaiting_signature')
+    `).bind(operationId)
+  ]);
 
   const reservations = await env.DB.prepare(
     "SELECT id, wallet_balance_id, amount_atoms, token, reservation_source FROM reservations WHERE operation_id = ? AND status = 'active'"
