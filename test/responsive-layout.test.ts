@@ -58,6 +58,7 @@ describe("responsive page source contracts", () => {
     expect(businessDashboardHtml).toContain('/v1/admin/wallet-ownership/verify');
     expect(businessDashboardHtml).toContain('window.okxwallet?.solana');
     expect(businessDashboardHtml).toContain('window.phantom?.solana');
+    expect(businessDashboardHtml).toContain('const canManage=["owner","admin"].includes(state.role)');
     expect(businessDashboardHtml).toContain('A workspace admin must sign a short-lived message');
     expect(businessDashboardHtml).toContain('Verify address control before assigning or enabling a business role.');
   });
