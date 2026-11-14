@@ -771,6 +771,11 @@ describe("browser page script syntax", () => {
         expect(html).toContain("pendingExistingWalletVerification={button,walletId:button.dataset.verifyWallet,address:button.dataset.address,help}");
         expect(html).toContain('const connectedAddress=await connectSolanaWallet(wallet==="browser"?"":wallet)');
         expect(html).toContain("Choose the wallet that owns this exact address.");
+         expect(html).toContain("async function signOwnershipChallenge(address,message,preferredWallet=\"\")");
+         expect(html).toContain('if(preferredWallet==="jupiter"){');
+         expect(html).toContain('return await window.NERITHJUPITER.signMessage(message,address);');
+         expect(html).toContain('if(preferredWallet==="okx"){');
+         expect(html).toContain("verifyWalletOwnershipWithWallet(pending.walletId,pending.address,pending.button,wallet)");
         expect(html).toContain("if(window.NERITHJUPITER.connected&&window.NERITHJUPITER.getAddress?.())return window.NERITHJUPITER.getAddress();");
         expect(html).toContain("const existingWallet=state.wallets.find(wallet=>");
         expect(html).toContain("Reusing its existing record; no duplicate will be created.");
