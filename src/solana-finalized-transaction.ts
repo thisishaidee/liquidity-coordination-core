@@ -7,7 +7,7 @@ export type SolanaRpcSignatureStatus = {
 
 export type FinalizedTransactionLookup =
   | { state: "pending"; reason: string }
-  | { state: "failed"; reason: string; slot?: number }
+  | { state: "failed"; reason: string; transaction: Record<string, unknown>; slot: number }
   | { state: "finalized"; transaction: Record<string, unknown>; slot: number };
 
 type RpcEnvelope<T> = { result?: T; error?: { code?: number; message?: string } };
@@ -54,15 +54,8 @@ export async function fetchFinalizedSolanaTransaction(
   );
   const status = statuses.value?.[0];
   if (!status) return { state: "pending", reason: "Transaction signature is not indexed by the RPC yet." };
-  // An execution error is not final until the cluster reaches finalized commitment.
-  // Releasing reservations on a merely confirmed failure could race a fork.
-  if (status.confirmationStatus !== "finalized") {
-    return { state: "pending", reason: "Transaction has not reached finalized commitment." };
-  }
-  if (status.err !== null && status.err !== undefined) {
-    return { state: "failed", reason: "Solana reports that the finalized transaction failed.", slot: status.slot };
-  }
-
+  // Fetch metadata for both successful and failed finalized transactions:
+  // Solana charges the network fee even when instruction execution fails.
   const transaction = await rpc<Record<string, unknown> | null>(
     endpoint,
     "getTransaction",
@@ -84,8 +77,11 @@ export async function fetchFinalizedSolanaTransaction(
     return { state: "pending", reason: "RPC transaction response does not yet match the submitted signature and finalized status slot." };
   }
   const meta = transaction.meta as { err?: unknown | null } | undefined;
-  if (!meta || (meta.err !== null && meta.err !== undefined)) {
-    return { state: "failed", reason: "Finalized transaction contains an execution error.", slot: slot as number };
+  if (!meta) {
+    return { state: "pending", reason: "Finalized transaction metadata is not available yet." };
+  }
+  if ((status.err !== null && status.err !== undefined) || (meta.err !== null && meta.err !== undefined)) {
+    return { state: "failed", reason: "Solana reports that the finalized transaction failed.", transaction, slot: slot as number };
   }
   return { state: "finalized", transaction, slot: slot as number };
 }
