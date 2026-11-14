@@ -616,6 +616,16 @@ try {
       multiWalletPaymentBody.status !== "replenishing" || multiWalletPaymentBody.fundingLegs?.filter(leg => leg.kind === "reserve_replenishment").length !== 2) {
     throw new Error("Multi-wallet payment preparation did not create two replenishment legs: " + JSON.stringify(multiWalletPaymentBody));
   }
+  const paymentIntentDetailResponse = await fetch(baseUrl + "/v1/payments/" + multiWalletPaymentBody.intentId, {
+    method: "GET", headers: paymentAuthHeaders
+  });
+  const paymentIntentDetail = await paymentIntentDetailResponse.json();
+  if (paymentIntentDetailResponse.status !== 200 || paymentIntentDetail.status !== "replenishing" ||
+      paymentIntentDetail.fundingLegs?.filter(leg => leg.kind === "reserve_replenishment").length !== 2 ||
+      paymentIntentDetail.fundingLegs?.find(leg => leg.kind === "final_payment")?.status !== "planned" ||
+      !paymentIntentDetail.reservations?.some(reservation => reservation.source === "managed_fee" && reservation.token === "SOL")) {
+    throw new Error("Agent payment detail endpoint did not return the scoped funding and fee reservation state.");
+  }
   const multiWalletPaymentRows = queryD1(`SELECT l.kind, l.status, r.amount_atoms, b.wallet_id, b.reserved_atoms
     FROM operation_funding_legs l JOIN reservations r ON r.funding_leg_id = l.id
     JOIN wallet_balances b ON b.id = r.wallet_balance_id WHERE l.operation_id = '${multiWalletPaymentBody.operationId}'
