@@ -655,8 +655,23 @@ const businessPaymentIntentCount = queryD1(`SELECT COUNT(*) AS count FROM busine
   }
   const unreservedFinalLeg = queryD1(`SELECT status FROM operation_funding_legs WHERE operation_id = '${multiWalletPaymentBody.operationId}' AND kind = 'final_payment'`, "verifyFinalPaymentWaitsForReplenishment");
   if (unreservedFinalLeg[0]?.status !== "planned") throw new Error("Final payment was not held behind replenishment confirmation.");
+  const releaseMultiWalletPaymentResponse = await fetch(baseUrl + "/v1/operations/" + multiWalletPaymentBody.operationId + "/release", {
+    method: "POST", headers: paymentAuthHeaders
+  });
+  if (releaseMultiWalletPaymentResponse.status !== 200) throw new Error("Multi-wallet payment reservations could not be released.");
+  const releasedMultiWalletPayment = queryD1(`SELECT i.status,
+      (SELECT COUNT(*) FROM reservations r WHERE r.operation_id = i.operation_id AND r.status = 'active') AS active_holds
+    FROM business_payment_intents i WHERE i.id = '${multiWalletPaymentBody.intentId}'`, "verifyMultiWalletPaymentRelease");
+  const releasedPaymentWalletBalances = queryD1(`SELECT token, reserved_atoms FROM wallet_balances
+    WHERE wallet_id IN ('${managedPaymentWalletId}', '${managedReserveWalletId}', '${managedSecondReserveWalletId}')`, "verifyMultiWalletPaymentWalletHoldsReleased");
+  if (releasedMultiWalletPayment[0]?.status !== "cancelled" || Number(releasedMultiWalletPayment[0]?.active_holds) !== 0 ||
+      releasedPaymentWalletBalances.some(row => row.reserved_atoms !== "0")) {
+    throw new Error("Releasing the multi-wallet payment did not release preposition, reserve and fee holds exactly once.");
+  }
   output.steps.businessPaymentPreparation = {
     networkFeeReservedAtoms: directFeeReservation[0].amount_atoms,
+    paymentWalletPrepositionAtoms: prepositionHold[0].amount_atoms,
+    multiWalletPaymentReleaseVerified: releasedMultiWalletPayment[0]?.status === "cancelled" && Number(releasedMultiWalletPayment[0]?.active_holds) === 0,
     directPaymentPrepared: true,
     directPaymentReservationAtoms: directPaymentReservation[0].amount_atoms,
     idempotentReplayReusedOriginal: directReplayBody.reused === true,
