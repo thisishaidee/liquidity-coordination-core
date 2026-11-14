@@ -69,6 +69,18 @@ describe("responsive page source contracts", () => {
     expect(businessDashboardHtml).toContain('Verify address control before assigning or enabling a business role.');
   });
 
+  it("provides a responsive business payment inbox with wallet signing and settlement actions", () => {
+    expect(businessDashboardHtml).toContain('id="page-payments"');
+    expect(businessDashboardHtml).toContain('id="paymentIntentsList"');
+    expect(businessDashboardHtml).toContain('data-prepare-funding-leg');
+    expect(businessDashboardHtml).toContain('data-reconcile-funding-leg');
+    expect(businessDashboardHtml).toContain('solana:signTransaction');
+    expect(businessDashboardHtml).toContain('/submit-signed');
+    expect(businessDashboardHtml).toContain('/v1/admin/payment-intents?businessId=');
+    expect(businessDashboardHtml).toContain('@media(max-width:560px)');
+    expect(businessDashboardHtml).toContain('overflow-wrap:anywhere');
+  });
+
   it("declares business-dashboard action buttons as non-submit controls", () => {
     expect(businessDashboardHtml).not.toMatch(/<button\b(?![^>]*\btype\s*=)[^>]*>/i);
   });
