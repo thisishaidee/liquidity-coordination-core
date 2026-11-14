@@ -417,6 +417,153 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     $("loadMoreOperations").disabled=!state.nextCursor;
     $("loadMoreOperations").textContent=state.nextCursor?"Load more":"No more records";
   }
+  function renderPaymentIntents() {
+    const target = $("paymentIntentsList");
+    if (!target) return;
+    if (state.loadErrors.PaymentIntents) {
+      target.innerHTML = '<div class="panel"><div class="empty">Payment requests could not be loaded. Refresh to retry.</div></div>';
+      return;
+    }
+    if (!state.paymentIntents.length) {
+      target.innerHTML = '<div class="panel"><div class="empty">No payment requests yet. An authorised agent creates a request through the payment preparation API. New requests will appear here for business review.</div></div>';
+      return;
+    }
+    target.innerHTML = state.paymentIntents.map(intent => {
+      const legs = intent.fundingLegs || [];
+      const legMarkup = legs.map(leg => {
+        const destination = leg.destinationWalletAddress || leg.destinationAddress || "—";
+        const source = leg.sourceAddress || "—";
+        const canPrepare = ["reserved","awaiting_signature","authorized_for_execution"].includes(leg.status) &&
+          ["reserved","replenishing","awaiting_signature"].includes(intent.status) &&
+          intent.action !== "conversion_required";
+        const canReconcile = leg.status === "submitted" && !!leg.transactionHash;
+        const amount = moneyAtoms(leg.amountAtoms, 6) + " USDC";
+        return '<article class="wallet-card"><div class="panel-head"><strong>' + escapeHtml(leg.kind.replaceAll("_"," ")) + '</strong><span class="chip">' + escapeHtml(leg.status.replaceAll("_"," ")) + '</span></div>' +
+          '<div class="balance-row"><span>Amount</span><strong>' + escapeHtml(amount) + '</strong></div>' +
+          '<div class="wallet-role-help">From ' + escapeHtml(source) + '</div><div class="wallet-role-help">To ' + escapeHtml(destination) + '</div>' +
+          (leg.transactionHash ? '<div class="wallet-role-help mono">Signature: ' + escapeHtml(leg.transactionHash) + '</div>' : '') +
+          '<div class="actions" style="margin-top:12px">' +
+          (canPrepare ? '<button type="button" class="btn primary" data-prepare-funding-leg="' + escapeHtml(leg.id) + '" data-intent-id="' + escapeHtml(intent.intentId) + '">Review, sign & submit</button>' : '') +
+          (canReconcile ? '<button type="button" class="btn" data-reconcile-funding-leg="' + escapeHtml(leg.id) + '" data-intent-id="' + escapeHtml(intent.intentId) + '">Check finalized settlement</button>' : '') +
+          '</div></article>';
+      }).join("");
+      const replenishmentReady = intent.action === "replenish_then_pay" &&
+        legs.some(leg => leg.kind === "reserve_replenishment") &&
+        legs.filter(leg => leg.kind === "reserve_replenishment").every(leg => leg.status === "confirmed") &&
+        legs.some(leg => leg.kind === "final_payment" && leg.status === "reserved");
+      return '<section class="panel"><div class="panel-head"><div><div class="panel-title">Payment request</div><div class="panel-subtitle mono">' + escapeHtml(intent.intentId) + '</div></div><span class="chip">' + escapeHtml(intent.status.replaceAll("_"," ")) + '</span></div>' +
+        '<div class="grid metric-grid"><article><div class="metric-label">Requested</div><div class="metric-value">' + escapeHtml(moneyAtoms(intent.requestedAtoms,6)) + '</div><div class="metric-foot">USDC</div></article><article><div class="metric-label">Approved payment</div><div class="metric-value">' + escapeHtml(moneyAtoms(intent.paymentAtoms,6)) + '</div><div class="metric-foot">USDC</div></article></div>' +
+        '<div class="wallet-role-help">Destination: ' + escapeHtml(intent.destination) + '</div><div class="wallet-role-help">Expires: ' + escapeHtml(fmtDate(intent.expiresAt)) + '</div>' +
+        (replenishmentReady ? '<div class="actions" style="margin-top:12px"><button type="button" class="btn" data-prepare-final-payment="' + escapeHtml(intent.intentId) + '">Refresh balance & prepare final payment</button></div>' : '') +
+        '<div class="stack" style="margin-top:14px">' + (legMarkup || '<div class="empty">No funding legs.</div>') + '</div></section>';
+    }).join("");
+  }
+  async function loadPaymentIntents() {
+    const result = await api("/v1/admin/payment-intents?businessId=" + encodeURIComponent(state.businessId));
+    if (!result || !Array.isArray(result.intents)) throw new Error("invalid_payment_intents_response");
+    state.paymentIntents = result.intents;
+    state.loadErrors.PaymentIntents = false;
+    renderPaymentIntents();
+  }
+  function bytesToBase64(bytes) {
+    let binary = "";
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary);
+  }
+  function base64ToBytes(value) {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+    return bytes;
+  }
+  async function signFundingTransaction(prepared) {
+    let transaction = base64ToBytes(prepared.transactionBase64);
+    const chain = "solana:mainnet";
+    for (const signerAddress of prepared.requiredSigners || []) {
+      let signedByWallet = false;
+      for (const wallet of standardSolanaWallets) {
+        const connect = wallet.features["standard:connect"];
+        const sign = wallet.features["solana:signTransaction"];
+        if (typeof connect?.connect !== "function" || typeof sign?.signTransaction !== "function") continue;
+        const connected = await connect.connect();
+        const accounts = connected?.accounts || wallet.accounts || [];
+        const account = accounts.find(item => item.address === signerAddress && supportsSolanaMainnet(item.chains) &&
+          Array.isArray(item.features) && item.features.includes("solana:signTransaction"));
+        if (!account) continue;
+        const output = await sign.signTransaction({ account, transaction, chain });
+        const signedTransaction = output?.[0]?.signedTransaction;
+        if (!(signedTransaction instanceof Uint8Array) || signedTransaction.length < 100 || signedTransaction.length > 16384) {
+          throw new Error("The connected wallet returned an invalid signed transaction.");
+        }
+        transaction = signedTransaction;
+        signedByWallet = true;
+        break;
+      }
+      if (!signedByWallet) throw new Error("No connected Wallet Standard account was found for required signer " + signerAddress + ". Connect the matching business wallet and retry.");
+    }
+    return transaction;
+  }
+  async function prepareAndSubmitFundingLeg(intentId, legId, button) {
+    if (!["owner","admin"].includes(state.role)) throw new Error("Only business owners and admins can approve payment transactions.");
+    button.disabled = true;
+    const query = "?businessId=" + encodeURIComponent(state.businessId);
+    const base = "/v1/admin/payment-intents/" + encodeURIComponent(intentId) + "/funding-legs/" + encodeURIComponent(legId);
+    try {
+      const prepared = await apiWrite(base + "/prepare" + query, {});
+      if (prepared.status !== "unsigned_transaction_ready" || !Array.isArray(prepared.requiredSigners) ||
+          !prepared.requiredSigners.length || !prepared.transactionBase64 || !prepared.messageSha256) {
+        throw new Error("The Worker did not return a complete unsigned transaction.");
+      }
+      const reviewed = window.confirm(
+        "Review this USDC transfer in your wallet.\n\nAmount: " + moneyAtoms(prepared.transfer.amountAtoms,6) + " USDC" +
+        "\nFrom: " + prepared.transfer.sourceWalletAddress +
+        "\nTo: " + prepared.transfer.destinationOwnerAddress +
+        "\nFee payer: " + prepared.transfer.feePayerAddress +
+        "\nEstimated fee: " + prepared.estimatedFeeLamports + " lamports" +
+        "\n\nContinue to wallet signing?"
+      );
+      if (!reviewed) return;
+      const signedBytes = await signFundingTransaction(prepared);
+      const submitted = await apiWrite(base + "/submit-signed" + query, {
+        transactionBase64: bytesToBase64(signedBytes),
+        messageSha256: prepared.messageSha256
+      });
+      const notice = $("paymentNotice");
+      notice.hidden = false;
+      notice.textContent = submitted.note || "Signed transaction submitted. Wait for finality, then reconcile.";
+      await loadPaymentIntents();
+    } finally {
+      button.disabled = false;
+    }
+  }
+  async function reconcileFundingLeg(intentId, legId, button) {
+    if (!["owner","admin"].includes(state.role)) throw new Error("Only business owners and admins can reconcile payment transactions.");
+    button.disabled = true;
+    try {
+      const path = "/v1/admin/payment-intents/" + encodeURIComponent(intentId) + "/funding-legs/" + encodeURIComponent(legId) + "/reconcile?businessId=" + encodeURIComponent(state.businessId);
+      const result = await apiWrite(path, {});
+      const notice = $("paymentNotice");
+      notice.hidden = false;
+      notice.textContent = result.note || "Finalized settlement checked.";
+      await loadPaymentIntents();
+    } finally {
+      button.disabled = false;
+    }
+  }
+  async function prepareFinalPayment(intentId, button) {
+    if (!["owner","admin"].includes(state.role)) throw new Error("Only business owners and admins can prepare final payment.");
+    button.disabled = true;
+    try {
+      const path = "/v1/admin/payment-intents/" + encodeURIComponent(intentId) + "/prepare-final-payment?businessId=" + encodeURIComponent(state.businessId);
+      const result = await apiWrite(path, {});
+      const notice = $("paymentNotice");
+      notice.hidden = false;
+      notice.textContent = result.note || "Final payment reservation refreshed.";
+      await loadPaymentIntents();
+    } finally {
+      button.disabled = false;
+    }
+  }
   function renderTelegram() {
     $("telegramCount").textContent=state.loadErrors["Telegram connections"]?"Unavailable":state.telegram.length+" connection(s)";
     $("telegramTable").innerHTML=state.loadErrors["Telegram connections"]?'<tr><td colspan="6" class="empty">Telegram connection data unavailable. Refresh to try again.</td></tr>':state.telegram.length?state.telegram.map(c=>'<tr><td class="mono">'+escapeHtml(c.telegramUserId)+'</td><td class="mono">'+escapeHtml(c.chatId)+'</td><td><span class="chip">'+escapeHtml(c.permission==="approver"?"Operator":c.permission==="requester"?"Requester · legacy":"Viewer")+'</span></td><td><span class="chip">'+escapeHtml(c.dashboardRole||"analyst")+'</span></td><td><span class="chip '+(c.status==="active"?"lemon":"off")+'">'+escapeHtml(c.status)+'</span></td><td>'+escapeHtml(fmtDate(c.linkedAt))+'</td></tr>').join(""):'<tr><td colspan="6" class="empty">No Telegram connections linked to this business.</td></tr>';
@@ -455,7 +602,8 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
         ["WalletRoles",api("/v1/admin/wallet-roles?businessId="+id),value=>{state.walletRoles=requireArray(value,"roles","wallet_roles");}],
         ["Telegram connections",api("/v1/admin/telegram/connections?businessId="+id),value=>{state.telegram=requireArray(value,"connections","telegram_connections");}],
         ["Forecast",api("/v1/admin/forecast?businessId="+id),value=>{state.forecast=validateForecast(value);}],
-        ["Operations",api("/v1/admin/operations?"+operationParams.toString()),value=>{const data=validateOperations(value);state.operations=data.operations;state.nextCursor=data.nextCursor;state.operationCounts=data.statusCounts;}]
+        ["Operations",api("/v1/admin/operations?"+operationParams.toString()),value=>{const data=validateOperations(value);state.operations=data.operations;state.nextCursor=data.nextCursor;state.operationCounts=data.statusCounts;}],
+        ["PaymentIntents",api("/v1/admin/payment-intents?businessId="+id),value=>{if(!Array.isArray(value.intents))throw new Error("invalid_payment_intents_response");state.paymentIntents=value.intents;}]
       ];
       const results=await Promise.allSettled(requests.map(item=>item[1]));
       const failed=[];
@@ -472,7 +620,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
         showError("Operator session expired while loading dashboard data. Open Business Setup to establish the existing operator session, then return here.","accessError");
         return;
       }
-      renderOverview();renderAgents();renderLiquidity();renderForecast();renderOperations();renderTelegram();renderSettings();
+      renderOverview();renderAgents();renderLiquidity();renderForecast();renderOperations();renderPaymentIntents();renderTelegram();renderSettings();
       $("tourLaunch").hidden=false;let tourDone=false;try{tourDone=localStorage.getItem(tourKey())==="complete";}catch{}$("tourBanner").hidden=tourDone;
       if(failed.length)showError("Some dashboard data could not be refreshed: "+failed.map(item=>item.label).join(", ")+". Other sections remain available. Values from the last successful load are retained; an empty section is not proof that no records exist.");
       else clearError();
