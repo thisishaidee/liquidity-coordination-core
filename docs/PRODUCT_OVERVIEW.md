@@ -10,6 +10,10 @@ NERITH is not a wallet, a custody service, a trading terminal, or an autonomous 
 
 The next milestone is documented in [AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md](AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md). Draft PR #51 adds the additive multi-wallet role schema, business-scoped role APIs, a responsive dashboard role-management surface, and deterministic USDC replenishment planning. These changes are branch-only and are not current production functionality until reviewed, merged and deployed with the D1 migration. The planner does not reserve balances or execute inter-wallet replenishment. The Worker still does not autonomously sign or broadcast transactions.
 
+## Multi-leg funding ledger status
+
+The draft adds an operation funding-leg table linked to the existing reservation ledger. Each leg has an immutable identity, one transaction-hash binding, and guarded state transitions from planned through submitted/confirmed or failure/ambiguity. This is schema and state-machine groundwork only; existing operations do not create or execute these legs yet.
+
 ## Deterministic payment policy status
 
 The draft also includes a pure payment-intent policy evaluator. It applies business and wallet scope, ownership verification, asset/destination allowlists, amount and daily caps, balance freshness, reserve floors, transfer caps, SOL network-fee payer policy, idempotency replay checks, and conditional conversion/slippage requirements. It produces plans only; it is not connected to a signer or fund-movement endpoint.
