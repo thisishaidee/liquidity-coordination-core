@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@solana-program/token": "0.18.0",
-    "@solana/web3.js": "3.2.1"
+    "@solana/web3.js": "3.2.1",
+    "@solana/kit": "8.6.0"
   }
 }
