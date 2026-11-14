@@ -279,6 +279,36 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     return '<article class="wallet-card"><div class="panel-head"><strong>'+escapeHtml(w.scope)+' wallet</strong><span class="chip '+(w.status==="active"?"lemon":"off")+'">'+escapeHtml(w.status)+'</span></div><div class="pixel">'+escapeHtml(w.purpose)+' · '+escapeHtml(w.network)+'</div><div class="wallet-address mono">'+escapeHtml(w.address)+'</div>'+(balances||'<div class="empty">No balance snapshot recorded.</div>')+'</article>';
   }
 
+
+  function getInjectedSolanaProvider() {
+    const candidates=[
+      window.okxwallet?.solana,
+      window.phantom?.solana,
+      window.solflare,
+      window.backpack?.solana,
+      window.solana
+    ];
+    return candidates.find(provider=>provider&&typeof provider.connect==="function"&&typeof provider.signMessage==="function")||null;
+  }
+  async function verifyWalletOwnershipWithWallet(walletId,address,button) {
+    const provider=getInjectedSolanaProvider();
+    if(!provider)throw new Error("No supported Solana wallet was detected. Open NERITH in your OKX, Phantom, Solflare or Backpack wallet browser.");
+    button.disabled=true;
+    try{
+      const connected=await provider.connect();
+      const connectedKey=connected?.publicKey?.toString?.()||provider.publicKey?.toString?.()||"";
+      if(connectedKey!==address)throw new Error("The connected wallet address does not match this registered wallet. Switch to the matching wallet and try again.");
+      const challenge=await apiWrite("/v1/admin/wallet-ownership/challenge",{businessId:state.businessId,walletId});
+      const signed=await provider.signMessage(new TextEncoder().encode(challenge.message),"utf8");
+      const rawSignature=signed?.signature??signed;
+      const signatureBytes=rawSignature instanceof Uint8Array?rawSignature:ArrayBuffer.isView(rawSignature)?new Uint8Array(rawSignature.buffer,rawSignature.byteOffset,rawSignature.byteLength):null;
+      if(!signatureBytes||signatureBytes.length!==64)throw new Error("The connected wallet returned an unsupported message-signature format.");
+      let binary="";for(const byte of signatureBytes)binary+=String.fromCharCode(byte);
+      const signature=btoa(binary).replaceAll("+","-").replaceAll("/","_").replace(/=/g,"");
+      await apiWrite("/v1/admin/wallet-ownership/verify",{businessId:state.businessId,walletId,challengeId:challenge.challengeId,signature});
+      await loadAll();
+    }finally{button.disabled=false;}
+  }
   function renderWalletRoles() {
     const target=$("walletRolesList");
     if(!target)return;
@@ -292,10 +322,12 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
         const limits=r.role==="reserve"?' · floor '+moneyAtoms(BigInt(r.minimumRemainingAtoms||"0"))+' USDC'+(r.maximumTransferAtoms?' · cap '+moneyAtoms(BigInt(r.maximumTransferAtoms))+' USDC':''):'';
         return '<span class="chip '+(r.enabled?'lemon':'off')+'">'+escapeHtml(r.role.replaceAll("_"," "))+' · '+(r.enabled?'enabled':'disabled')+escapeHtml(limits)+'</span>'+(canManage&&r.enabled&&r.role!=="api_payment"?' <button type="button" class="btn" data-disable-wallet-role="'+escapeHtml(r.walletId)+'" data-role="'+escapeHtml(r.role)+'">Disable</button>':'');
       }).join("")+'</div>':'<div class="wallet-role-help">No role assignment yet.</div>';
-      if(w.purpose==="api_payment")return '<article class="wallet-card"><div class="panel-head"><strong>API fee wallet</strong><span class="chip">Isolated</span></div><div class="wallet-address mono">'+escapeHtml(w.address)+'</div>'+roleMarkup+'<div class="wallet-role-help">Dedicated to Hermes x402 API fees. It is excluded from business payment and reserve liquidity.</div></article>';
+      const verification=w.ownershipVerifiedAt?'<span class="chip lemon">Address control verified</span>':canManage?'<button type="button" class="btn" data-verify-wallet="'+escapeHtml(w.walletId)+'" data-address="'+escapeHtml(w.address)+'">Verify ownership</button>':'<span class="chip warn">Ownership unverified</span>';
+      const verificationHelp=w.ownershipVerifiedAt?'<div class="wallet-role-help">Verified '+escapeHtml(fmtDate(w.ownershipVerifiedAt))+'. This proves address control only; it does not grant spending authority.</div>':'<div class="wallet-role-help">A workspace admin must sign a short-lived message with this exact wallet before it can be assigned an active business role. No transaction or network fee is involved.</div>';
+      if(w.purpose==="api_payment")return '<article class="wallet-card"><div class="panel-head"><strong>API fee wallet</strong><span class="chip">Isolated</span></div><div class="wallet-address mono">'+escapeHtml(w.address)+'</div><div class="wallet-role-current">'+verification+'</div>'+verificationHelp+roleMarkup+'<div class="wallet-role-help">Dedicated to Hermes x402 API fees. It is excluded from business payment and reserve liquidity.</div></article>';
       const selected=roles.find(r=>r.enabled&&["payment","reserve","operating","receiving"].includes(r.role))?.role||"reserve";
-      const controls=canManage?'<form class="wallet-role-form" data-wallet-role-form="'+escapeHtml(w.walletId)+'"><label class="wide">Assign role<select class="input" name="role" required><option value="payment" '+(selected==="payment"?"selected":"")+'>Payment wallet</option><option value="reserve" '+(selected==="reserve"?"selected":"")+'>Reserve wallet</option><option value="operating" '+(selected==="operating"?"selected":"")+'>Operating wallet</option><option value="receiving" '+(selected==="receiving"?"selected":"")+'>Receiving wallet</option></select></label><label>Minimum remaining USDC<input class="input" name="minimumRemaining" inputmode="decimal" autocomplete="off" placeholder="0.00" value="'+(roles.find(r=>r.role==="reserve")?escapeHtml(moneyAtoms(BigInt(roles.find(r=>r.role==="reserve").minimumRemainingAtoms||"0"))):"0")+'"></label><label>Maximum transfer USDC<input class="input" name="maximumTransfer" inputmode="decimal" autocomplete="off" placeholder="No cap" value="'+(roles.find(r=>r.role==="reserve"&&r.maximumTransferAtoms)?escapeHtml(moneyAtoms(BigInt(roles.find(r=>r.role==="reserve").maximumTransferAtoms))):"")+'"></label><button class="btn primary wide" type="submit">Save wallet role</button></form><div class="wallet-role-help">Only workspace admins can change wallet roles. Signing and transfers are not enabled here.</div>':'<div class="wallet-role-help">Read-only view. Ask a workspace admin to change wallet roles.</div>';
-      return '<article class="wallet-card"><div class="panel-head"><strong>Business wallet</strong><span class="chip">'+escapeHtml(w.status)+'</span></div><div class="wallet-address mono">'+escapeHtml(w.address)+'</div>'+roleMarkup+controls+'</article>';
+      const controls=canManage&&w.ownershipVerifiedAt?'<form class="wallet-role-form" data-wallet-role-form="'+escapeHtml(w.walletId)+'"><label class="wide">Assign role<select class="input" name="role" required><option value="payment" '+(selected==="payment"?"selected":"")+'>Payment wallet</option><option value="reserve" '+(selected==="reserve"?"selected":"")+'>Reserve wallet</option><option value="operating" '+(selected==="operating"?"selected":"")+'>Operating wallet</option><option value="receiving" '+(selected==="receiving"?"selected":"")+'>Receiving wallet</option></select></label><label>Minimum remaining USDC<input class="input" name="minimumRemaining" inputmode="decimal" autocomplete="off" placeholder="0.00" value="'+(roles.find(r=>r.role==="reserve")?escapeHtml(moneyAtoms(BigInt(roles.find(r=>r.role==="reserve").minimumRemainingAtoms||"0"))):"0")+'"></label><label>Maximum transfer USDC<input class="input" name="maximumTransfer" inputmode="decimal" autocomplete="off" placeholder="No cap" value="'+(roles.find(r=>r.role==="reserve"&&r.maximumTransferAtoms)?escapeHtml(moneyAtoms(BigInt(roles.find(r=>r.role==="reserve").maximumTransferAtoms))):"")+'"></label><button class="btn primary wide" type="submit">Save wallet role</button></form><div class="wallet-role-help">Only workspace admins can change wallet roles. Signing and transfers are not enabled here.</div>':canManage?'<div class="wallet-role-help">Verify address control before assigning or enabling a business role.</div>':'<div class="wallet-role-help">Read-only view. Ask a workspace admin to change wallet roles.</div>';
+      return '<article class="wallet-card"><div class="panel-head"><strong>Business wallet</strong><span class="chip">'+escapeHtml(w.status)+'</span></div><div class="wallet-address mono">'+escapeHtml(w.address)+'</div><div class="wallet-role-current">'+verification+'</div>'+verificationHelp+roleMarkup+controls+'</article>';
     }).join("");
   }
   function renderLiquidity() {
@@ -435,6 +467,14 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     finally{submit.disabled=false;}
   });
 
+
+  document.addEventListener("click",async event=>{
+    const button=event.target.closest("[data-verify-wallet]");
+    if(!button)return;
+    if(state.role!=="admin"){showError("Only workspace admins can verify wallet ownership.");return;}
+    try{await verifyWalletOwnershipWithWallet(button.dataset.verifyWallet,button.dataset.address,button);}
+    catch(error){showError("Wallet ownership verification failed: "+String(error.message||error));}
+  });
   document.addEventListener("click",async event=>{
     const button=event.target.closest("[data-disable-wallet-role]");
     if(!button)return;
