@@ -586,6 +586,22 @@ try {
     method: "POST", headers: paymentAuthHeaders, body: JSON.stringify({ ...directPaymentPayload, amount: "0.6" })
   });
   if (directConflictResponse.status !== 409) throw new Error("Payment idempotency key accepted a changed request payload.");
+  const unverifiedCompleteResponse = await fetch(baseUrl + "/v1/operations/" + directPaymentBody.operationId + "/complete", {
+    method: "POST", headers: paymentAuthHeaders
+  });
+  if (unverifiedCompleteResponse.status !== 409) throw new Error("Agent-reported completion bypassed on-chain payment confirmation.");
+  const releaseDirectPaymentResponse = await fetch(baseUrl + "/v1/operations/" + directPaymentBody.operationId + "/release", {
+    method: "POST", headers: paymentAuthHeaders
+  });
+  if (releaseDirectPaymentResponse.status !== 200) throw new Error("Direct payment reservations could not be safely released: " + await releaseDirectPaymentResponse.text());
+  const releasedDirectPayment = queryD1(`SELECT i.status, usdc.reserved_atoms AS usdc_reserved, sol.reserved_atoms AS sol_reserved
+    FROM business_payment_intents i
+    JOIN wallet_balances usdc ON usdc.wallet_id = '${managedPaymentWalletId}' AND usdc.token = 'USDC'
+    JOIN wallet_balances sol ON sol.wallet_id = '${managedPaymentWalletId}' AND sol.token = 'SOL'
+    WHERE i.id = '${directPaymentBody.intentId}'`, "verifyDirectPaymentRelease");
+  if (releasedDirectPayment[0]?.status !== "cancelled" || releasedDirectPayment[0]?.usdc_reserved !== "0" || releasedDirectPayment[0]?.sol_reserved !== "0") {
+    throw new Error("Payment release did not cancel the intent and release both USDC and SOL fee holds.");
+  }
 
   const multiWalletPaymentResponse = await fetch(baseUrl + "/v1/payments/prepare", {
     method: "POST", headers: paymentAuthHeaders, body: JSON.stringify({
