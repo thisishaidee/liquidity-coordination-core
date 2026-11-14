@@ -4,6 +4,10 @@
 
 The current branch implements Wallet Standard discovery for ownership challenges and the business Payments dashboard. The dashboard now prepares unsigned checked-USDC transfers, sequentially requests `solana:signTransaction` signatures from each required mainnet account, and submits the signed bytes plus the prepared message digest to the Worker. The Worker verifies the exact transaction and broadcasts only after validation. The finalized RPC reconciliation remains separate. No Android, iOS, desktop or Telegram Mini App device test has passed. Do not advertise any wallet/platform combination as device-verified until its full sign-and-return flow has passed a device test.
 
+## Telegram transaction execution
+
+Telegram is intended to be a first-class transaction surface. The Bot handles requests, business approvals and status; a Telegram Mini App must handle secure transaction review and wallet handoff. The current Bot and website login bridge do not yet provide Mini App transaction signing. See [Telegram transaction execution plan](./TELEGRAM_TRANSACTION_EXECUTION_PLAN.md) for the implementation stages and security acceptance criteria.
+
 ## Platform requirement
 
 Wallet handoff is platform-neutral. Android is an early test target because the project is being developed and validated on an Android device; it is not the product's platform boundary. The table below describes target adapter strategies, not verified implementations. The current dashboard signing path uses Wallet Standard only; WalletConnect and platform-specific deep-link adapters remain future work.
