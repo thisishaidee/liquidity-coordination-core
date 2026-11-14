@@ -278,7 +278,7 @@ export async function verifySignedUsdcFundingTransaction(
   const firstSignature = transaction.signatures[0]?.signature;
   if (!firstSignature) throw new Error("Signed transaction fee-payer signature is missing.");
   const messageBytes = transaction.serializeMessage();
-  const serialized = transaction.serialize({ requireAllSignatures: true, verifySignatures: true });
+  const serialized = await transaction.serialize({ requireAllSignatures: true, verifySignatures: true });
   return {
     transaction,
     transactionBytes: new Uint8Array(serialized),
