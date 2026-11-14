@@ -3838,12 +3838,13 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
 
   if (operation.target_reservation_id) {
     const targetReservation = await env.DB.prepare(
-      "SELECT id, wallet_balance_id, amount_atoms, status FROM reservations WHERE id = ?"
+      "SELECT id, wallet_balance_id, amount_atoms, status, reservation_source FROM reservations WHERE id = ?"
     ).bind(operation.target_reservation_id).first<{
       id: string;
       wallet_balance_id: string;
       amount_atoms: string;
       status: string;
+      reservation_source: string;
     }>();
 
     if (targetReservation?.status === "active" && effectiveStatus === "failed") {
@@ -3851,14 +3852,16 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
         "UPDATE reservations SET status = 'released', released_at = datetime('now') WHERE id = ? AND status = 'active'"
       ).bind(targetReservation.id).run();
       if ((claimTarget.meta?.changes ?? 0) === 1) {
-        const debitTarget = await env.DB.prepare(
-          "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)"
-        ).bind(targetReservation.amount_atoms, targetReservation.wallet_balance_id, targetReservation.amount_atoms).run();
-        if ((debitTarget.meta?.changes ?? 0) !== 1) {
+        if (targetReservation.reservation_source !== "managed") {
+          const debitTarget = await env.DB.prepare(
+            "UPDATE wallet_balances SET reserved_atoms = CAST(reserved_atoms AS INTEGER) - ? WHERE id = ? AND CAST(reserved_atoms AS INTEGER) >= CAST(? AS INTEGER)"
+          ).bind(targetReservation.amount_atoms, targetReservation.wallet_balance_id, targetReservation.amount_atoms).run();
+          if ((debitTarget.meta?.changes ?? 0) !== 1) {
           await env.DB.prepare(
             "UPDATE reservations SET status = 'active', released_at = NULL WHERE id = ? AND status = 'released'"
           ).bind(targetReservation.id).run();
           return json({ error: "target_reservation_ledger_mismatch" }, 409);
+          }
         }
       }
     } else if (targetReservation?.status === "active") {
