@@ -22,6 +22,7 @@ function intent(overrides: Partial<PaymentIntent> = {}): PaymentIntent {
     expiresAt: new Date(now + 120_000).toISOString(),
     allowPartialPayment: false,
     networkFeeLamports: "5000",
+    networkFeePayerWalletId: "wallet_payment",
     ...overrides
   };
 }
@@ -34,6 +35,7 @@ function policy(overrides: Partial<PaymentPolicy> = {}): PaymentPolicy {
     allowedConversionMints: ["So11111111111111111111111111111111111111112"],
     maxTransactionAtoms: "10000000",
     maxNetworkFeeLamports: "10000",
+    allowedFeePayerWalletIds: ["wallet_payment"],
     maxDailyAtoms: "20000000",
     committedTodayAtoms: "0",
     maxBalanceAgeSeconds: 300,
@@ -62,9 +64,28 @@ function wallet(overrides: Partial<PolicyWalletSnapshot> = {}): PolicyWalletSnap
   };
 }
 
+function evaluate(
+  paymentIntent: PaymentIntent,
+  paymentPolicy: PaymentPolicy,
+  snapshots: PolicyWalletSnapshot[],
+  nowMs = now
+) {
+  const feePayerExists = snapshots.some(snapshot =>
+    snapshot.walletId === paymentIntent.networkFeePayerWalletId && snapshot.mint === "SOL"
+  );
+  const feePayer = feePayerExists ? [] : [wallet({
+    walletId: paymentIntent.networkFeePayerWalletId,
+    role: "payment",
+    mint: "SOL",
+    confirmedAtoms: "100000",
+    reservedAtoms: "0"
+  })];
+  return evaluatePaymentIntentPolicy(paymentIntent, paymentPolicy, [...snapshots, ...feePayer], nowMs);
+}
+
 describe("deterministic payment intent policy", () => {
   it("allows direct payment from one verified, fresh payment wallet", () => {
-    const result = evaluatePaymentIntentPolicy(intent(), policy(), [wallet()], now);
+    const result = evaluate(intent(), policy(), [wallet()], now);
     expect(result.eligible).toBe(true);
     if (result.eligible) {
       expect(result.action).toBe("direct_payment");
@@ -84,7 +105,7 @@ describe("deterministic payment intent policy", () => {
       minimumRemainingAtoms: "2000000",
       maximumTransferAtoms: "5000000"
     });
-    const result = evaluatePaymentIntentPolicy(intent({ amountAtoms: "7000000" }), policy(), [payment, reserve], now);
+    const result = evaluate(intent({ amountAtoms: "7000000" }), policy(), [payment, reserve], now);
     expect(result.eligible).toBe(true);
     if (result.eligible) {
       expect(result.action).toBe("replenish_then_pay");
@@ -101,16 +122,16 @@ describe("deterministic payment intent policy", () => {
       minimumRemainingAtoms: "0"
     });
     const sharedReserve = { ...shared, role: "reserve" as const, minimumRemainingAtoms: "1000000" };
-    const result = evaluatePaymentIntentPolicy(intent(), policy(), [payment, shared, sharedReserve], now);
+    const result = evaluate(intent(), policy(), [payment, shared, sharedReserve], now);
     expect(result.eligible).toBe(false);
     if (!result.eligible) expect(result.code).toBe("insufficient_authorized_usdc");
   });
 
   it("rejects missing, disabled, unverified or duplicate payment wallet assignments", () => {
-    const missing = evaluatePaymentIntentPolicy(intent(), policy(), [], now);
-    const disabled = evaluatePaymentIntentPolicy(intent(), policy(), [wallet({ enabled: false })], now);
-    const unverified = evaluatePaymentIntentPolicy(intent(), policy(), [wallet({ ownershipVerifiedAt: null })], now);
-    const duplicate = evaluatePaymentIntentPolicy(intent(), policy(), [wallet(), wallet({ walletId: "wallet_payment_2" })], now);
+    const missing = evaluate(intent(), policy(), [], now);
+    const disabled = evaluate(intent(), policy(), [wallet({ enabled: false })], now);
+    const unverified = evaluate(intent(), policy(), [wallet({ ownershipVerifiedAt: null })], now);
+    const duplicate = evaluate(intent(), policy(), [wallet(), wallet({ walletId: "wallet_payment_2" })], now);
     expect(missing).toMatchObject({ eligible: false, code: "payment_wallet_configuration_invalid" });
     expect(disabled).toMatchObject({ eligible: false, code: "payment_wallet_configuration_invalid" });
     expect(unverified).toMatchObject({ eligible: false, code: "payment_wallet_unverified" });
@@ -118,23 +139,23 @@ describe("deterministic payment intent policy", () => {
   });
 
   it("rejects destinations and mints outside explicit allowlists", () => {
-    expect(evaluatePaymentIntentPolicy(intent({ destination: "not-allowed" }), policy(), [wallet()], now))
+    expect(evaluate(intent({ destination: "not-allowed" }), policy(), [wallet()], now))
       .toMatchObject({ eligible: false, code: "destination_not_allowed" });
-    expect(evaluatePaymentIntentPolicy(intent({ mint: "fake-usdc" }), policy(), [wallet()], now))
+    expect(evaluate(intent({ mint: "fake-usdc" }), policy(), [wallet()], now))
       .toMatchObject({ eligible: false, code: "mint_not_allowed" });
   });
 
   it("enforces transaction and daily committed-spend limits", () => {
-    expect(evaluatePaymentIntentPolicy(intent({ amountAtoms: "11000000" }), policy(), [wallet()], now))
+    expect(evaluate(intent({ amountAtoms: "11000000" }), policy(), [wallet()], now))
       .toMatchObject({ eligible: false, code: "per_transaction_limit_exceeded" });
-    expect(evaluatePaymentIntentPolicy(intent(), policy({ committedTodayAtoms: "16000000" }), [wallet()], now))
+    expect(evaluate(intent(), policy({ committedTodayAtoms: "16000000" }), [wallet()], now))
       .toMatchObject({ eligible: false, code: "daily_limit_exceeded" });
   });
 
   it("rejects stale payment balances and inconsistent reserved amounts", () => {
-    expect(evaluatePaymentIntentPolicy(intent(), policy(), [wallet({ observedAt: new Date(now - 600_000).toISOString() })], now))
+    expect(evaluate(intent(), policy(), [wallet({ observedAt: new Date(now - 600_000).toISOString() })], now))
       .toMatchObject({ eligible: false, code: "payment_balance_stale" });
-    expect(evaluatePaymentIntentPolicy(intent(), policy(), [wallet({ confirmedAtoms: "100", reservedAtoms: "200" })], now))
+    expect(evaluate(intent(), policy(), [wallet({ confirmedAtoms: "100", reservedAtoms: "200" })], now))
       .toMatchObject({ eligible: false, code: "payment_balance_invalid" });
   });
 
@@ -154,7 +175,7 @@ describe("deterministic payment intent policy", () => {
       minimumRemainingAtoms: "100000000",
       maximumTransferAtoms: "500000000"
     });
-    const result = evaluatePaymentIntentPolicy(intent({ slippageBps: 50 }), policy({ allowConversion: true }), [payment, reserve, solReserve], now);
+    const result = evaluate(intent({ slippageBps: 50 }), policy({ allowConversion: true }), [payment, reserve, solReserve], now);
     expect(result.eligible).toBe(true);
     if (result.eligible) {
       expect(result.action).toBe("conversion_required");
@@ -165,14 +186,14 @@ describe("deterministic payment intent policy", () => {
   });
 
   it("rejects estimated network fees above the business cap", () => {
-    expect(evaluatePaymentIntentPolicy(intent({ networkFeeLamports: "10001" }), policy(), [wallet()], now))
+    expect(evaluate(intent({ networkFeeLamports: "10001" }), policy(), [wallet()], now))
       .toMatchObject({ eligible: false, code: "network_fee_limit_exceeded" });
   });
 
   it("requires an approved conversion asset and slippage before returning conversion_required", () => {
     const payment = wallet({ confirmedAtoms: "2000000" });
-    const noSource = evaluatePaymentIntentPolicy(intent({ slippageBps: 50 }), policy({ allowConversion: true }), [payment], now);
-    const noSlippage = evaluatePaymentIntentPolicy(
+    const noSource = evaluate(intent({ slippageBps: 50 }), policy({ allowConversion: true }), [payment], now);
+    const noSlippage = evaluate(
       intent(),
       policy({ allowConversion: true }),
       [payment, wallet({ walletId: "sol", role: "reserve", mint: "So11111111111111111111111111111111111111112", confirmedAtoms: "1000000000" })],
@@ -184,7 +205,7 @@ describe("deterministic payment intent policy", () => {
 
   it("allows partial payment only when both intent and business policy enable it", () => {
     const payment = wallet({ confirmedAtoms: "2000000" });
-    const result = evaluatePaymentIntentPolicy(
+    const result = evaluate(
       intent({ allowPartialPayment: true }),
       policy({ allowPartialPayment: true }),
       [payment],
@@ -206,16 +227,16 @@ describe("deterministic payment intent policy", () => {
       wallet({ walletId: "unverified", role: "reserve", ownershipVerifiedAt: null, confirmedAtoms: "10000000" }),
       wallet({ walletId: "other_business", role: "reserve", businessId: "biz_other", confirmedAtoms: "10000000" })
     ];
-    const result = evaluatePaymentIntentPolicy(intent(), policy(), [payment, ...excluded], now);
+    const result = evaluate(intent(), policy(), [payment, ...excluded], now);
     expect(result).toMatchObject({ eligible: false, code: "insufficient_authorized_usdc" });
   });
 
   it("rejects expired intents, invalid idempotency keys and excess slippage", () => {
-    expect(evaluatePaymentIntentPolicy(intent({ expiresAt: new Date(now - 1).toISOString() }), policy(), [wallet()], now))
+    expect(evaluate(intent({ expiresAt: new Date(now - 1).toISOString() }), policy(), [wallet()], now))
       .toMatchObject({ eligible: false, code: "intent_expired_or_invalid" });
-    expect(evaluatePaymentIntentPolicy(intent({ idempotencyKey: "x" }), policy(), [wallet()], now))
+    expect(evaluate(intent({ idempotencyKey: "x" }), policy(), [wallet()], now))
       .toMatchObject({ eligible: false, code: "invalid_operation_identity" });
-    expect(evaluatePaymentIntentPolicy(intent({ slippageBps: 101 }), policy(), [wallet()], now))
+    expect(evaluate(intent({ slippageBps: 101 }), policy(), [wallet()], now))
       .toMatchObject({ eligible: false, code: "slippage_limit_exceeded" });
   });
 });
