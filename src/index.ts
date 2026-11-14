@@ -28,6 +28,7 @@ interface Env {
   TELEGRAM_TOTP_ENCRYPTION_KEY?: string;
   NERITH_SUPPORT_URL?: string;
   NERITH_PUBLIC_URL?: string;
+  HERMES_BASE_URL?: string;
 }
 
 type AgentRow = {
@@ -2391,11 +2392,14 @@ async function proxyHermes(
 
   let upstream: Response;
   try {
-    upstream = await fetch(`https://hermes.swap.io${path}`, {
+    const hermesBaseUrl = x402Context?.env.HERMES_BASE_URL ?? "https://hermes.swap.io";
+    upstream = await fetch(new URL(path, hermesBaseUrl), {
       method: "POST", headers, body: JSON.stringify(payload),
       signal: AbortSignal.timeout(12_000), redirect: "error"
     });
-  } catch {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown upstream fetch error";
+    console.error("hermes_upstream_fetch_failed", { path, error: message.slice(0, 240) });
     // A timeout after forwarding a payment is ambiguous. Keep its budget reservation
     // pending rather than incorrectly making the same daily allowance available again.
     return json({ error: "swap_provider_unavailable", message: "Hermes did not respond within the allowed time." }, 504);
