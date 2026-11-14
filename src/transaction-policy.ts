@@ -227,8 +227,15 @@ export function evaluatePaymentIntentPolicy(
     wallet.ownershipVerifiedAt && wallet.mint === intent.mint &&
     isFresh(wallet.observedAt, nowMs, policy.maxBalanceAgeSeconds)
   );
-  const sources: ReplenishmentSource[] = [];
+  const sourceByWalletId = new Map<string, PolicyWalletSnapshot>();
   for (const wallet of sourceSnapshots) {
+    const existing = sourceByWalletId.get(wallet.walletId);
+    // If a wallet has both operating and reserve roles, reserve is the
+    // stricter classification and its reserve floor must be preserved.
+    if (!existing || wallet.role === "reserve") sourceByWalletId.set(wallet.walletId, wallet);
+  }
+  const sources: ReplenishmentSource[] = [];
+  for (const wallet of sourceByWalletId.values()) {
     try {
       sources.push({
         walletId: wallet.walletId,
