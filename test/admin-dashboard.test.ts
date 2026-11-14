@@ -57,6 +57,17 @@ async function call(path: string, env: TestEnv, headers: HeadersInit = {}) {
 }
 
 describe("admin dashboard read endpoints", () => {
+  it("lists payment intents only inside the authenticated business session", async () => {
+    const { env, queries } = makeEnv({ cookieSessionValid: true, sessionBusinessId: "biz_1" });
+    const response = await call("/v1/admin/payment-intents?businessId=biz_1", env, sessionHeaders);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ businessId: "biz_1", intents: [] });
+    expect(queries.some(query => query.sql.includes("FROM business_payment_intents"))).toBe(true);
+
+    const crossBusiness = await call("/v1/admin/payment-intents?businessId=biz_2", env, sessionHeaders);
+    expect(crossBusiness.status).toBe(401);
+  });
+
   it("requires an admin session before checking business identifiers", async () => {
     const { env } = makeEnv();
     const response = await call("/v1/admin/operations", env);
