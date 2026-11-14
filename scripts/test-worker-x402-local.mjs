@@ -102,7 +102,7 @@ try {
   const roleOwnershipTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_wallet_role_requires_verified_owner_insert', 'trg_wallet_role_requires_verified_owner_update')", "inspectWalletRoleOwnershipTriggers");
   const fundingLegTable = queryD1("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'operation_funding_legs'", "inspectFundingLegTable");
   const reservationColumns = queryD1("PRAGMA table_info(reservations)", "inspectReservationColumns");
-  const managedReservationTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_managed_reservation_reserve_balance', 'trg_managed_reservation_release_balance', 'trg_managed_reservation_identity_immutable', 'trg_managed_reservation_active_delete_block')", "inspectManagedReservationTriggers");
+  const managedReservationTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_managed_reservation_reserve_balance', 'trg_managed_reservation_release_balance', 'trg_managed_reservation_identity_immutable', 'trg_managed_reservation_active_delete_block', 'trg_managed_fee_reservation_reserve_balance')", "inspectManagedReservationTriggers");
   const fundingLegTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_funding_leg_identity_immutable', 'trg_funding_leg_transaction_hash_immutable', 'trg_funding_leg_state_transition', 'trg_funding_leg_submitted_requires_hash', 'trg_funding_leg_confirmed_requires_hash')", "inspectFundingLegTriggers");
   const finalPaymentTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_final_payment_leg_requires_confirmed_funding', 'trg_final_payment_reservation_requires_confirmed_funding')", "inspectFinalPaymentFundingTriggers");
   const paymentIntentTables = queryD1("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('business_payment_policies', 'business_payment_intents')", "inspectBusinessPaymentTables");
@@ -117,7 +117,7 @@ try {
     fundingLegTable: fundingLegTable.length === 1,
     reservationFundingLegLink: reservationColumns.some(row => row.name === "funding_leg_id"),
     managedReservationSourceColumn: reservationColumns.some(row => row.name === "reservation_source"),
-    managedReservationTriggers: managedReservationTriggers.length === 4,
+    managedReservationTriggers: managedReservationTriggers.length === 5,
     fundingLegSafetyTriggers: fundingLegTriggers.length === 5,
     finalPaymentFundingGates: finalPaymentTriggers.length === 2,
     businessPaymentTables: paymentIntentTables.length === 2,
@@ -525,6 +525,13 @@ try {
       directPaymentReservation[0].status !== "reserved" || directPaymentReservation[0].reserved_atoms !== "500000") {
     throw new Error("Direct payment did not create a correctly guarded payment-wallet reservation.");
   }
+  const directFeeReservation = queryD1(`SELECT r.amount_atoms, r.token, r.reservation_source, b.reserved_atoms
+    FROM reservations r JOIN wallet_balances b ON b.id = r.wallet_balance_id
+    WHERE r.operation_id = '${directPaymentBody.operationId}' AND r.token = 'SOL'`, "verifyDirectPaymentFeeReservation");
+  if (directFeeReservation.length !== 1 || directFeeReservation[0].amount_atoms !== "5000" ||
+      directFeeReservation[0].reservation_source !== "managed_fee" || directFeeReservation[0].reserved_atoms !== "5000") {
+    throw new Error("Direct payment did not reserve the approved SOL network fee.");
+  }
   const directReplayResponse = await fetch(baseUrl + "/v1/payments/prepare", {
     method: "POST", headers: paymentAuthHeaders, body: JSON.stringify(directPaymentPayload)
   });
@@ -561,6 +568,7 @@ try {
   const unreservedFinalLeg = queryD1(`SELECT status FROM operation_funding_legs WHERE operation_id = '${multiWalletPaymentBody.operationId}' AND kind = 'final_payment'`, "verifyFinalPaymentWaitsForReplenishment");
   if (unreservedFinalLeg[0]?.status !== "planned") throw new Error("Final payment was not held behind replenishment confirmation.");
   output.steps.businessPaymentPreparation = {
+    networkFeeReservedAtoms: directFeeReservation[0].amount_atoms,
     directPaymentPrepared: true,
     directPaymentReservationAtoms: directPaymentReservation[0].amount_atoms,
     idempotentReplayReusedOriginal: directReplayBody.reused === true,
