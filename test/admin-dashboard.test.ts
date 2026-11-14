@@ -754,6 +754,12 @@ describe("browser page script syntax", () => {
         expect(html).toContain("invalid_operations_response");
         expect(html).toContain("catch(error) { state.loadErrors[label]=true;failed.push({label,error}); }");
         expect(html).toContain('id="walletChooser"');
+        const chooserIndex=html.indexOf('id="walletChooser"');
+        const onboardingPanelIndex=html.indexOf('id="walletConnectPanel"');
+        const operatingWalletsIndex=html.indexOf('id="operatingWallets"');
+        expect(chooserIndex).toBeGreaterThan(onboardingPanelIndex);
+        expect(chooserIndex).toBeLessThan(operatingWalletsIndex);
+        expect(html.slice(onboardingPanelIndex,chooserIndex)).toContain('</div>');
         expect(html).toContain('id="connectX402Reserve"');
         expect(html).toContain('purpose.value="api_payment"');
         expect(html).toContain("A closed Wallet Standard adapter must not block other wallet providers.");
