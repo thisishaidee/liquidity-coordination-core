@@ -200,14 +200,15 @@ try {
   const seedSql = `
     PRAGMA foreign_keys = ON;
     INSERT INTO businesses (id, name) VALUES ('${businessId}', 'NERITH Track Two Test');
+    INSERT INTO admin_sessions (token_hash, business_id, expires_at, role) VALUES ('${adminSessionHash}', '${businessId}', datetime('now', '+1 hour'), 'owner');
     INSERT INTO agents (id, business_id, name, api_key_hash, can_use_business_treasury)
       VALUES ('${agentId}', '${businessId}', 'Track Two Agent', '${apiKeyHash}', 0);
     INSERT INTO agents (id, business_id, name, api_key_hash, can_use_business_treasury)
       VALUES ('${paymentAgentId}', '${businessId}', 'Business Payment Agent', '${paymentApiKeyHash}', 1);
-    INSERT INTO wallets (id, business_id, agent_id, network, address, scope, purpose)
-      VALUES ('${operatingWalletId}', '${businessId}', '${agentId}', 'solana', '${operatingAddress}', 'agent', 'operating');
-    INSERT INTO wallets (id, business_id, agent_id, network, address, scope, purpose)
-      VALUES ('${paymentWalletId}', '${businessId}', NULL, 'solana', '${paymentAddress}', 'business', 'api_payment');
+    INSERT INTO wallets (id, business_id, agent_id, network, address, scope, purpose, ownership_verified_at, ownership_verified_origin)
+      VALUES ('${operatingWalletId}', '${businessId}', '${agentId}', 'solana', '${operatingAddress}', 'agent', 'operating', datetime('now'), 'http://127.0.0.1:8787');
+    INSERT INTO wallets (id, business_id, agent_id, network, address, scope, purpose, ownership_verified_at, ownership_verified_origin)
+      VALUES ('${paymentWalletId}', '${businessId}', NULL, 'solana', '${paymentAddress}', 'business', 'api_payment', datetime('now'), 'http://127.0.0.1:8787');
     INSERT INTO wallet_balances (id, wallet_id, token, confirmed_atoms, reserved_atoms, observed_at, source)
       VALUES ('bal_${randomBytes(16).toString("hex")}', '${operatingWalletId}', 'USDC', '2000000', '0', datetime('now'), 'track2_fixture');
     INSERT INTO wallet_balances (id, wallet_id, token, confirmed_atoms, reserved_atoms, observed_at, source)
