@@ -2531,6 +2531,12 @@ async function submitFundingLegTransaction(
   if (!row.reservation_id || row.source_status !== "active" || row.source_scope !== "business" || !row.source_verified_at || row.source_role_authorized !== 1) {
     return json({ error: "funding_leg_reservation_or_source_invalid" }, 409);
   }
+  if (row.leg_kind === "final_payment" &&
+      (row.fee_payer_wallet_status !== "active" || row.fee_payer_scope !== "business" ||
+       !row.fee_payer_verified_at || row.fee_payer_role_authorized !== 1 ||
+       (BigInt(row.network_fee_lamports) > 0n && !row.fee_reservation_id))) {
+    return json({ error: "final_payment_fee_wallet_or_reservation_invalid" }, 409);
+  }
   if (row.leg_kind === "reserve_replenishment" &&
       (!row.destination_wallet_id || row.destination_wallet_status !== "active" ||
        row.destination_wallet_scope !== "business" || !row.destination_verified_at ||
