@@ -39,8 +39,24 @@ BEGIN
           AND source_role.enabled = 1
           AND (
             (leg.kind = 'final_payment' AND source_role.role = 'payment')
-            OR (leg.kind IN ('reserve_replenishment', 'conversion') AND source_role.role IN ('reserve', 'operating'))
+            OR (
+              leg.kind IN ('reserve_replenishment', 'conversion')
+              AND source_role.role IN ('reserve', 'operating')
+              AND (
+                source_role.role = 'reserve'
+                OR NOT EXISTS (
+                  SELECT 1 FROM wallet_role_assignments stricter_reserve
+                  WHERE stricter_reserve.business_id = source_wallet.business_id
+                    AND stricter_reserve.wallet_id = source_wallet.id
+                    AND stricter_reserve.role = 'reserve'
+                    AND stricter_reserve.enabled = 1
+                )
+              )
+            )
           )
+          AND CAST(NEW.amount_atoms AS INTEGER) <= COALESCE(CAST(source_role.maximum_transfer_atoms AS INTEGER), 9223372036854775807)
+          AND CAST(b.confirmed_atoms AS INTEGER) - CAST(b.reserved_atoms AS INTEGER) - CAST(NEW.amount_atoms AS INTEGER)
+              >= CAST(source_role.minimum_remaining_atoms AS INTEGER)
       )
       AND (
         leg.kind = 'final_payment'
@@ -65,7 +81,8 @@ BEGIN
   UPDATE wallet_balances
   SET reserved_atoms = CAST(reserved_atoms AS INTEGER) + CAST(NEW.amount_atoms AS INTEGER)
   WHERE id = NEW.wallet_balance_id
-    AND CAST(confirmed_atoms AS INTEGER) - CAST(reserved_atoms AS INTEGER) >= CAST(NEW.amount_atoms AS INTEGER);
+    AND CAST(confirmed_atoms AS INTEGER) - CAST(reserved_atoms AS INTEGER) >= CAST(NEW.amount_atoms AS INTEGER)
+    AND CAST(reserved_atoms AS INTEGER) <= 9223372036854775807 - CAST(NEW.amount_atoms AS INTEGER);
   SELECT CASE WHEN changes() <> 1
     THEN RAISE(ABORT, 'managed_reservation_insufficient_balance')
   END;
@@ -132,6 +149,8 @@ BEGIN
     JOIN business_payment_intents payment_intent
       ON payment_intent.operation_id = op.id
       AND payment_intent.fee_payer_wallet_id = fee_wallet.id
+      AND payment_intent.network_fee_lamports = NEW.amount_atoms
+      AND payment_intent.action <> 'conversion_required'
     WHERE b.id = NEW.wallet_balance_id
       AND b.token = 'SOL'
       AND fee_wallet.business_id = op.business_id
