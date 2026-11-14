@@ -13,14 +13,27 @@ describe("business-scoped admin route classification", () => {
   });
 
   it("requires an explicit business scope for funding-leg settlement writes", () => {
-    const path = "/v1/admin/payment-intents/bpi_123/funding-legs/leg_456/submit";
+    const path = "/v1/admin/payment-intents/bpi_123/funding-legs/leg_456/submit-signed";
     expect(describeAdminRoute("POST", path, new URLSearchParams(), { signature: "untrusted" }))
       .toEqual({ kind: "invalid" });
     expect(describeAdminRoute("POST", path, new URLSearchParams("businessId=biz_a"), { signature: "untrusted" }))
       .toEqual({ kind: "business", businessId: "biz_a" });
+    expect(describeAdminRoute("POST", "/v1/admin/payment-intents/bpi_123/funding-legs/leg_456/prepare", new URLSearchParams("businessId=biz_a"), {}))
+      .toEqual({ kind: "business", businessId: "biz_a" });
+    expect(describeAdminRoute("POST", "/v1/admin/payment-intents/bpi_123/funding-legs/leg_456/submit", new URLSearchParams("businessId=biz_a"), { signature: "untrusted" }))
+      .toEqual({ kind: "business", businessId: "biz_a" });
     expect(describeAdminRoute("GET", path, new URLSearchParams("businessId=biz_a"), null))
       .toEqual({ kind: "invalid" });
     expect(describeAdminRoute("POST", "/v1/admin/payment-intents/bpi_123/funding-legs/leg_456/unknown", new URLSearchParams("businessId=biz_a"), {}))
+      .toEqual({ kind: "invalid" });
+  });
+
+  it("allows only business-scoped reads for the payment-intent inbox", () => {
+    expect(describeAdminRoute("GET", "/v1/admin/payment-intents", new URLSearchParams("businessId=biz_a"), null))
+      .toEqual({ kind: "business", businessId: "biz_a" });
+    expect(describeAdminRoute("GET", "/v1/admin/payment-intents", new URLSearchParams(), null))
+      .toEqual({ kind: "invalid" });
+    expect(describeAdminRoute("POST", "/v1/admin/payment-intents", new URLSearchParams("businessId=biz_a"), {}))
       .toEqual({ kind: "invalid" });
   });
 
