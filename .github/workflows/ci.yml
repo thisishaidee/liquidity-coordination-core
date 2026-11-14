@@ -63,6 +63,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Download the live Hermes 402 evidence from Track 1
+        uses: actions/download-artifact@v4
+        with:
+          name: hermes-unpaid-402-evidence
+          path: artifacts/hermes-402/
       - run: npm install
       - name: Build embedded dashboard modules required by the Worker
         run: npm run build:dashboard
