@@ -764,7 +764,14 @@ describe("browser page script syntax", () => {
         expect(html).toContain("Wallet connected. Approve the ownership message in the wallet app.");
         expect(html).toContain("if(!injected&&window.NERITHOKX?.connect)return await window.NERITHOKX.connect()");
         expect(html).toContain("Start the OKX App Connect handoff before awaiting Wallet Standard adapters.");
-        expect(html.indexOf("if(!injected&&window.NERITHOKX?.connect)")<html.indexOf("for(const wallet of standardSolanaWallets)")).toBe(true);
+        const connectFunctionStart=html.indexOf("async function connectSolanaWallet");
+        const connectFunctionEnd=html.indexOf("async function signOwnershipChallenge",connectFunctionStart);
+        const connectFunction=html.slice(connectFunctionStart,connectFunctionEnd);
+        expect(connectFunction.indexOf("if(!injected&&window.NERITHOKX?.connect)")<connectFunction.indexOf("for(const wallet of standardSolanaWallets)")).toBe(true);
+        expect(html).toContain("pendingExistingWalletVerification={button,walletId:button.dataset.verifyWallet,address:button.dataset.address,help}");
+        expect(html).toContain("const connectedAddress=await connectSolanaWallet(wallet==="browser"?"":wallet)");
+        expect(html).toContain("Choose the wallet that owns this exact address.");
+        expect(html).toContain("if(window.NERITHJUPITER.connected&&window.NERITHJUPITER.getAddress?.())return window.NERITHJUPITER.getAddress();");
         expect(html).toContain("const existingWallet=state.wallets.find(wallet=>");
         expect(html).toContain("Reusing its existing record; no duplicate will be created.");
         expect(html).toContain("Use a separate Solana address for ");
