@@ -175,7 +175,7 @@ describe("deterministic payment intent policy", () => {
     const noSlippage = evaluatePaymentIntentPolicy(
       intent(),
       policy({ allowConversion: true }),
-      [payment, wallet({ walletId: "sol", role: "reserve", mint: "So11111111111111111111111111111111111111112" })],
+      [payment, wallet({ walletId: "sol", role: "reserve", mint: "So11111111111111111111111111111111111111112", confirmedAtoms: "1000000000" })],
       now
     );
     expect(noSource).toMatchObject({ eligible: false, code: "no_authorized_conversion_source" });
