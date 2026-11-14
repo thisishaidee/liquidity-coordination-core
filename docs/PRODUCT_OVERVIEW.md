@@ -6,6 +6,10 @@ NERITH is an API-first coordination layer for businesses that operate autonomous
 
 NERITH is not a wallet, a custody service, a trading terminal, or an autonomous funds executor. The business retains control of its wallets and signing keys.
 
+## Agreed next architecture milestone
+
+The next milestone is documented in [AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md](AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md). It specifies multi-wallet payment/reserve roles, deterministic replenishment planning, policy-controlled autonomy, conditional Swap.io conversion, and shared website/Telegram transaction workflows. These are implementation targets, not claims about current production functionality. The current Worker still does not autonomously sign or broadcast transactions, and the existing allocator does not yet execute inter-wallet replenishment.
+
 ## The problem
 
 An autonomous agent can complete its reasoning and still fail because it does not have the right asset in the right wallet at the right time. A business may have enough value overall but have it split across wallets, held in the wrong token, or already committed to other work. A normal balance check does not answer whether a specific task can safely proceed.
