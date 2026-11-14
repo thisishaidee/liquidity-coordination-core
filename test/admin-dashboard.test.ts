@@ -737,7 +737,9 @@ describe("browser page script syntax", () => {
         expect(html).toContain("invalid_operations_response");
         expect(html).toContain("catch(error) { state.loadErrors[label]=true;failed.push({label,error}); }");
         expect(html).toContain('id="walletChooser"');
-        for (const wallet of ["okx", "phantom", "solflare", "backpack", "browser"]) expect(html).toContain('data-wallet-choice="' + wallet + '"');
+        for (const wallet of ["okx", "phantom", "solflare", "backpack", "jupiter", "browser"]) expect(html).toContain('data-wallet-choice="' + wallet + '"');
+        expect(html).toContain("jup.ag/wallet");
+        expect(html).toContain('/jupiter/i.test(item.name||"")');
         expect(html).toContain("phantom.app/ul/browse/");
         expect(html).toContain("solflare.com/ul/v1/browse/");
         expect(html).toContain("backpack.app/ul/v1/browse/");
