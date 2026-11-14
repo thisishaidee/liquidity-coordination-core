@@ -906,7 +906,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     try {
       $("x402DemoStatus").textContent = "Requesting the unpaid Swap.io quote challenge…";
       const result = await requestX402Demo(body, null);
-      if (result.status !== 402 || !Array.isArray(result.data.accepts)) {
+      if (result.status !== 402 || result.data.x402Version !== 1 || !Array.isArray(result.data.accepts)) {
         throw new Error(result.data.message || result.data.error || ("Expected HTTP 402, received " + result.status));
       }
       const requirement = result.data.accepts.find(item =>
