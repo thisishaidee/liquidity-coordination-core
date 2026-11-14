@@ -50,5 +50,18 @@ async function signMessage(message, expectedAddress) {
   }
   return signature;
 }
+async function signTransaction(transaction, expectedAddress) {
+  const provider = universalProvider || await initialize();
+  if (!provider.connected()) throw new Error("OKX Wallet session is not connected. Reconnect and try again.");
+  const account = solanaProvider.getAccount(MAINNET_CHAIN);
+  if (!account?.address || account.address !== expectedAddress) {
+    throw new Error("The connected OKX account does not match the selected x402 payment wallet.");
+  }
+  const signed = await solanaProvider.signTransaction(transaction, MAINNET_CHAIN);
+  if (!signed || typeof signed.serialize !== "function") {
+    throw new Error("OKX Wallet did not return a signed Solana transaction.");
+  }
+  return signed;
+}
 
-window.NERITHOKX = Object.freeze({ initialize, connect, signMessage, get connected() { return Boolean(universalProvider?.connected()); }, getAddress() { return universalProvider?.connected() ? solanaProvider.getAccount(MAINNET_CHAIN)?.address || "" : ""; } });
+window.NERITHOKX = Object.freeze({ initialize, connect, signMessage, signTransaction, get connected() { return Boolean(universalProvider?.connected()); }, getAddress() { return universalProvider?.connected() ? solanaProvider.getAccount(MAINNET_CHAIN)?.address || "" : ""; } });
