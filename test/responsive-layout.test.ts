@@ -79,6 +79,9 @@ describe("responsive page source contracts", () => {
     expect(businessDashboardHtml).toContain('/v1/admin/payment-intents?businessId=');
     expect(businessDashboardHtml).toContain('@media(max-width:560px)');
     expect(businessDashboardHtml).toContain('overflow-wrap:anywhere');
+    expect(businessDashboardHtml).toContain('const canManagePayments = ["owner","admin"].includes(state.role);');
+    expect(businessDashboardHtml).toContain('for (const signerAddress of prepared.requiredSigners || [])');
+    expect(businessDashboardHtml).toContain('["planned","blocked","reserved"].includes(leg.status)');
   });
 
   it("declares business-dashboard action buttons as non-submit controls", () => {
