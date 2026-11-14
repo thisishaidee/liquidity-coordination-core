@@ -18,6 +18,8 @@ export type UsdcFundingTransactionInput = {
   amountAtoms: string;
   maximumFeeLamports: string;
   remainingAggregateFeeLamports: string;
+  minimumSourceBalanceAtoms: string;
+  minimumFeePayerBalanceLamports: string;
 };
 
 export type UsdcFundingTransactionResult = {
@@ -65,7 +67,9 @@ export async function buildUsdcFundingTransaction(
   }
   for (const [label, value] of [
     ["maximum fee", input.maximumFeeLamports],
-    ["remaining aggregate fee", input.remainingAggregateFeeLamports]
+    ["remaining aggregate fee", input.remainingAggregateFeeLamports],
+    ["minimum source balance", input.minimumSourceBalanceAtoms],
+    ["minimum fee-payer balance", input.minimumFeePayerBalanceLamports]
   ] as const) {
     if (!/^(0|[1-9][0-9]{0,18})$/.test(value)) throw new Error("Approved " + label + " is invalid.");
   }
@@ -110,8 +114,10 @@ export async function buildUsdcFundingTransaction(
       source.owner !== input.sourceWalletAddress || source.mint !== input.mintAddress) {
     throw new Error("Source token account owner, mint or state does not match the registered wallet.");
   }
-  if (source.amount < BigInt(input.amountAtoms)) {
-    throw new Error("Source token account does not contain the exact reserved USDC amount.");
+  const requiredSourceBalance = BigInt(input.minimumSourceBalanceAtoms) > BigInt(input.amountAtoms)
+    ? BigInt(input.minimumSourceBalanceAtoms) : BigInt(input.amountAtoms);
+  if (source.amount < requiredSourceBalance) {
+    throw new Error("Source token account balance is below the active reservation total plus its configured minimum remaining balance.");
   }
   if (!destinationAccount || !destinationAccount.owner.equals(tokenProgramKey)) {
     throw new Error("Recipient USDC associated token account does not exist. NERITH will not spend unbudgeted rent to create it.");
@@ -147,8 +153,10 @@ export async function buildUsdcFundingTransaction(
     throw new Error("Estimated network fee exceeds the approved per-transaction or remaining aggregate fee budget.");
   }
   const feePayerBalance = await connection.getBalance(feePayerKey, "finalized");
-  if (!Number.isSafeInteger(feePayerBalance) || feePayerBalance < estimatedFee) {
-    throw new Error("Registered fee payer does not have enough finalized SOL to cover the estimated network fee.");
+  const requiredFeePayerBalance = BigInt(input.minimumFeePayerBalanceLamports) > fee
+    ? BigInt(input.minimumFeePayerBalanceLamports) : fee;
+  if (!Number.isSafeInteger(feePayerBalance) || BigInt(feePayerBalance) < requiredFeePayerBalance) {
+    throw new Error("Registered fee payer does not have enough finalized SOL to cover active fee reservations and the estimated network fee.");
   }
 
   const messageBytes = transaction.serializeMessage();
