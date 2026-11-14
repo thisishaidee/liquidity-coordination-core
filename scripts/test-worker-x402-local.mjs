@@ -99,12 +99,14 @@ try {
   const ownershipTables = queryD1("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'wallet_ownership_challenges'", "inspectOwnershipChallengeTable");
   const roleTables = queryD1("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'wallet_role_assignments'", "inspectWalletRoleTable");
   const ownershipTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'trg_wallet_ownership_reset_on_identity_change'", "inspectOwnershipResetTrigger");
+  const roleOwnershipTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_wallet_role_requires_verified_owner_insert', 'trg_wallet_role_requires_verified_owner_update')", "inspectWalletRoleOwnershipTriggers");
   const schemaChecks = {
     ownershipVerifiedAtColumn: walletColumns.some(row => row.name === "ownership_verified_at"),
     ownershipVerifiedOriginColumn: walletColumns.some(row => row.name === "ownership_verified_origin"),
     ownershipChallengeTable: ownershipTables.length === 1,
     walletRoleAssignmentTable: roleTables.length === 1,
-    identityChangeResetTrigger: ownershipTriggers.length === 1
+    identityChangeResetTrigger: ownershipTriggers.length === 1,
+    roleOwnershipGuards: roleOwnershipTriggers.length === 2
   };
   output.steps.walletOwnershipSchema = { checks: schemaChecks };
   if (Object.values(schemaChecks).some(value => value !== true)) {
