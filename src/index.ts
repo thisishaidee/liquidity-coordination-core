@@ -2205,6 +2205,9 @@ type FundingLegSettlementRow = {
   destination_wallet_status: string | null; destination_wallet_scope: string | null;
   destination_verified_at: string | null; reservation_id: string | null;
   source_role_authorized: number; destination_role_authorized: number;
+  fee_payer_address: string | null; fee_payer_wallet_status: string | null;
+  fee_payer_verified_at: string | null; network_fee_lamports: string;
+  fee_reservation_id: string | null;
 };
 
 async function getFundingLegSettlementRow(
@@ -2215,7 +2218,10 @@ async function getFundingLegSettlementRow(
            l.transaction_hash, l.amount_atoms, l.asset_mint, l.destination_address,
            i.id AS intent_id, i.status AS intent_status, i.action AS intent_action,
            i.expires_at AS intent_expires_at, i.destination AS intent_destination,
-           i.mint AS intent_mint, i.payment_atoms,
+           i.mint AS intent_mint, i.payment_atoms, i.network_fee_lamports,
+           fee_wallet.address AS fee_payer_address,
+           fee_wallet.status AS fee_payer_wallet_status,
+           fee_wallet.ownership_verified_at AS fee_payer_verified_at,
            op.id AS operation_id, op.business_id, op.status AS operation_status,
            source_wallet.id AS source_wallet_id, source_wallet.address AS source_address,
            source_wallet.status AS source_status, source_wallet.scope AS source_scope,
@@ -2239,14 +2245,18 @@ async function getFundingLegSettlementRow(
              WHERE role.business_id = op.business_id AND role.wallet_id = destination_wallet.id
                AND role.role = 'payment' AND role.enabled = 1
            ) ELSE 1 END AS destination_role_authorized,
-           reservation.id AS reservation_id
+           reservation.id AS reservation_id,
+           fee_reservation.id AS fee_reservation_id
     FROM operation_funding_legs l
     JOIN operations op ON op.id = l.operation_id
     JOIN business_payment_intents i ON i.operation_id = op.id AND i.business_id = op.business_id
     JOIN wallets source_wallet ON source_wallet.id = l.source_wallet_id
+    JOIN wallets fee_wallet ON fee_wallet.id = i.fee_payer_wallet_id
     LEFT JOIN wallets destination_wallet ON destination_wallet.id = l.destination_wallet_id
     LEFT JOIN reservations reservation
       ON reservation.funding_leg_id = l.id AND reservation.status = 'active'
+    LEFT JOIN reservations fee_reservation
+      ON fee_reservation.operation_id = op.id AND fee_reservation.reservation_source = 'managed_fee' AND fee_reservation.status = 'active'
     WHERE i.id = ? AND l.id = ? AND op.business_id = ?
     LIMIT 1
   `).bind(intentId, legId, businessId).first<FundingLegSettlementRow>();
@@ -2403,6 +2413,40 @@ async function reconcileFundingLegTransaction(
     return json({ intentId, fundingLegId: legId, status: "failed", confirmed: false, reason: lookup.reason }, 409);
   }
 
+  const rpcTransaction = lookup.transaction as SolanaPaymentTransaction & {
+    meta?: { fee?: unknown };
+    transaction?: { message?: { accountKeys?: Array<string | { pubkey?: string }> } };
+  };
+  let actualNetworkFee: number | null = null;
+  if (row.leg_kind === "final_payment") {
+    const fee = rpcTransaction.meta?.fee;
+    const firstKey = rpcTransaction.transaction?.message?.accountKeys?.[0];
+    const feePayerAddress = typeof firstKey === "string" ? firstKey : firstKey?.pubkey;
+    if (!row.fee_payer_address || row.fee_payer_wallet_status !== "active" || !row.fee_payer_verified_at ||
+        !Number.isSafeInteger(fee) || (fee as number) < 0 ||
+        BigInt(fee as number) > BigInt(row.network_fee_lamports) ||
+        feePayerAddress !== row.fee_payer_address ||
+        (BigInt(row.network_fee_lamports) > 0n && !row.fee_reservation_id)) {
+      const reason = "Finalized transaction fee payer or actual network fee does not match the approved fee reservation.";
+      try {
+        await env.DB.batch([
+          env.DB.prepare(`
+            UPDATE operation_funding_legs SET status = 'ambiguous', failure_reason = ?,
+              confirmed_slot = ?, updated_at = datetime('now')
+            WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
+          `).bind(reason, lookup.slot, legId, row.transaction_hash),
+          env.DB.prepare(`
+            UPDATE business_payment_intents SET status = 'ambiguous', updated_at = datetime('now')
+            WHERE id = ? AND status = 'submitted'
+          `).bind(intentId)
+        ]);
+      } catch {
+        return json({ error: "funding_leg_ambiguity_record_failed" }, 409);
+      }
+      return json({ intentId, fundingLegId: legId, status: "ambiguous", confirmed: false, reason }, 409);
+    }
+    actualNetworkFee = fee as number;
+  }
   const verification = verifySolanaTokenTransfer(
     lookup.transaction as SolanaPaymentTransaction,
     {
@@ -2449,10 +2493,19 @@ async function reconcileFundingLegTransaction(
     `).bind(legId)
   ];
   if (row.leg_kind === "final_payment") {
+    if (row.fee_reservation_id) {
+      statements.push(env.DB.prepare(`
+        UPDATE reservations SET status = 'consumed', released_at = datetime('now')
+        WHERE id = ? AND reservation_source = 'managed_fee' AND status = 'active'
+      `).bind(row.fee_reservation_id));
+    }
     statements.push(env.DB.prepare(`
       UPDATE business_payment_intents SET status = 'confirmed', updated_at = datetime('now')
       WHERE id = ? AND business_id = ? AND status = 'submitted'
     `).bind(intentId, businessId));
+    statements.push(env.DB.prepare(`
+      UPDATE operations SET status = 'completed' WHERE id = ? AND status = 'reserved'
+    `).bind(row.operation_id));
   }
   try {
     await env.DB.batch(statements);
@@ -2467,9 +2520,10 @@ async function reconcileFundingLegTransaction(
     intentId, fundingLegId: legId, status: "confirmed", confirmed: true,
     transactionSignature: row.transaction_hash, confirmedSlot: lookup.slot,
     amountAtoms: verification.amountAtoms,
+    actualNetworkFeeLamports: actualNetworkFee === null ? undefined : String(actualNetworkFee),
     nextStep: row.leg_kind === "reserve_replenishment"
       ? "Refresh and verify the payment-wallet USDC balance at finalized commitment before reserving or submitting the final-payment leg."
-      : "Payment transfer is finalized and verified. The separate SOL network-fee reservation still requires independent fee reconciliation."
+      : "Payment transfer and the separately reserved SOL network fee are finalized and reconciled."
   });
 }
 
