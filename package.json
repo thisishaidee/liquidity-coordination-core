@@ -19,11 +19,14 @@
     "@cloudflare/workers-types": "^5.20261110.1",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4",
-    "wrangler": "^4.45.0"
+    "wrangler": "^4.45.0",
+    "esbuild": "^0.25.12"
   },
   "dependencies": {
     "@solana-program/token": "0.18.0",
     "@solana/web3.js": "3.2.1",
-    "@solana/kit": "8.6.0"
+    "@solana/kit": "8.6.0",
+    "@okxconnect/solana-provider": "1.9.1",
+    "@okxconnect/universal-provider": "1.9.1"
   }
 }
