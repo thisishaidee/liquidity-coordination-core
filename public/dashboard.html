@@ -686,6 +686,31 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       await loadAll();
     }catch(error){showError("Could not disable wallet role: "+String(error.message||error));button.disabled=false;}
   });
+  document.addEventListener("click", async event => {
+    const prepareButton = event.target.closest("[data-prepare-funding-leg]");
+    if (prepareButton) {
+      try { await prepareAndSubmitFundingLeg(prepareButton.dataset.intentId, prepareButton.dataset.prepareFundingLeg, prepareButton); }
+      catch (error) { const notice = $("paymentNotice"); notice.hidden = false; notice.textContent = "Payment signing failed: " + String(error.message || error); }
+      return;
+    }
+    const reconcileButton = event.target.closest("[data-reconcile-funding-leg]");
+    if (reconcileButton) {
+      try { await reconcileFundingLeg(reconcileButton.dataset.intentId, reconcileButton.dataset.reconcileFundingLeg, reconcileButton); }
+      catch (error) { const notice = $("paymentNotice"); notice.hidden = false; notice.textContent = "Settlement check failed: " + String(error.message || error); }
+      return;
+    }
+    const finalButton = event.target.closest("[data-prepare-final-payment]");
+    if (finalButton) {
+      try { await prepareFinalPayment(finalButton.dataset.prepareFinalPayment, finalButton); }
+      catch (error) { const notice = $("paymentNotice"); notice.hidden = false; notice.textContent = "Final payment preparation failed: " + String(error.message || error); }
+      return;
+    }
+  });
+  $("paymentsRefresh")?.addEventListener("click", async () => {
+    try { await loadPaymentIntents(); }
+    catch (error) { const notice = $("paymentNotice"); notice.hidden = false; notice.textContent = "Could not refresh payment requests: " + String(error.message || error); }
+  });
+
   document.addEventListener("click",event=>{
     const button=event.target.closest("[data-page]");
     if(button)setPage(button.dataset.page);
