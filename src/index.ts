@@ -2204,6 +2204,7 @@ type FundingLegSettlementRow = {
   destination_wallet_id: string | null; destination_wallet_address: string | null;
   destination_wallet_status: string | null; destination_wallet_scope: string | null;
   destination_verified_at: string | null; reservation_id: string | null;
+  source_role_authorized: number; destination_role_authorized: number;
 };
 
 async function getFundingLegSettlementRow(
@@ -2219,11 +2220,25 @@ async function getFundingLegSettlementRow(
            source_wallet.id AS source_wallet_id, source_wallet.address AS source_address,
            source_wallet.status AS source_status, source_wallet.scope AS source_scope,
            source_wallet.ownership_verified_at AS source_verified_at,
+           CASE WHEN l.kind = 'final_payment' THEN EXISTS (
+             SELECT 1 FROM wallet_role_assignments role
+             WHERE role.business_id = op.business_id AND role.wallet_id = source_wallet.id
+               AND role.role = 'payment' AND role.enabled = 1
+           ) ELSE EXISTS (
+             SELECT 1 FROM wallet_role_assignments role
+             WHERE role.business_id = op.business_id AND role.wallet_id = source_wallet.id
+               AND role.role IN ('reserve', 'operating') AND role.enabled = 1
+           ) END AS source_role_authorized,
            destination_wallet.id AS destination_wallet_id,
            destination_wallet.address AS destination_wallet_address,
            destination_wallet.status AS destination_wallet_status,
            destination_wallet.scope AS destination_wallet_scope,
            destination_wallet.ownership_verified_at AS destination_verified_at,
+           CASE WHEN l.kind = 'reserve_replenishment' THEN EXISTS (
+             SELECT 1 FROM wallet_role_assignments role
+             WHERE role.business_id = op.business_id AND role.wallet_id = destination_wallet.id
+               AND role.role = 'payment' AND role.enabled = 1
+           ) ELSE 1 END AS destination_role_authorized,
            reservation.id AS reservation_id
     FROM operation_funding_legs l
     JOIN operations op ON op.id = l.operation_id
@@ -2265,13 +2280,13 @@ async function submitFundingLegTransaction(
       row.leg_status !== "authorized_for_execution") {
     return json({ error: "funding_leg_not_submittable", status: row.leg_status }, 409);
   }
-  if (!row.reservation_id || row.source_status !== "active" || row.source_scope !== "business" || !row.source_verified_at) {
+  if (!row.reservation_id || row.source_status !== "active" || row.source_scope !== "business" || !row.source_verified_at || row.source_role_authorized !== 1) {
     return json({ error: "funding_leg_reservation_or_source_invalid" }, 409);
   }
   if (row.leg_kind === "reserve_replenishment" &&
       (!row.destination_wallet_id || row.destination_wallet_status !== "active" ||
        row.destination_wallet_scope !== "business" || !row.destination_verified_at ||
-       row.destination_address !== row.destination_wallet_address)) {
+       row.destination_role_authorized !== 1 || row.destination_address !== row.destination_wallet_address)) {
     return json({ error: "funding_leg_destination_wallet_invalid" }, 409);
   }
   if (row.leg_kind === "final_payment" &&
@@ -2337,7 +2352,7 @@ async function reconcileFundingLegTransaction(
   if (row.intent_action === "conversion_required" || row.leg_kind === "conversion") {
     return json({ error: "conversion_settlement_not_supported" }, 409);
   }
-  if (!row.reservation_id || row.source_status !== "active" || row.source_scope !== "business" || !row.source_verified_at) {
+  if (!row.reservation_id || row.source_status !== "active" || row.source_scope !== "business" || !row.source_verified_at || row.source_role_authorized !== 1) {
     return json({ error: "funding_leg_reservation_or_source_invalid" }, 409);
   }
   const destinationOwner = row.leg_kind === "reserve_replenishment"
@@ -2345,7 +2360,7 @@ async function reconcileFundingLegTransaction(
   if (!destinationOwner || (row.leg_kind === "reserve_replenishment" &&
       (!row.destination_wallet_id || row.destination_wallet_status !== "active" ||
        row.destination_wallet_scope !== "business" || !row.destination_verified_at ||
-       row.destination_address !== row.destination_wallet_address))) {
+       row.destination_role_authorized !== 1 || row.destination_address !== row.destination_wallet_address))) {
     return json({ error: "funding_leg_destination_invalid" }, 409);
   }
   if (row.leg_kind === "final_payment" &&
@@ -2401,12 +2416,18 @@ async function reconcileFundingLegTransaction(
   );
   if (!verification.verified) {
     try {
-      await env.DB.prepare(`
-        UPDATE operation_funding_legs
-        SET status = 'ambiguous', failure_reason = ?, confirmed_slot = ?,
-            updated_at = datetime('now')
-        WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
-      `).bind(verification.reason, lookup.slot, legId, row.transaction_hash).run();
+      await env.DB.batch([
+        env.DB.prepare(`
+          UPDATE operation_funding_legs
+          SET status = 'ambiguous', failure_reason = ?, confirmed_slot = ?,
+              updated_at = datetime('now')
+          WHERE id = ? AND status = 'submitted' AND transaction_hash = ?
+        `).bind(verification.reason, lookup.slot, legId, row.transaction_hash),
+        env.DB.prepare(`
+          UPDATE business_payment_intents SET status = 'ambiguous', updated_at = datetime('now')
+          WHERE id = ? AND status IN ('submitted', 'replenishing')
+        `).bind(intentId)
+      ]);
     } catch {
       return json({ error: "funding_leg_ambiguity_record_failed" }, 409);
     }
@@ -4268,6 +4289,10 @@ async function expireReservations(env: Env): Promise<{ expired: number; skipped:
       AND o.status IN (
         'reserved', 'awaiting_conversion', 'preparing_conversion',
         'conversion_submitted', 'conversion_settled', 'conversion_settled_shortfall', 'conversion_unverified'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM business_payment_intents payment_intent
+        WHERE payment_intent.operation_id = o.id AND payment_intent.status = 'ambiguous'
       )
     ORDER BY o.created_at ASC
     LIMIT 100
