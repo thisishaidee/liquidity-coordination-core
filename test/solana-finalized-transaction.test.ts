@@ -21,6 +21,22 @@ describe("fetchFinalizedSolanaTransaction", () => {
     expect(calls).toEqual(["getSignatureStatuses"]);
   });
 
+  it("does not classify a confirmed but unfinalized execution error as failed", async () => {
+    const calls: string[] = [];
+    const fetcher: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body));
+      calls.push(body.method);
+      return response({ result: { value: [{
+        confirmationStatus: "confirmed",
+        err: { InstructionError: [0, "Custom"] },
+        slot: 11
+      }] } });
+    };
+    const result = await fetchFinalizedSolanaTransaction(ENDPOINT, SIGNATURE, fetcher);
+    expect(result.state).toBe("pending");
+    expect(calls).toEqual(["getSignatureStatuses"]);
+  });
+
   it("returns pending when the signature is not indexed", async () => {
     const fetcher: typeof fetch = async () => response({ result: { value: [null] } });
     const result = await fetchFinalizedSolanaTransaction(ENDPOINT, SIGNATURE, fetcher);
