@@ -410,7 +410,9 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     return bytes;
   }
   async function prepareWalletOwnershipChallenge(walletId,address) {
-    if(walletOwnershipChallenges.has(walletId))return walletOwnershipChallenges.get(walletId);
+    const cached=walletOwnershipChallenges.get(walletId);
+    if(cached&&Date.parse(cached.expiresAt)>Date.now()+30000)return cached;
+    walletOwnershipChallenges.delete(walletId);
     const challenge=await apiWrite("/v1/admin/wallet-ownership/challenge",{businessId:state.businessId,walletId});
     if(challenge.address!==address)throw new Error("The server challenge no longer matches this registered wallet. Refresh and try again.");
     walletOwnershipChallenges.set(walletId,challenge);
