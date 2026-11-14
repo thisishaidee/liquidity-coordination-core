@@ -1,4 +1,4 @@
-import { address, createNoopSigner } from "@solana/kit";
+import { address, createNoopSigner, getBase58Decoder } from "@solana/kit";
 import {
   AccountState,
   findAssociatedTokenPda,
@@ -183,5 +183,107 @@ export async function buildUsdcFundingTransaction(
     lastValidBlockHeight: lifetime.lastValidBlockHeight.toString(),
     estimatedFeeLamports: fee.toString(),
     requiredSigners
+  };
+}
+
+
+export type VerifySignedUsdcFundingTransactionInput = {
+  mintAddress: string;
+  sourceWalletAddress: string;
+  destinationOwnerAddress: string;
+  feePayerAddress: string;
+  amountAtoms: string;
+};
+
+export type VerifiedSignedUsdcFundingTransaction = {
+  transaction: Transaction;
+  transactionBytes: Uint8Array;
+  signature: string;
+  messageSha256: string;
+  recentBlockhash: string;
+};
+
+/**
+ * Verifies a fully signed legacy transaction against one exact USDC transfer.
+ * Rejects extra instructions, altered accounts/amount/decimals and missing or
+ * invalid signatures before the Worker is allowed to broadcast it.
+ */
+export async function verifySignedUsdcFundingTransaction(
+  transactionBytes: Uint8Array,
+  expected: VerifySignedUsdcFundingTransactionInput
+): Promise<VerifiedSignedUsdcFundingTransaction> {
+  if (!(transactionBytes instanceof Uint8Array) || transactionBytes.length < 100 ||
+      transactionBytes.length > 16_384) {
+    throw new Error("Signed transaction byte length is invalid.");
+  }
+  if (!/^[1-9][0-9]{0,18}$/.test(expected.amountAtoms) || BigInt(expected.amountAtoms) <= 0n) {
+    throw new Error("Expected USDC atom amount is invalid.");
+  }
+
+  let transaction: Transaction;
+  try {
+    transaction = Transaction.from(transactionBytes);
+  } catch {
+    throw new Error("Signed transaction could not be decoded as a legacy Solana transaction.");
+  }
+  if (transaction.feePayer?.toBase58() !== expected.feePayerAddress) {
+    throw new Error("Signed transaction fee payer does not match the registered business fee wallet.");
+  }
+  const expectedSigners = expected.feePayerAddress === expected.sourceWalletAddress
+    ? [expected.feePayerAddress]
+    : [expected.feePayerAddress, expected.sourceWalletAddress];
+  const actualSigners = transaction.signatures.map(item => item.publicKey.toBase58());
+  if (actualSigners.length !== expectedSigners.length ||
+      actualSigners.some((address, index) => address !== expectedSigners[index])) {
+    throw new Error("Signed transaction required signer set does not match the approved fee payer and source owner.");
+  }
+  if (!transaction.verifySignatures()) {
+    throw new Error("Signed transaction contains a missing or invalid required signature.");
+  }
+  if (!transaction.recentBlockhash) throw new Error("Signed transaction has no recent blockhash.");
+  if (transaction.instructions.length !== 1) {
+    throw new Error("Funding transaction must contain exactly one approved checked USDC transfer instruction.");
+  }
+
+  const [sourceAta] = await findAssociatedTokenPda({
+    mint: address(expected.mintAddress),
+    owner: address(expected.sourceWalletAddress),
+    tokenProgram: TOKEN_PROGRAM_ADDRESS
+  });
+  const [destinationAta] = await findAssociatedTokenPda({
+    mint: address(expected.mintAddress),
+    owner: address(expected.destinationOwnerAddress),
+    tokenProgram: TOKEN_PROGRAM_ADDRESS
+  });
+  const instruction = transaction.instructions[0];
+  const keys = instruction.keys;
+  const data = instruction.data;
+  if (instruction.programId.toBase58() !== TOKEN_PROGRAM_ADDRESS ||
+      keys.length !== 4 ||
+      keys[0].pubkey.toBase58() !== sourceAta ||
+      keys[1].pubkey.toBase58() !== expected.mintAddress ||
+      keys[2].pubkey.toBase58() !== destinationAta ||
+      keys[3].pubkey.toBase58() !== expected.sourceWalletAddress ||
+      keys[0].isSigner || !keys[0].isWritable ||
+      keys[1].isSigner || keys[1].isWritable ||
+      keys[2].isSigner || !keys[2].isWritable ||
+      !keys[3].isSigner || keys[3].isWritable ||
+      data.length !== 10 || data[0] !== 12 || data[9] !== 6) {
+    throw new Error("Signed transaction instructions do not match the approved USDC transfer accounts or decimals.");
+  }
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  if (view.getBigUint64(1, true) !== BigInt(expected.amountAtoms)) {
+    throw new Error("Signed transaction amount does not match the reserved USDC amount.");
+  }
+  const firstSignature = transaction.signatures[0]?.signature;
+  if (!firstSignature) throw new Error("Signed transaction fee-payer signature is missing.");
+  const messageBytes = transaction.serializeMessage();
+  const serialized = transaction.serialize({ requireAllSignatures: true, verifySignatures: true });
+  return {
+    transaction,
+    transactionBytes: new Uint8Array(serialized),
+    signature: getBase58Decoder().decode(firstSignature),
+    messageSha256: await sha256(messageBytes),
+    recentBlockhash: transaction.recentBlockhash
   };
 }
