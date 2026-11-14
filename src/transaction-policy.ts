@@ -30,6 +30,7 @@ export type PaymentIntent = {
   allowPartialPayment: boolean;
   slippageBps?: number | null;
   networkFeeLamports: string;
+  networkFeePayerWalletId: string;
 };
 
 export type PaymentPolicy = {
@@ -39,6 +40,7 @@ export type PaymentPolicy = {
   allowedConversionMints: string[];
   maxTransactionAtoms: string;
   maxNetworkFeeLamports: string;
+  allowedFeePayerWalletIds: string[];
   maxDailyAtoms: string;
   committedTodayAtoms: string;
   maxBalanceAgeSeconds: number;
@@ -53,6 +55,7 @@ export type PaymentPolicyDecision =
       eligible: true;
       action: "direct_payment" | "replenish_then_pay";
       paymentWalletId: string;
+      feePayerWalletId: string;
       paymentAmountAtoms: bigint;
       paymentWalletAvailableAtoms: bigint;
       replenishmentPlan: ReplenishmentPlan;
@@ -63,6 +66,7 @@ export type PaymentPolicyDecision =
       eligible: true;
       action: "conversion_required";
       paymentWalletId: string;
+      feePayerWalletId: string;
       requestedAtoms: bigint;
       policyPermittedAtoms: bigint;
       unpaidByPolicyAtoms: bigint;
@@ -77,6 +81,7 @@ export type PaymentPolicyDecision =
       eligible: true;
       action: "partial_payment";
       paymentWalletId: string;
+      feePayerWalletId: string;
       requestedAtoms: bigint;
       paymentAmountAtoms: bigint;
       unpaidAtoms: bigint;
@@ -208,12 +213,34 @@ export function evaluatePaymentIntentPolicy(
   const policyAmountAtoms = minBigInt(requestedAtoms, dailyRemaining);
   const paymentWallets = wallets.filter(wallet =>
     wallet.businessId === policy.businessId && wallet.scope === "business" &&
-    wallet.status === "active" && wallet.role === "payment" && wallet.enabled
+    wallet.status === "active" && wallet.role === "payment" && wallet.enabled &&
+    wallet.mint === intent.mint
   );
   if (paymentWallets.length !== 1) {
     return reject("payment_wallet_configuration_invalid", "Exactly one active business payment wallet must be assigned.");
   }
   const paymentWallet = paymentWallets[0];
+  if (!intent.networkFeePayerWalletId ||
+      !Array.isArray(policy.allowedFeePayerWalletIds) ||
+      !policy.allowedFeePayerWalletIds.includes(intent.networkFeePayerWalletId)) {
+    return reject("network_fee_payer_not_allowed", "The network fee payer is not on the business allowlist.");
+  }
+  const feePayerWallet = wallets.find(wallet =>
+    wallet.walletId === intent.networkFeePayerWalletId &&
+    wallet.businessId === policy.businessId && wallet.scope === "business" &&
+    wallet.status === "active" && wallet.enabled &&
+    (wallet.role === "payment" || wallet.role === "operating") &&
+    wallet.ownershipVerifiedAt && wallet.mint === "SOL" &&
+    isFresh(wallet.observedAt, nowMs, policy.maxBalanceAgeSeconds)
+  );
+  if (!feePayerWallet) return reject("network_fee_wallet_unavailable", "The approved network fee wallet is missing, unverified, inactive or stale.");
+  try {
+    if (spendableAtoms(feePayerWallet) < networkFeeLamports) {
+      return reject("network_fee_balance_insufficient", "The approved network fee wallet does not have enough spendable SOL.");
+    }
+  } catch (error) {
+    return reject("network_fee_balance_invalid", error instanceof Error ? error.message : String(error));
+  }
   if (!paymentWallet.ownershipVerifiedAt) {
     return reject("payment_wallet_unverified", "The designated payment wallet has not proved address control.");
   }
@@ -296,6 +323,7 @@ export function evaluatePaymentIntentPolicy(
       eligible: true,
       action: replenishmentPlan.shortfallAtoms === 0n ? "direct_payment" : "replenish_then_pay",
       paymentWalletId: paymentWallet.walletId,
+      feePayerWalletId: feePayerWallet.walletId,
       paymentAmountAtoms: policyAmountAtoms,
       paymentWalletAvailableAtoms: paymentAvailable,
       replenishmentPlan,
@@ -348,6 +376,7 @@ export function evaluatePaymentIntentPolicy(
       eligible: true,
       action: "conversion_required",
       paymentWalletId: paymentWallet.walletId,
+      feePayerWalletId: feePayerWallet.walletId,
       requestedAtoms,
       policyPermittedAtoms: policyAmountAtoms,
       unpaidByPolicyAtoms: requestedAtoms - policyAmountAtoms,
@@ -369,6 +398,7 @@ export function evaluatePaymentIntentPolicy(
         eligible: true,
         action: "partial_payment",
         paymentWalletId: paymentWallet.walletId,
+        feePayerWalletId: feePayerWallet.walletId,
         requestedAtoms,
         paymentAmountAtoms: partialAtoms,
         unpaidAtoms: requestedAtoms - partialAtoms,
