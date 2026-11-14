@@ -478,16 +478,50 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
     return bytes;
   }
+  function extractLegacyMessageBytes(transactionBytes) {
+    let offset = 0;
+    let signatureCount = 0;
+    let shift = 0;
+    let complete = false;
+    for (let index = 0; index < 3; index++) {
+      if (offset >= transactionBytes.length) throw new Error("Wallet returned a truncated Solana transaction.");
+      const byte = transactionBytes[offset++];
+      signatureCount += (byte & 0x7f) * Math.pow(2, shift);
+      if ((byte & 0x80) === 0) { complete = true; break; }
+      shift += 7;
+    }
+    if (!complete || !Number.isSafeInteger(signatureCount) || signatureCount < 1 || signatureCount > 64) {
+      throw new Error("Wallet returned an invalid legacy transaction signature header.");
+    }
+    const messageOffset = offset + signatureCount * 64;
+    if (messageOffset >= transactionBytes.length) throw new Error("Wallet returned a transaction without a complete message.");
+    return transactionBytes.subarray(messageOffset);
+  }
+  async function sha256Hex(bytes) {
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    return Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2,"0")).join("");
+  }
   async function signFundingTransaction(prepared) {
     let transaction = base64ToBytes(prepared.transactionBase64);
+    if (await sha256Hex(extractLegacyMessageBytes(transaction)) !== prepared.messageSha256) {
+      throw new Error("The unsigned transaction does not match the Worker-prepared message digest.");
+    }
+    const connectedAccountsByWallet = new Map();
     for (const signerAddress of prepared.requiredSigners || []) {
       let signedByWallet = false;
       for (const wallet of standardSolanaWallets) {
         const connect = wallet.features["standard:connect"];
         const sign = wallet.features["solana:signTransaction"];
         if (typeof connect?.connect !== "function" || typeof sign?.signTransaction !== "function") continue;
-        const connected = await connect.connect();
-        const accounts = connected?.accounts || wallet.accounts || [];
+        let accounts = connectedAccountsByWallet.get(wallet);
+        if (!accounts) {
+          accounts = wallet.accounts || [];
+          if (!accounts.some(item => item.address === signerAddress)) {
+            const connected = await connect.connect();
+            accounts = connected?.accounts?.length ? connected.accounts : wallet.accounts || [];
+          }
+          connectedAccountsByWallet.set(wallet, accounts);
+        }
         const account = accounts.find(item => item.address === signerAddress && supportsSolanaMainnet(item.chains) &&
           Array.isArray(item.features) && item.features.includes("solana:signTransaction"));
         if (!account) continue;
@@ -496,6 +530,9 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
         const signedTransaction = output?.[0]?.signedTransaction;
         if (!(signedTransaction instanceof Uint8Array) || signedTransaction.length < 100 || signedTransaction.length > 16384) {
           throw new Error("The connected wallet returned an invalid signed transaction.");
+        }
+        if (await sha256Hex(extractLegacyMessageBytes(signedTransaction)) !== prepared.messageSha256) {
+          throw new Error("The wallet changed the prepared transaction message. Signing was stopped.");
         }
         transaction = signedTransaction;
         signedByWallet = true;
