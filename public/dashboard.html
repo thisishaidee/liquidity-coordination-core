@@ -120,7 +120,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
         <div class="panel" style="margin-top:14px"><div class="panel-head"><div><div class="panel-title">x402 payment reserve</div><div class="panel-subtitle">purpose=api_payment · never included in operating totals or forecasts</div></div></div><div id="paymentWallets" class="grid wallet-grid"><div class="empty">Loading payment reserve…</div></div></div>
         <section class="panel" id="x402DemoPanel" style="margin-top:14px" aria-labelledby="x402DemoTitle">
           <div class="panel-head"><div><div class="panel-title" id="x402DemoTitle">Swap.io x402 proof run</div><div class="panel-subtitle">One real paid quote request · no swap is executed</div></div></div>
-          <p class="wallet-role-help">NERITH requests a SOL-to-USDC quote. Swap.io returns the exact USDC fee in a 402 challenge. Your dedicated API fee wallet signs that micropayment; the quote and Solscan receipt are returned after settlement.</p>
+          <p class="wallet-role-help">NERITH requests a SOL-to-USDC quote. Swap.io returns the exact USDC fee in a 402 challenge. Use a separate wallet address for the x402 fee reserve and keep at least 0.01 USDC there. The operating wallet needs enough SOL for the quote size; neither balance is spent by requesting the quote.</p>
           <div class="grid content-grid">
             <label class="wallet-purpose-label">Operating wallet<select id="x402OperatingWallet" class="input"></select></label>
             <label class="wallet-purpose-label">x402 fee wallet<select id="x402PaymentWallet" class="input"></select></label>
