@@ -238,7 +238,7 @@ export async function verifySignedUsdcFundingTransaction(
     throw new Error("Signed transaction required signer set does not match the approved fee payer and source owner.");
   }
   let signaturesValid = false;
-  try { signaturesValid = transaction.verifySignatures(); } catch { signaturesValid = false; }
+  try { signaturesValid = await transaction.verifySignatures(); } catch { signaturesValid = false; }
   if (!signaturesValid) {
     throw new Error("Signed transaction contains a missing or invalid required signature.");
   }
