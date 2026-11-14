@@ -778,6 +778,9 @@ describe("browser page script syntax", () => {
          expect(html).toContain('if(preferredWallet==="jupiter"){');
          expect(html).toContain('return await window.NERITHJUPITER.signMessage(message,address);');
          expect(html).toContain('if(preferredWallet==="okx"){');
+         expect(html).toContain("const provider=window.okxwallet?.solana;");
+         expect(html).toContain('provider.signMessage(new TextEncoder().encode(message),"utf8")');
+         expect(html).toContain("The connected OKX account does not match this registered wallet.");
          expect(html).toContain("verifyWalletOwnershipWithWallet(pending.walletId,pending.address,pending.button,wallet)");
         expect(html).toContain("if(window.NERITHJUPITER.connected&&window.NERITHJUPITER.getAddress?.())return window.NERITHJUPITER.getAddress();");
         expect(html).toContain("const existingWallet=state.wallets.find(wallet=>");
