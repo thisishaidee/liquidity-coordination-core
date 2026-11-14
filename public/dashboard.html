@@ -320,7 +320,11 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     ];
     return candidates.find(provider=>provider&&typeof provider.connect==="function"&&typeof provider.signMessage==="function")||null;
   }
-  async function connectSolanaWallet() {
+  async function connectSolanaWallet(preferredWallet="") {
+    if(preferredWallet==="okx"){
+      if(!window.NERITHOKX?.connect)throw new Error("The OKX Connect module did not load. Refresh and try again.");
+      return await window.NERITHOKX.connect();
+    }
     for(const wallet of standardSolanaWallets){
       const connectFeature=wallet.features["standard:connect"];
       if(typeof connectFeature?.connect!=="function")continue;
@@ -336,6 +340,9 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     return address;
   }
   async function signOwnershipChallenge(address,message) {
+    if(window.NERITHOKX?.signMessage&&window.NERITHOKX?.connectedAddress===address){
+      return await window.NERITHOKX.signMessage(message,address);
+    }
     for(const wallet of standardSolanaWallets){
       const connectFeature=wallet.features["standard:connect"];
       const signMessageFeature=wallet.features["solana:signMessage"];
@@ -721,13 +728,13 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   });
 
 
-  async function beginBusinessWalletConnection(button) {
+  async function beginBusinessWalletConnection(button,preferredWallet="") {
     const status=$("walletConnectStatus");
     if(!["owner","admin"].includes(state.role)){showError("Only workspace owners and admins can register business wallets.");return;}
     button.disabled=true;status.textContent="Connecting to your Solana wallet…";
     let registeredWalletId="";
     try{
-      const address=await connectSolanaWallet();
+      const address=await connectSolanaWallet(preferredWallet);
       const purpose=$("walletPurpose").value;
       status.textContent="Registering "+(purpose==="api_payment"?"the isolated x402 fee wallet":"the operating wallet")+"…";
       const registered=await apiWrite("/v1/admin/wallets",{businessId:state.businessId,network:"solana",address,scope:"business",purpose});
@@ -769,14 +776,9 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       return;
     }
     if(wallet==="okx"){
-      const provider=window.okxwallet?.solana;
-      if(provider&&typeof provider.connect==="function"&&typeof provider.signMessage==="function"){
-        $("walletChooser").hidden=true;
-        $("connectBusinessWallet").setAttribute("aria-expanded","false");
-        await beginBusinessWalletConnection($("connectBusinessWallet"));
-      }else{
-        $("walletChooserHelp").textContent="Open OKX Wallet, go to its DApp browser, and open "+currentUrl+". Then return to Liquidity and choose Wallet in this browser. OKX’s mobile app handoff requires its official Connect SDK; this browser-only fallback does not pretend the wallet is connected.";
-      }
+      $("walletChooser").hidden=true;
+      $("connectBusinessWallet").setAttribute("aria-expanded","false");
+      await beginBusinessWalletConnection($("connectBusinessWallet"),"okx");
       return;
     }
     $("walletChooser").hidden=true;
