@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - run: npm install
       - run: npm run typecheck
       - run: npm test
@@ -40,7 +40,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - name: Capture an unpaid Swap.io Hermes quote challenge
         run: node scripts/test-hermes-402.mjs
       - name: Upload raw Hermes response and validation
@@ -62,7 +62,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - name: Download the live Hermes 402 evidence from Track 1
         uses: actions/download-artifact@v4
         with:
@@ -94,7 +94,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - run: npm install
       - name: Apply pending production D1 migrations
         run: npx wrangler d1 migrations apply liquidity-coordination --remote
