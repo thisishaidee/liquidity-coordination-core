@@ -194,6 +194,8 @@ try {
   const apiKeyHash = createHash("sha256").update(apiKey).digest("hex");
   const operatingAddress = "BPz2u6eoWLervxEqfpsMCVmKk7h6fEVsd7L5rvEibMfD";
   const paymentAddress = "2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4";
+  const adminSessionToken = randomBytes(32).toString("hex");
+  const adminSessionHash = createHash("sha256").update(adminSessionToken).digest("hex");
 
   const seedSql = `
     PRAGMA foreign_keys = ON;
