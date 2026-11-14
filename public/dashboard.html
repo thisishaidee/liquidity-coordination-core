@@ -463,6 +463,42 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       });
     }
   }
+  function renderX402DemoOptions() {
+    const operating = state.wallets.filter(wallet =>
+      wallet.status === "active" && wallet.scope === "business" &&
+      wallet.purpose === "operating" && Boolean(wallet.ownershipVerifiedAt) &&
+      (wallet.balances || []).some(balance => balance.token === "SOL" && balance.fresh)
+    );
+    const payment = state.wallets.filter(wallet => {
+      if (wallet.status !== "active" || wallet.scope !== "business" ||
+          wallet.purpose !== "api_payment" || !wallet.ownershipVerifiedAt) return false;
+      const balance = (wallet.balances || []).find(item => item.token === "USDC" && item.fresh);
+      return Boolean(balance && parseDecimalAtoms(balance.available, 6) >= 10000n);
+    });
+    const populate = (id, wallets, label) => {
+      const select = $(id);
+      if (!select) return;
+      const previous = select.value;
+      select.innerHTML = wallets.length
+        ? wallets.map(wallet => '<option value="' + escapeHtml(wallet.address) + '">' +
+            escapeHtml(wallet.address.slice(0, 5) + "…" + wallet.address.slice(-5)) + '</option>').join("")
+        : '<option value="">' + escapeHtml(label) + '</option>';
+      if (wallets.some(wallet => wallet.address === previous)) select.value = previous;
+    };
+    populate("x402OperatingWallet", operating, "No verified operating wallet with a fresh SOL balance");
+    populate("x402PaymentWallet", payment, "No verified x402 fee wallet with at least 0.01 USDC");
+    const ready = operating.length > 0 && payment.length > 0 && ["owner", "admin"].includes(state.role);
+    const button = $("x402GetQuote");
+    if (button) button.disabled = !ready;
+    const status = $("x402DemoStatus");
+    if (status) {
+      if (!["owner", "admin"].includes(state.role)) status.textContent = "Only workspace owners and admins can run a paid proof request.";
+      else if (!operating.length) status.textContent = "Verify a business operating wallet and refresh its SOL balance first.";
+      else if (!payment.length) status.textContent = "Register a separate x402 API fee reserve wallet, verify it, and ensure it has at least 0.01 USDC with a fresh balance.";
+      else status.textContent = "Ready. The first request is unpaid; no USDC is spent until you press the payment button.";
+    }
+  }
+
   function renderLiquidity() {
     const connectPanel=$("walletConnectPanel");
     if(connectPanel)connectPanel.hidden=!(["owner","admin"].includes(state.role));
