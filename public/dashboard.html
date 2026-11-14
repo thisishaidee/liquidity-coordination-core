@@ -315,7 +315,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     if(state.loadErrors.WalletRoles){target.innerHTML='<div class="empty">Wallet role data could not be loaded. Refresh to try again.</div>';return;}
     const wallets=state.wallets.filter(w=>w.scope==="business"&&w.status==="active");
     if(!wallets.length){target.innerHTML='<div class="empty">Register an active business wallet first. Agent-scoped wallets cannot be assigned business treasury roles.</div>';return;}
-    const canManage=state.role==="admin";
+    const canManage=["owner","admin"].includes(state.role);
     target.innerHTML=wallets.map(w=>{
       const roles=state.walletRoles.filter(r=>r.walletId===w.walletId);
       const roleMarkup=roles.length?'<div class="wallet-role-current">'+roles.map(r=>{
@@ -450,7 +450,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     const form=event.target.closest("[data-wallet-role-form]");
     if(!form)return;
     event.preventDefault();
-    if(state.role!=="admin"){showError("Only workspace admins can change wallet roles.");return;}
+    if(!["owner","admin"].includes(state.role)){showError("Only workspace owners and admins can change wallet roles.");return;}
     const role=form.elements.role.value;
     const minimumText=form.elements.minimumRemaining.value.trim()||"0";
     const maximumText=form.elements.maximumTransfer.value.trim();
@@ -471,7 +471,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   document.addEventListener("click",async event=>{
     const button=event.target.closest("[data-verify-wallet]");
     if(!button)return;
-    if(state.role!=="admin"){showError("Only workspace admins can verify wallet ownership.");return;}
+    if(!["owner","admin"].includes(state.role)){showError("Only workspace owners and admins can verify wallet ownership.");return;}
     try{await verifyWalletOwnershipWithWallet(button.dataset.verifyWallet,button.dataset.address,button);}
     catch(error){showError("Wallet ownership verification failed: "+String(error.message||error));}
   });
