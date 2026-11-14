@@ -72,13 +72,13 @@ If any conditional statement changes zero rows, treat it as a concurrency/state 
 
 - The plan reserves a checked aggregate SOL budget for every reserve-replenishment leg plus the final-payment leg before any signature is requested.
 - Each fee row binds the operation, funding leg, verified fee-payer wallet and per-transaction maximum. The database guards identity, transaction signature, status transitions, finalized fee evidence and reconciliation immutability.
-- Submission binds the ledger row to the same transaction signature as its funding leg. Reconciliation verifies the finalized transaction's first account key and actual `meta.fee`, including finalized failed transactions.
+- Submission binds the ledger row to the same transaction signature as its funding leg. Reconciliation verifies the finalized transaction's first account key is the registered fee payer and that the parsed RPC account-key metadata explicitly marks that fee payer as a signer; it also verifies actual `meta.fee`, including finalized failed transactions. The source-token owner must separately appear as a required signer and be verified by the transfer verifier.
 - Actual fees are reconciled per leg and cumulatively against the aggregate budget. The aggregate fee hold is retained while any row is reserved, submitted or ambiguous; only terminal rows permit unused budget release.
 - A finalized failed reserve transfer still records its actual network fee even though its USDC transfer failed.
 - Pre-migration submitted/replenishing intents with submitted legs lacking ledger rows are marked ambiguous during migration. Their existing holds are deliberately preserved for manual reconciliation rather than inventing fee evidence.
 - Conversion remains excluded until its separate transaction/fee accounting and swap settlement verifier exist.
 
-The latest CI run passed typecheck, unit tests, Wrangler dry-run, the unpaid Hermes 402 evidence check, and the isolated local Worker/D1 integration suite. These checks validate the candidate implementation, not a funded-wallet transaction or a live paid x402 swap. Do not enable real signing, merge, or deploy until the remaining database failure/replay cases and wallet handoff tests are complete.
+An earlier candidate commit passed typecheck, unit tests, Wrangler dry-run, the unpaid Hermes 402 evidence check, and the isolated local Worker/D1 integration suite. Subsequent fee-payer signature-proof and cross-platform multi-signer changes are awaiting a fresh, non-cancelled CI run. These checks validate the candidate implementation, not a funded-wallet transaction or a live paid x402 swap. Do not enable real signing, merge, or deploy until the current head passes CI and the remaining database failure/replay cases and wallet handoff tests are complete.
 
 ## Balance observations
 
