@@ -441,9 +441,14 @@ try {
   const businessPaymentIntentId = "bpi_" + randomBytes(16).toString("hex");
   const duplicatePaymentIntentId = "bpi_" + randomBytes(16).toString("hex");
   const duplicatePaymentOperationId = "op_" + randomBytes(16).toString("hex");
+  const businessPaymentIntentOperationId = "op_" + randomBytes(16).toString("hex");
   queryD1(`INSERT INTO business_payment_policies
     (business_id, allowed_mints, allowed_destinations, allowed_conversion_mints, max_transaction_atoms, max_network_fee_lamports, allowed_fee_payer_wallet_ids, max_daily_atoms, max_balance_age_seconds, max_intent_lifetime_seconds, max_slippage_bps, allow_conversion, allow_partial_payment)
     VALUES ('${businessId}', json_array('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'), json_array('7dN4k3Jm2pQx8sW6vR1aT5uH9cF2eG4iL7oP6bK8mZq'), json_array(), '100000000', '5000', json_array('${managedPaymentWalletId}'), '500000000', 300, 900, 50, 0, 0)`, "insertBusinessPaymentPolicy");
+  queryD1(`INSERT INTO operations
+    (id, business_id, agent_id, task_id, network, token, amount_atoms, purpose, status, action, available_atoms, shortfall_atoms)
+    VALUES ('${businessPaymentIntentOperationId}', '${businessId}', '${agentId}', 'business-payment-intent-fixture', 'solana', 'USDC', '1000000', 'payment', 'policy_checked', 'direct_payment', '1000000', '0')`,
+    "insertBusinessPaymentIntentOperation");
   queryD1(`INSERT INTO business_payment_intents
     (id, business_id, operation_id, idempotency_key, destination, mint, requested_atoms, payment_atoms,
      fee_payer_wallet_id, network_fee_lamports, action, status, policy_version, policy_snapshot, expires_at)
@@ -455,7 +460,7 @@ try {
 
   queryD1(`INSERT INTO business_payment_intents
     (id, business_id, operation_id, idempotency_key, destination, mint, requested_atoms, payment_atoms, fee_payer_wallet_id, network_fee_lamports, action, status, policy_version, policy_snapshot, expires_at)
-    VALUES ('${businessPaymentIntentId}', '${businessId}', '${managedGateOperationId}', 'business-idem-12345678', '7dN4k3Jm2pQx8sW6vR1aT5uH9cF2eG4iL7oP6bK8mZq', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '1000000', '1000000', '${managedPaymentWalletId}', '5000', 'replenish_then_pay', 'policy_checked', 1, '{}', datetime('now', '+15 minutes'))`, "insertBusinessPaymentIntent");
+    VALUES ('${businessPaymentIntentId}', '${businessId}', '${businessPaymentIntentOperationId}', 'business-idem-12345678', '7dN4k3Jm2pQx8sW6vR1aT5uH9cF2eG4iL7oP6bK8mZq', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '1000000', '1000000', '${managedPaymentWalletId}', '5000', 'replenish_then_pay', 'policy_checked', 1, '{}', datetime('now', '+15 minutes'))`, "insertBusinessPaymentIntent");
   queryD1(`INSERT INTO operations
     (id, business_id, agent_id, task_id, network, token, amount_atoms, purpose, status, action, available_atoms, shortfall_atoms)
     VALUES ('${duplicatePaymentOperationId}', '${businessId}', '${agentId}', 'duplicate-business-payment-intent', 'solana', 'USDC', '1000000', 'payment', 'policy_checked', 'direct_payment', '1000000', '0')`, "insertDuplicateIntentOperation");
