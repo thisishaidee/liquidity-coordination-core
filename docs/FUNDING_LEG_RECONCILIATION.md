@@ -66,6 +66,22 @@ After RPC verification succeeds, perform all database state changes in one D1 ba
 
 If any conditional statement changes zero rows, treat it as a concurrency/state conflict and do not return success. D1 batch atomicity must ensure partial state changes roll back together. Add a retry test proving that repeated reconciliation cannot consume a reservation twice or create duplicate final-payment holds.
 
+## Network-fee accounting release gate
+
+**Not yet implemented for multi-transaction intents.** The current intent has one SOL fee reservation and reconciliation verifies the fee only for the final-payment leg. Reserve-replenishment transfers are separate Solana transactions, so their network fees can be charged before the final payment. A single final-payment-only reconciliation is not a complete fee budget.
+
+Before signing or execution is enabled, make the fee policy explicit and enforce it per transaction:
+
+- Treat the business policy's `max_network_fee_lamports` as a maximum for each transaction, not as an unqualified one-transaction total.
+- Derive the maximum transaction count from the prepared plan (every reserve-replenishment leg plus the final-payment leg). Reserve a checked aggregate SOL budget for that count before any signature is requested; reject overflow and insufficient fee-payer balance.
+- Persist fee payer identity, actual fee and reconciliation state per submitted funding leg. Verify every finalized transaction's first account key and `meta.fee`, including finalized failed transactions, because failed transactions can still consume fees.
+- Reconcile actual fees cumulatively against the aggregate budget. Never release the unused fee reserve while any leg is submitted, pending finality or ambiguous. An ambiguous leg retains the remaining fee hold for owner review.
+- Once every fee-paying leg is finalized, release only the unused budget and mark the fee ledger complete. Make this transition atomic and idempotent.
+- A reserve transfer that fails at finalized commitment must still settle its actual network fee even though its USDC reservation is released and the payment intent fails.
+- Conversion remains excluded until its separate transaction/fee accounting and swap settlement verifier exist.
+
+Until these invariants, migration constraints, and failure/replay tests are implemented, the payment-preparation flow is not safe to enable for real transaction signing.
+
 ## Balance observations
 
 The existing `syncSolanaBalances` helper uses `confirmed` commitment for general dashboard balance refresh. It is not sufficient as settlement proof. The final-payment preparation route uses a separate finalized token-account lookup, records the balance snapshot with `solana_rpc_finalized`, and never resets `reserved_atoms` while refreshing `confirmed_atoms`.
