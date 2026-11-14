@@ -35,12 +35,12 @@ describe("Solana wallet message verification", () => {
   });
 
   it("rejects malformed signatures before cryptographic verification", () => {
-    expect(() => decodeSolanaSignature("not-a-signature")).toThrow("invalid_signature_encoding");
+    expect(() => decodeSolanaSignature("not*signature")).toThrow("invalid_signature_encoding");
     expect(() => decodeSolanaSignature("AQ")).toThrow("invalid_signature_length");
   });
 
   it("verifies a valid Ed25519 message signature against the registered address", async () => {
-    const generateEd25519KeyPair = crypto.subtle.generateKey as unknown as (algorithm: { name: string }, extractable: boolean, usages: string[]) => Promise<CryptoKeyPair>;
+    const generateEd25519KeyPair = crypto.subtle.generateKey.bind(crypto.subtle) as unknown as (algorithm: { name: string }, extractable: boolean, usages: string[]) => Promise<CryptoKeyPair>;
     const keyPair = await generateEd25519KeyPair({ name: "Ed25519" }, true, ["sign", "verify"]);
     const exportedPublicKey = await crypto.subtle.exportKey("raw", keyPair.publicKey);
     const publicKey = new Uint8Array(exportedPublicKey as ArrayBuffer);
