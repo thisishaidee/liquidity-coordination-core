@@ -855,6 +855,130 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     }finally{button.disabled=false;}
   }
 
+  function requestX402Demo(body, paymentHeader) {
+    const headers = { accept: "application/json", "content-type": "application/json" };
+    if (paymentHeader) headers["X-PAYMENT"] = paymentHeader;
+    return fetch("/v1/admin/x402/demo/quote", {
+      method: "POST",
+      credentials: "same-origin",
+      cache: "no-store",
+      headers,
+      body: JSON.stringify(body)
+    }).then(async response => {
+      const text = await response.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = { error: "invalid_response", message: text.slice(0, 300) }; }
+      return {
+        status: response.status,
+        data,
+        receipt: response.headers.get("x-payment-response") || response.headers.get("payment-response")
+      };
+    });
+  }
+
+  $("x402SyncBalances")?.addEventListener("click", async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    $("x402DemoStatus").textContent = "Refreshing confirmed Solana balances…";
+    try {
+      const result = await apiWrite("/v1/admin/balances/sync", { businessId: state.businessId });
+      $("x402DemoStatus").textContent = result.message || "Balance sync completed.";
+      await loadAll();
+    } catch (error) {
+      $("x402DemoStatus").textContent = "Balance sync failed: " + String(error.message || error);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  $("x402GetQuote")?.addEventListener("click", async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    $("x402DemoPayment").hidden = true;
+    $("x402DemoResult").innerHTML = "";
+    pendingX402Demo = null;
+    const body = {
+      businessId: state.businessId,
+      operatingWalletAddress: $("x402OperatingWallet").value,
+      paymentWalletAddress: $("x402PaymentWallet").value,
+      sourceAmount: $("x402SourceAmount").value.trim()
+    };
+    try {
+      $("x402DemoStatus").textContent = "Requesting the unpaid Swap.io quote challenge…";
+      const result = await requestX402Demo(body, null);
+      if (result.status !== 402 || !Array.isArray(result.data.accepts)) {
+        throw new Error(result.data.message || result.data.error || ("Expected HTTP 402, received " + result.status));
+      }
+      const requirement = result.data.accepts.find(item =>
+        item && item.scheme === "exact" && item.network === "solana" &&
+        item.asset === "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+      );
+      if (!requirement || !/^\d{1,18}$/.test(String(requirement.maxAmountRequired || ""))) {
+        throw new Error("Swap.io did not return a valid exact Solana USDC payment requirement.");
+      }
+      const amount = BigInt(requirement.maxAmountRequired);
+      if (amount <= 0n || amount > 10000n) {
+        throw new Error("The quoted fee exceeds NERITH's 0.01 USDC per-payment safety cap. No payment was signed.");
+      }
+      pendingX402Demo = { body, requirement };
+      $("x402DemoFee").textContent = "Payment required: " + formatAtoms(amount, 6, 6) + " USDC";
+      $("x402DemoFeeNote").textContent = "This pays for the quote API call only. It does not execute a swap or move SOL.";
+      $("x402DemoPayment").hidden = false;
+      $("x402DemoStatus").textContent = "HTTP 402 received and the exact payment challenge was stored by NERITH. Review the fee, then choose whether to sign.";
+    } catch (error) {
+      $("x402DemoStatus").textContent = "Quote challenge failed: " + String(error.message || error);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  $("x402PayQuote")?.addEventListener("click", async event => {
+    const button = event.currentTarget;
+    const pending = pendingX402Demo;
+    if (!pending) return;
+    button.disabled = true;
+    try {
+      const paymentAddress = pending.body.paymentWalletAddress;
+      const connector = window.NERITHJUPITER;
+      if (!connector || typeof connector.createX402PaymentHeader !== "function") {
+        throw new Error("Connect Jupiter Mobile to the selected x402 fee wallet before signing.");
+      }
+      if (connector.getAddress() !== paymentAddress) {
+        throw new Error("Jupiter Mobile is connected to a different account. Reconnect using the selected x402 fee wallet.");
+      }
+      $("x402DemoStatus").textContent = "Opening Jupiter Mobile to approve the exact USDC API fee…";
+      const paymentHeader = await connector.createX402PaymentHeader(pending.requirement, paymentAddress);
+      $("x402DemoStatus").textContent = "Payment signed. Sending the paid request to Swap.io through NERITH…";
+      const result = await requestX402Demo(pending.body, paymentHeader);
+      if (result.status !== 200 || !Array.isArray(result.data.quotes)) {
+        throw new Error(result.data.message || result.data.error || ("Paid quote request returned HTTP " + result.status));
+      }
+      if (!result.receipt) throw new Error("Swap.io returned quotes without a settlement receipt. NERITH will not mark the call as paid.");
+      const receipt = JSON.parse(atob(result.receipt));
+      if (receipt.success !== true || typeof receipt.transaction !== "string" ||
+          !/^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(receipt.transaction)) {
+        throw new Error("The Swap.io settlement receipt is invalid.");
+      }
+      const providers = result.data.quotes.slice(0, 3).map((quote, index) => {
+        const provider = typeof quote.provider === "string" ? quote.provider : quote.provider?.key || "Route " + (index + 1);
+        const amount = quote.output?.amount ? formatAtoms(BigInt(quote.output.amount), 6, 2) + " USDC" : "Quote returned";
+        return '<div class="balance-row"><strong>' + escapeHtml(provider) + '</strong><span>' + escapeHtml(amount) + '</span></div>';
+      }).join("");
+      $("x402DemoResult").innerHTML = '<div class="note"><strong>Paid call verified</strong><p>' +
+        escapeHtml(String(result.data.quotes.length)) + ' quote route(s) returned by Swap.io.</p>' +
+        providers +
+        '<p><a href="https://solscan.io/tx/' + encodeURIComponent(receipt.transaction) + '" target="_blank" rel="noopener noreferrer">View x402 USDC settlement on Solscan</a></p></div>';
+      $("x402DemoStatus").textContent = "Success. The quote was returned and NERITH verified the on-chain x402 settlement receipt.";
+      $("x402DemoPayment").hidden = true;
+      pendingX402Demo = null;
+      await loadAll();
+    } catch (error) {
+      $("x402DemoStatus").textContent = "Paid quote did not complete: " + String(error.message || error);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
   $("connectBusinessWallet")?.addEventListener("click",()=>{
     const chooser=$("walletChooser");
     const open=chooser.hidden;
