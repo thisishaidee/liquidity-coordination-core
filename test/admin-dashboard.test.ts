@@ -717,7 +717,8 @@ describe("browser page script syntax", () => {
     const jupiterJs = await jupiterResponse.text();
     expect(jupiterJs).toContain("NERITHJUPITER");
     expect(jupiterJs).toContain("13a7a3c0065f86dab70a544edc8ed07d");
-    expect(jupiterJs).toContain("createX402PaymentHeader");
+    expect(jupiterJs).toContain("prepareX402Payment");
+    expect(jupiterJs).toContain("signPreparedX402Payment");
     expect(jupiterJs).toContain("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
     expect(jupiterJs).toContain("The active Jupiter Mobile session does not match the registered x402 payment wallet.");
     expect(jupiterJs).toContain("The x402 payment wallet must be distinct from Swap.io recipient and facilitator fee payer.");
@@ -754,7 +755,8 @@ describe("browser page script syntax", () => {
         expect(html).toContain('src="/assets/jupiter-mobile-connector.js"');
         expect(html).toContain("window.NERITHJUPITER?.connect");
         expect(html).toContain("window.NERITHJUPITER.signMessage");
-        expect(html).toContain("createX402PaymentHeader");
+        expect(html).toContain("prepareX402Payment");
+        expect(html).toContain("signPreparedX402Payment");
         expect(html).toContain('id="x402DemoPanel"');
         expect(html).toContain('id="x402SyncBalances"');
         expect(html).toContain('id="x402GetQuote"');
