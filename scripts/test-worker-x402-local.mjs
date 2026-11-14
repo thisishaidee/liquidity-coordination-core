@@ -82,8 +82,8 @@ try {
   const migrationFiles = (await readdir("migrations"))
     .filter(file => /^\d{4}_[a-z0-9_-]+\.sql$/i.test(file))
     .sort();
-  if (migrationFiles.length !== 28) {
-    throw new Error("Expected 28 ordered D1 migration files; found " + migrationFiles.length);
+  if (migrationFiles.length !== 29) {
+    throw new Error("Expected 29 ordered D1 migration files; found " + migrationFiles.length);
   }
   const migrationSql = (await Promise.all(
     migrationFiles.map(async file => "-- " + file + "\n" + await readFile(join("migrations", file), "utf8"))
@@ -104,6 +104,7 @@ try {
   const reservationColumns = queryD1("PRAGMA table_info(reservations)", "inspectReservationColumns");
   const managedReservationTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_managed_reservation_reserve_balance', 'trg_managed_reservation_release_balance', 'trg_managed_reservation_identity_immutable', 'trg_managed_reservation_active_delete_block')", "inspectManagedReservationTriggers");
   const fundingLegTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_funding_leg_identity_immutable', 'trg_funding_leg_transaction_hash_immutable', 'trg_funding_leg_state_transition', 'trg_funding_leg_submitted_requires_hash', 'trg_funding_leg_confirmed_requires_hash')", "inspectFundingLegTriggers");
+  const finalPaymentTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_final_payment_leg_requires_confirmed_funding', 'trg_final_payment_reservation_requires_confirmed_funding')", "inspectFinalPaymentFundingTriggers");
   const schemaChecks = {
     ownershipVerifiedAtColumn: walletColumns.some(row => row.name === "ownership_verified_at"),
     ownershipVerifiedOriginColumn: walletColumns.some(row => row.name === "ownership_verified_origin"),
@@ -115,7 +116,8 @@ try {
     reservationFundingLegLink: reservationColumns.some(row => row.name === "funding_leg_id"),
     managedReservationSourceColumn: reservationColumns.some(row => row.name === "reservation_source"),
     managedReservationTriggers: managedReservationTriggers.length === 4,
-    fundingLegSafetyTriggers: fundingLegTriggers.length === 5
+    fundingLegSafetyTriggers: fundingLegTriggers.length === 5,
+    finalPaymentFundingGates: finalPaymentTriggers.length === 2
   };
   output.steps.walletOwnershipSchema = { checks: schemaChecks };
   if (Object.values(schemaChecks).some(value => value !== true)) {
@@ -196,6 +198,7 @@ try {
   const managedSixthLegId = "leg_" + randomBytes(16).toString("hex");
   const managedFifthReservationId = "res_" + randomBytes(16).toString("hex");
   const managedSixthReservationId = "res_" + randomBytes(16).toString("hex");
+  const managedFinalPaymentLegId = "leg_" + randomBytes(16).toString("hex");
   const managedSecondReserveAddress = "7aM5v4Kj2dQx3sW6mR1pL8cF9aT5uH4eG2iJ6kM8nPq";
 
   queryD1(`INSERT INTO wallets
@@ -335,6 +338,27 @@ try {
     throw new Error("Cross-wallet reservation failure left a partial reservation or balance update.");
   }
 
+  queryD1(`INSERT INTO operation_funding_legs
+    (id, operation_id, leg_index, kind, source_wallet_id, destination_address, asset_mint, amount_atoms)
+    VALUES ('${managedFinalPaymentLegId}', '${managedOperationId}', 6, 'final_payment', '${managedPaymentWalletId}', '7dN4k3Jm2pQx8sW6vR1aT5uH9cF2eG4iL7oP6bK8mZq', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '1000000')`, "insertFinalPaymentFundingLeg");
+  let finalPaymentGateRejected = false;
+  try {
+    queryD1(`UPDATE operation_funding_legs SET status = 'reserved' WHERE id = '${managedFinalPaymentLegId}'`, "rejectPrematureFinalPayment");
+  } catch (error) {
+    finalPaymentGateRejected = String(error).includes("final_payment_requires_confirmed_funding");
+    if (!finalPaymentGateRejected) throw error;
+  }
+  if (!finalPaymentGateRejected) throw new Error("Final payment leg was allowed to reserve before funding legs confirmed.");
+
+  for (const [legId, label] of [[managedThirdLegId, "First"], [managedFourthLegId, "Second"]]) {
+    queryD1(`UPDATE operation_funding_legs SET status = 'reserved' WHERE id = '${legId}'`, "funding" + label + "LegReserved");
+    queryD1(`UPDATE operation_funding_legs SET status = 'awaiting_signature' WHERE id = '${legId}'`, "funding" + label + "LegAwaitingSignature");
+    queryD1(`UPDATE operation_funding_legs SET transaction_hash = 'local-' || lower('${label}') || '-signature', status = 'submitted' WHERE id = '${legId}'`, "funding" + label + "LegSubmitted");
+    queryD1(`UPDATE operation_funding_legs SET status = 'confirmed' WHERE id = '${legId}'`, "funding" + label + "LegConfirmed");
+  }
+  queryD1(`UPDATE operation_funding_legs SET status = 'reserved' WHERE id = '${managedFinalPaymentLegId}'`, "allowFinalPaymentAfterFundingConfirmed");
+  const finalPaymentLegState = queryD1(`SELECT status FROM operation_funding_legs WHERE id = '${managedFinalPaymentLegId}'`, "verifyFinalPaymentGate");
+  if (finalPaymentLegState[0]?.status !== "reserved") throw new Error("Final payment did not become reservable after all funding legs confirmed.");
   output.steps.managedReservationBehavior = {
     initialReservationAtoms: reservedAfterInsert[0].reserved_atoms,
     rejectedOverReservation: insufficientManagedReservationRejected,
@@ -347,7 +371,9 @@ try {
     multiWalletReservationSucceeded: multiWalletReserved.length === 2,
     multiWalletReleaseRestoredBalances: multiWalletReleased.every(row => row.reserved_atoms === "0"),
     crossWalletAtomicFailureRejected: crossWalletAtomicFailure,
-    crossWalletAtomicRollbackRestoredBalances: afterCrossWalletFailure.every(row => row.reserved_atoms === "0")
+    crossWalletAtomicRollbackRestoredBalances: afterCrossWalletFailure.every(row => row.reserved_atoms === "0"),
+    finalPaymentBlockedUntilFundingConfirmed: finalPaymentGateRejected,
+    finalPaymentAllowedAfterFundingConfirmed: finalPaymentLegState[0]?.status === "reserved"
   };
 
 
