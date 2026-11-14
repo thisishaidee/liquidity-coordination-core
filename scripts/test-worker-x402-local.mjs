@@ -110,8 +110,9 @@ try {
   const paymentIntentTables = queryD1("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('business_payment_policies', 'business_payment_intents')", "inspectBusinessPaymentTables");
   const paymentIntentTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_business_payment_intent_identity_immutable', 'trg_business_payment_intent_state_transition', 'trg_business_payment_intent_scope_insert', 'trg_business_payment_intent_policy_guard')", "inspectBusinessPaymentTriggers");
   const feeLedgerTable = queryD1("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'operation_funding_leg_fees'", "inspectFundingLegFeeLedger");
-  const feeLedgerTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_funding_leg_fee_identity_immutable', 'trg_funding_leg_fee_transaction_immutable', 'trg_funding_leg_fee_state_transition', 'trg_funding_leg_fee_submitted_requires_signature', 'trg_funding_leg_fee_reconciled_requires_finalized_fee')", "inspectFundingLegFeeTriggers");
+  const feeLedgerTriggers = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_funding_leg_fee_identity_immutable', 'trg_funding_leg_fee_transaction_immutable', 'trg_funding_leg_fee_state_transition', 'trg_funding_leg_fee_submitted_requires_signature', 'trg_funding_leg_fee_reconciled_requires_finalized_fee', 'trg_funding_leg_fee_scope_insert', 'trg_funding_leg_fee_state_matches_leg')", "inspectFundingLegFeeTriggers");
   const paymentIntentColumns = queryD1("PRAGMA table_info(business_payment_intents)", "inspectPaymentIntentFeeBudgetColumn");
+  const feeBudgetImmutableTrigger = queryD1("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'trg_business_payment_intent_fee_budget_immutable'", "inspectFeeBudgetImmutableTrigger");
   const schemaChecks = {
     ownershipVerifiedAtColumn: walletColumns.some(row => row.name === "ownership_verified_at"),
     ownershipVerifiedOriginColumn: walletColumns.some(row => row.name === "ownership_verified_origin"),
@@ -131,7 +132,8 @@ try {
     businessPaymentTriggers: paymentIntentTriggers.length === 4,
     aggregateFeeBudgetColumn: paymentIntentColumns.some(row => row.name === "network_fee_budget_lamports"),
     fundingLegFeeLedger: feeLedgerTable.length === 1,
-    fundingLegFeeSafetyTriggers: feeLedgerTriggers.length === 5
+    fundingLegFeeSafetyTriggers: feeLedgerTriggers.length === 7,
+    feeBudgetImmutableTrigger: feeBudgetImmutableTrigger.length === 1
   };
   output.steps.walletOwnershipSchema = { checks: schemaChecks };
   if (Object.values(schemaChecks).some(value => value !== true)) {
