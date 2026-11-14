@@ -40,6 +40,10 @@ export function describeAdminRoute(
     return { kind: "business", businessId, resource: { table: "agents", id: agentMatch[1] } };
   }
 
+  if (method === "POST" && ["/v1/admin/wallet-ownership/challenge", "/v1/admin/wallet-ownership/verify"].includes(pathname) && typeof body?.walletId === "string") {
+    return { kind: "business", businessId, resource: { table: "wallets", id: body.walletId } };
+  }
+
   if (method === "POST" && pathname === "/v1/admin/wallet-roles" && typeof body?.walletId === "string") {
     return { kind: "business", businessId, resource: { table: "wallets", id: body.walletId } };
   }
