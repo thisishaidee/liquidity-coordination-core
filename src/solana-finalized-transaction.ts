@@ -54,11 +54,13 @@ export async function fetchFinalizedSolanaTransaction(
   );
   const status = statuses.value?.[0];
   if (!status) return { state: "pending", reason: "Transaction signature is not indexed by the RPC yet." };
-  if (status.err !== null && status.err !== undefined) {
-    return { state: "failed", reason: "Solana reports that the transaction failed.", slot: status.slot };
-  }
+  // An execution error is not final until the cluster reaches finalized commitment.
+  // Releasing reservations on a merely confirmed failure could race a fork.
   if (status.confirmationStatus !== "finalized") {
     return { state: "pending", reason: "Transaction has not reached finalized commitment." };
+  }
+  if (status.err !== null && status.err !== undefined) {
+    return { state: "failed", reason: "Solana reports that the finalized transaction failed.", slot: status.slot };
   }
 
   const transaction = await rpc<Record<string, unknown> | null>(
