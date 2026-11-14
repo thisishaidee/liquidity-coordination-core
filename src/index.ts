@@ -1852,6 +1852,22 @@ function encodeBase64Url(bytes: Uint8Array): string {
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_");
 }
 
+async function enforceWalletOwnershipRateLimit(env: Env, walletId: string, action: string, limit: number): Promise<Response | null> {
+  const windowSeconds = 600;
+  const windowKey = Math.floor(Date.now() / (windowSeconds * 1000));
+  const bucketKey = "wallet-ownership:" + action + ":" + walletId;
+  await env.DB.prepare("INSERT INTO api_rate_limits (bucket_key, window_key, request_count) VALUES (?, ?, 1) ON CONFLICT(bucket_key) DO UPDATE SET request_count = CASE WHEN api_rate_limits.window_key = excluded.window_key THEN api_rate_limits.request_count + 1 ELSE 1 END, window_key = excluded.window_key, updated_at = datetime('now')")
+    .bind(bucketKey, windowKey).run();
+  const row = await env.DB.prepare("SELECT request_count FROM api_rate_limits WHERE bucket_key = ? AND window_key = ?")
+    .bind(bucketKey, windowKey).first<{ request_count: number }>();
+  if (!row || row.request_count <= limit) return null;
+  const retryAfter = Math.max(1, (windowKey + 1) * windowSeconds - Math.floor(Date.now() / 1000));
+  return new Response(JSON.stringify({ error: "rate_limited", retryAfterSeconds: retryAfter }), {
+    status: 429,
+    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "retry-after": String(retryAfter) }
+  });
+}
+
 async function createWalletOwnershipChallenge(request: Request, env: Env): Promise<Response> {
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
   const body = await readJson(request);
@@ -1862,6 +1878,8 @@ async function createWalletOwnershipChallenge(request: Request, env: Env): Promi
     .bind(body.walletId, body.businessId).first<{ id: string; address: string; network: string }>();
   if (!wallet) return json({ error: "active_business_wallet_not_found" }, 404);
   if (wallet.network !== "solana") return json({ error: "unsupported_wallet_network" }, 400);
+  const rateLimit = await enforceWalletOwnershipRateLimit(env, wallet.id, "challenge", 5);
+  if (rateLimit) return rateLimit;
 
   await env.DB.prepare("UPDATE wallet_ownership_challenges SET consumed_at = datetime('now') WHERE wallet_id = ? AND consumed_at IS NULL").bind(wallet.id).run();
 
@@ -1899,6 +1917,8 @@ async function verifyWalletOwnership(request: Request, env: Env): Promise<Respon
       body.challengeId.length > 64 || body.signature.length > 256) return json({ error: "invalid_request" }, 400);
   const origin = request.headers.get("origin");
   if (!origin || !isAllowedAdminOrigin(origin, new URL(request.url).origin, env.ADMIN_ALLOWED_ORIGINS)) return json({ error: "origin_not_allowed" }, 403);
+  const rateLimit = await enforceWalletOwnershipRateLimit(env, body.walletId, "verify", 10);
+  if (rateLimit) return rateLimit;
 
   const challenge = await env.DB.prepare("SELECT c.id, c.address, c.origin, c.network, c.message, c.nonce_hash, c.expires_at, w.address AS current_address FROM wallet_ownership_challenges c JOIN wallets w ON w.id = c.wallet_id AND w.business_id = c.business_id WHERE c.id = ? AND c.business_id = ? AND c.wallet_id = ? AND c.consumed_at IS NULL AND julianday(c.expires_at) > julianday('now') AND w.scope = 'business' AND w.status = 'active' AND w.network = 'solana' LIMIT 1")
     .bind(body.challengeId, body.businessId, body.walletId).first<{ id: string; address: string; origin: string; network: string; message: string; nonce_hash: string; expires_at: string; current_address: string }>();
