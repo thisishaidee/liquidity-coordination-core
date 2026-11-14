@@ -237,7 +237,9 @@ export async function verifySignedUsdcFundingTransaction(
       actualSigners.some((address, index) => address !== expectedSigners[index])) {
     throw new Error("Signed transaction required signer set does not match the approved fee payer and source owner.");
   }
-  if (!transaction.verifySignatures()) {
+  let signaturesValid = false;
+  try { signaturesValid = transaction.verifySignatures(); } catch { signaturesValid = false; }
+  if (!signaturesValid) {
     throw new Error("Signed transaction contains a missing or invalid required signature.");
   }
   if (!transaction.recentBlockhash) throw new Error("Signed transaction has no recent blockhash.");
@@ -267,7 +269,7 @@ export async function verifySignedUsdcFundingTransaction(
       keys[0].isSigner || !keys[0].isWritable ||
       keys[1].isSigner || keys[1].isWritable ||
       keys[2].isSigner || !keys[2].isWritable ||
-      !keys[3].isSigner || keys[3].isWritable ||
+      !keys[3].isSigner || keys[3].isWritable !== (expected.feePayerAddress === expected.sourceWalletAddress) ||
       data.length !== 10 || data[0] !== 12 || data[9] !== 6) {
     throw new Error("Signed transaction instructions do not match the approved USDC transfer accounts or decimals.");
   }
