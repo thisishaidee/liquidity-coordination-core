@@ -2,7 +2,7 @@
 
 ## Status
 
-Design specification only. The current branch has a pure SPL-token transfer verifier and a funding-leg ledger, but no endpoint that connects an externally signed transaction to a funding leg. Nothing in this document enables signing, broadcasting, or autonomous execution.
+Partially implemented on the draft feature branch. Owner/admin-only signature submission and finalized-RPC reconciliation are now wired for simple SPL-token reserve-replenishment and final-payment legs. This branch still does not sign or broadcast transactions, refresh finalized destination balances, unlock the final payment after replenishment, reconcile actual SOL network fees, or support conversions. Nothing enables autonomous execution.
 
 ## Trust boundary
 
@@ -10,18 +10,18 @@ A client-supplied transaction signature is an untrusted lookup key, not proof of
 
 Only a business owner/admin session may submit or reconcile a funding leg. An agent API key may prepare and read an intent, but must not be able to assert that a business wallet has signed or paid. The admin route must use the existing business-scoped session and origin checks.
 
-## Proposed API
+## Implemented API
 
 - `POST /v1/admin/payment-intents/:intentId/funding-legs/:legId/submit`
   - Body: `{ "signature": "<base58 transaction signature>" }`
   - Resolve the intent, operation, leg, business, registered wallets, and active reservation from D1. Verify the leg belongs to the intent and business.
-  - Accept only a leg in `awaiting_signature` (or a deliberately approved `authorized_for_execution` state). Reject expired intents and duplicate signatures.
+  - Accepts reserved, `awaiting_signature`, or deliberately approved `authorized_for_execution` legs with an active linked reservation. A reserved leg is advanced through `awaiting_signature` before the submitted transition. Expired intents and duplicate signatures are rejected.
   - Validate signature encoding/length and bind it immutably to the leg. Move the leg and intent to submitted in one D1 batch. The unique transaction-hash index prevents reuse by another leg.
   - Return pending; do not mark the leg confirmed merely because a signature was supplied.
 
 - `POST /v1/admin/payment-intents/:intentId/funding-legs/:legId/reconcile`
   - No transaction data is accepted from the client. The Worker retrieves the signature stored on the leg.
-  - Query `getSignatureStatuses` with history enabled. Treat missing, processed, or confirmed-but-not-finalized results as pending.
+  - Queries `getSignatureStatuses` with history enabled. Missing, processed, and confirmed-but-not-finalized results remain pending.
   - Query `getTransaction` with `commitment: finalized`, `encoding: jsonParsed`, and `maxSupportedTransactionVersion: 0`.
   - Verify RPC result signature, successful metadata, positive slot, registered source signer, exact SPL-token program instruction, source/destination token-account ownership, mint, decimals, exact atom amount, and matching pre/post token balance deltas using `verifySolanaTokenTransfer`.
   - If the RPC is unavailable or the finalized transaction is not yet indexed, return pending/502 without mutating ledger state.
@@ -35,8 +35,8 @@ Only a business owner/admin session may submit or reconcile a funding leg. An ag
 - Destination must be the business's registered payment wallet.
 - The asset mint must be the configured USDC mint.
 - The exact transfer amount must match the reserved leg amount. Do not accept overpayment or underpayment as a successful exact leg.
-- After finality and verification, update the balance snapshot from a fresh RPC observation at a clearly recorded commitment, mark the leg confirmed, and consume/reconcile only that leg's source reservation exactly once.
-- Only when every reserve-replenishment/conversion leg for the operation is confirmed and the payment wallet has sufficient fresh, confirmed USDC may the final-payment leg be reserved and advanced to `awaiting_signature`.
+- After finality and exact transfer verification, the leg is marked confirmed and only its linked source reservation is consumed. A finalized payment-wallet balance refresh is not yet implemented, so the final-payment leg remains blocked.
+- Only after a separate finalized payment-wallet balance refresh proves sufficient USDC may the final-payment leg be reserved and advanced to `awaiting_signature`. That unlock step is still pending.
 
 ### Final payment
 
@@ -67,7 +67,7 @@ If any conditional statement changes zero rows, treat it as a concurrency/state 
 
 The existing `syncSolanaBalances` helper uses `confirmed` commitment for general dashboard balance refresh. It is not sufficient as settlement proof. Settlement must use finalized transaction evidence and must record the commitment/time of any refreshed balance snapshot. Never reset `reserved_atoms` while refreshing `confirmed_atoms`.
 
-## Required tests before wiring production routes
+## Remaining tests before production readiness
 
 - Wrong business, wrong leg, wrong wallet role, disabled/unverified wallet, expired intent, and non-owner session are rejected.
 - Signature reuse across two legs is rejected.
@@ -83,3 +83,11 @@ The existing `syncSolanaBalances` helper uses `confirmed` commitment for general
 ## Explicit non-goals
 
 This stage must not create or hold private keys, sign transactions, broadcast transactions, auto-approve conversion, or move funds. Wallet construction/signing UX and Telegram Mini App handoff are separate stages.
+
+## Route behavior currently implemented
+
+- Both routes require a business-scoped owner/admin session, same-origin/allowlisted browser origin on writes, and a `businessId` query parameter. The intent and leg are resolved together from D1, so a leg cannot be submitted under another business scope.
+- The submit body accepts only a base58 transaction signature. It does not accept transaction facts or a client-declared settlement state.
+- Reconciliation uses the stored signature and the configured HTTPS RPC. Exact finalized transfers consume only the linked reservation. Finalized mismatches become `ambiguous` and retain their hold; the scheduled expiry routine skips ambiguous intents.
+- Reserve-replenishment confirmation does not credit a cached payment-wallet balance or unlock final payment. The separate fee reservation also remains untouched pending an actual fee-debit verifier.
+- These routes are code on a draft PR only. They have not been deployed or exercised against a funded wallet.
