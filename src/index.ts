@@ -1,5 +1,6 @@
 import { dashboardHtml } from "./dashboard";
 import { businessDashboardHtml } from "./business-dashboard";
+import { okxWalletConnectorJs } from "./okx-wallet-connector";
 import { pixelFieldSvg } from "./pixel-field";
 import { landingHtml } from "./landing";
 import { controlHtml } from "./control";
@@ -6420,6 +6421,16 @@ export default {
     if (request.method === "POST" && releaseMatch) return releaseOperation(request, env, releaseMatch[1]);
     const operationMatch = url.pathname.match(/^\/v1\/operations\/([a-zA-Z0-9_-]+)$/);
     if (request.method === "GET" && operationMatch) return getOperation(request, env, operationMatch[1]);
+    if (request.method === "GET" && url.pathname === "/assets/okx-wallet-connector.js") {
+      return new Response(okxWalletConnectorJs, {
+        headers: {
+          "content-type": "text/javascript; charset=utf-8",
+          "cache-control": "public, max-age=300",
+          "x-content-type-options": "nosniff",
+          "referrer-policy": "no-referrer"
+        }
+      });
+    }
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/app" || url.pathname === "/control" || url.pathname === "/dashboard")) {
       const page = url.pathname === "/app" ? dashboardHtml : url.pathname === "/control" ? controlHtml : url.pathname === "/dashboard" ? businessDashboardHtml : landingHtml;
       return new Response(page, {
@@ -6428,7 +6439,7 @@ export default {
           "cache-control": "no-store",
           "x-content-type-options": "nosniff",
           "referrer-policy": "no-referrer",
-          "content-security-policy": "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self' https://*.okx.com https://*.okx.pro wss://*.okx.com wss://*.okx.pro https://relay.walletconnect.com wss://relay.walletconnect.com https://rpc.walletconnect.com; base-uri 'none'; frame-ancestors 'none'"
+          "content-security-policy": "default-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' https://*.okx.com https://*.okx.pro wss://*.okx.com wss://*.okx.pro https://relay.walletconnect.com wss://relay.walletconnect.com https://rpc.walletconnect.com; base-uri 'none'; frame-ancestors 'none'"
         }
       });
     }
