@@ -2393,7 +2393,8 @@ async function proxyHermes(
 
   let upstream: Response;
   try {
-    const testFixture = x402Context?.env.NERITH_TEST_MODE === "true"
+    const localTestRequest = new URL(request.url).hostname === "127.0.0.1";
+    const testFixture = localTestRequest && x402Context?.env.NERITH_TEST_MODE === "true"
       ? x402Context.env.HERMES_TEST_402_FIXTURE
       : undefined;
     if (testFixture) {
