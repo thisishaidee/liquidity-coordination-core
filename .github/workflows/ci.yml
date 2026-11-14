@@ -1,7 +1,7 @@
 name: CI and Deploy
 
 concurrency:
-  group: nerith-production-${{ github.ref }}
+  group: ${{ github.event_name == 'pull_request' && format('nerith-pr-{0}', github.event.pull_request.number) || format('nerith-production-{0}', github.ref) }}
   cancel-in-progress: true
 
 on:
