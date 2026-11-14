@@ -4731,6 +4731,22 @@ async function expireReservations(env: Env): Promise<{ expired: number; skipped:
       continue;
     }
 
+    await env.DB.batch([
+      env.DB.prepare(`
+        UPDATE operation_funding_leg_fees SET status = 'not_required', updated_at = datetime('now')
+        WHERE operation_id = ? AND status = 'reserved'
+      `).bind(operation.id),
+      env.DB.prepare(`
+        UPDATE operation_funding_legs SET status = 'expired', failure_reason = 'Operation expired before submission.',
+          updated_at = datetime('now')
+        WHERE operation_id = ? AND status IN ('planned', 'reserved', 'awaiting_signature', 'authorized_for_execution')
+      `).bind(operation.id),
+      env.DB.prepare(`
+        UPDATE business_payment_intents SET status = 'expired', updated_at = datetime('now')
+        WHERE operation_id = ? AND status IN ('policy_checked', 'reserved', 'replenishing', 'awaiting_signature')
+      `).bind(operation.id)
+    ]);
+
     const reservations = await env.DB.prepare(
       "SELECT id, wallet_balance_id, amount_atoms, reservation_source FROM reservations WHERE operation_id = ? AND status = 'active'"
     ).bind(operation.id).all<{
