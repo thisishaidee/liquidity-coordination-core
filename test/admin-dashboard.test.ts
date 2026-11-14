@@ -762,6 +762,10 @@ describe("browser page script syntax", () => {
         expect(html).toContain("const connectedAddress=await connectSolanaWallet()");
         expect(html).toContain("connectedAddress!==button.dataset.address");
         expect(html).toContain("Wallet connected. Approve the ownership message in the wallet app.");
+        expect(html).toContain("if(window.NERITHOKX?.connect)return await window.NERITHOKX.connect()");
+        expect(html).toContain("const existingWallet=state.wallets.find(wallet=>");
+        expect(html).toContain("Reusing its existing record; no duplicate will be created.");
+        expect(html).toContain("Use a separate Solana address for ");
         for (const wallet of ["okx", "phantom", "solflare", "backpack", "jupiter", "browser"]) expect(html).toContain('data-wallet-choice="' + wallet + '"');
         expect(html).not.toContain("jup.ag/wallet");
         expect(html).toContain('id="jupiterWalletMount"');
