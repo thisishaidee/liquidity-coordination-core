@@ -38,6 +38,8 @@ NERITH keeps business custody in the business's hands. Agents use scoped API cre
 | POST | `/v1/admin/wallets` | Register an authorized Solana wallet |
 | GET | `/v1/admin/wallet-roles?businessId=...` | List business-scoped wallet roles |
 | POST | `/v1/admin/wallet-roles` | Assign or update a business wallet role and its reserve limits |
+| POST | `/v1/admin/wallet-ownership/challenge` | Create a five-minute wallet ownership message challenge |
+| POST | `/v1/admin/wallet-ownership/verify` | Verify a wallet-signed ownership challenge |
 | POST | `/v1/admin/balances` | Record a controlled manual balance snapshot |
 | POST | `/v1/admin/balances/sync` | Refresh registered wallet balances from Solana RPC |
 | POST | `/v1/admin/reservations/expire` | Platform-token-only manual sweep of expired reservations |
