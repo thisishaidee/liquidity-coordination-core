@@ -12,6 +12,18 @@ describe("business-scoped admin route classification", () => {
     expect(describeAdminRoute("POST", "/v1/admin/telegram/permissions", new URLSearchParams("businessId=biz_a"), { businessId: "biz_b" })).toEqual({ kind: "invalid" });
   });
 
+  it("requires an explicit business scope for funding-leg settlement writes", () => {
+    const path = "/v1/admin/payment-intents/bpi_123/funding-legs/leg_456/submit";
+    expect(describeAdminRoute("POST", path, new URLSearchParams(), { signature: "untrusted" }))
+      .toEqual({ kind: "invalid" });
+    expect(describeAdminRoute("POST", path, new URLSearchParams("businessId=biz_a"), { signature: "untrusted" }))
+      .toEqual({ kind: "business", businessId: "biz_a" });
+    expect(describeAdminRoute("GET", path, new URLSearchParams("businessId=biz_a"), null))
+      .toEqual({ kind: "invalid" });
+    expect(describeAdminRoute("POST", "/v1/admin/payment-intents/bpi_123/funding-legs/leg_456/unknown", new URLSearchParams("businessId=biz_a"), {}))
+      .toEqual({ kind: "invalid" });
+  });
+
   it("binds resource-id actions to server-resolved ownership", () => {
     expect(describeAdminRoute("POST", "/v1/admin/agents/agt_123/disable", new URLSearchParams(), null)).toEqual({ kind: "business", businessId: null, resource: { table: "agents", id: "agt_123" } });
     expect(describeAdminRoute("POST", "/v1/admin/wallets/wal_123/disable", new URLSearchParams(), null)).toEqual({ kind: "business", businessId: null, resource: { table: "wallets", id: "wal_123" } });
