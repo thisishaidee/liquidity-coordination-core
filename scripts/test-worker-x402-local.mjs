@@ -430,6 +430,18 @@ try {
     VALUES ('${managedFinalPaymentReservationId}', '${managedGateOperationId}', '${managedPaymentBalanceId}', '1000000', 'USDC', 'active', datetime('now', '+15 minutes'), '${managedFinalPaymentLegId}', 'managed')`, "reserveFinalPaymentAfterFundingConfirmed");
   const finalPaymentReserved = queryD1(`SELECT reserved_atoms FROM wallet_balances WHERE id = '${managedPaymentBalanceId}'`, "verifyFinalPaymentReservation");
   if (finalPaymentReserved[0]?.reserved_atoms !== "1000000") throw new Error("Final payment reservation did not hold the payment wallet balance.");
+  let duplicateActiveFinalPaymentReservationRejected = false;
+  try {
+    queryD1(`INSERT INTO reservations
+      (id, operation_id, wallet_balance_id, amount_atoms, token, status, expires_at, funding_leg_id, reservation_source)
+      VALUES ('res_duplicate_final_${suffix}', '${managedGateOperationId}', '${managedPaymentBalanceId}', '1000000', 'USDC', 'active', datetime('now', '+15 minutes'), '${managedFinalPaymentLegId}', 'managed')`, "rejectDuplicateActiveFinalPaymentReservation");
+  } catch (error) {
+    duplicateActiveFinalPaymentReservationRejected = String(error).includes("UNIQUE constraint failed: reservations.funding_leg_id");
+    if (!duplicateActiveFinalPaymentReservationRejected) throw error;
+  }
+  if (!duplicateActiveFinalPaymentReservationRejected) throw new Error("A funding leg accepted more than one active managed reservation.");
+  const finalPaymentReservedAfterDuplicate = queryD1(`SELECT reserved_atoms FROM wallet_balances WHERE id = '${managedPaymentBalanceId}'`, "verifyDuplicateFinalReservationRollback");
+  if (finalPaymentReservedAfterDuplicate[0]?.reserved_atoms !== "1000000") throw new Error("Duplicate final-payment reservation did not roll back its balance hold.");
   queryD1(`UPDATE reservations SET status = 'released', released_at = datetime('now') WHERE id = '${managedFinalPaymentReservationId}' AND status = 'active'`, "releaseFinalPaymentReservation");
   const finalPaymentReleased = queryD1(`SELECT reserved_atoms FROM wallet_balances WHERE id = '${managedPaymentBalanceId}'`, "verifyFinalPaymentReservationRelease");
   if (finalPaymentReleased[0]?.reserved_atoms !== "0") throw new Error("Final payment reservation did not release its balance hold.");
