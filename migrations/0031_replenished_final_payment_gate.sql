@@ -9,6 +9,12 @@ WHEN NEW.kind = 'final_payment'
     WHERE intent.operation_id = NEW.operation_id
       AND intent.action = 'replenish_then_pay'
       AND intent.status <> 'awaiting_signature'
+      AND NOT EXISTS (
+        SELECT 1 FROM operation_funding_legs funding
+        WHERE funding.operation_id = leg.operation_id
+          AND funding.kind IN ('reserve_replenishment', 'conversion')
+          AND funding.status <> 'confirmed'
+      )
   )
 BEGIN
   SELECT RAISE(ABORT, 'final_payment_intent_not_ready');
@@ -27,6 +33,12 @@ WHEN NEW.reservation_source = 'managed'
       AND leg.status = 'reserved'
       AND intent.action = 'replenish_then_pay'
       AND intent.status <> 'awaiting_signature'
+      AND NOT EXISTS (
+        SELECT 1 FROM operation_funding_legs funding
+        WHERE funding.operation_id = leg.operation_id
+          AND funding.kind IN ('reserve_replenishment', 'conversion')
+          AND funding.status <> 'confirmed'
+      )
   )
 BEGIN
   SELECT RAISE(ABORT, 'final_payment_intent_not_ready');
