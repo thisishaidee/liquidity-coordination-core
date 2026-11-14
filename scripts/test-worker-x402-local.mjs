@@ -925,6 +925,37 @@ const businessPaymentIntentCount = queryD1(`SELECT COUNT(*) AS count FROM busine
     throw new Error("D1 persistence/safety verification failed: " + JSON.stringify(databaseChecks));
   }
 
+  const demoQuoteResponse = await fetch(baseUrl + "/v1/admin/x402/demo/quote", {
+    method: "POST",
+    headers: adminHeaders,
+    body: JSON.stringify({
+      businessId,
+      operatingWalletAddress: operatingAddress,
+      paymentWalletAddress: paymentAddress,
+      sourceAmount: "1"
+    })
+  });
+  const demoQuoteText = await demoQuoteResponse.text();
+  let demoQuoteBody;
+  try { demoQuoteBody = JSON.parse(demoQuoteText); } catch { demoQuoteBody = null; }
+  if (demoQuoteResponse.status !== 402 || demoQuoteBody?.x402Version !== 1 || !Array.isArray(demoQuoteBody.accepts)) {
+    throw new Error("Owner-authorized x402 demo quote did not relay the live Hermes challenge. HTTP " + demoQuoteResponse.status + " body: " + demoQuoteText);
+  }
+  const demoChallengeRows = queryD1(
+    "SELECT id, amount_atoms, resource, status FROM x402_payment_challenges WHERE agent_id = '" + agentId + "'",
+    "verifyAdminX402DemoChallenge"
+  );
+  if (demoChallengeRows.length !== 2 || demoChallengeRows.some(row => row.status !== "pending")) {
+    throw new Error("Owner-authorized demo quote did not persist a separate pending x402 challenge.");
+  }
+  output.steps.adminX402DemoQuote = {
+    status: demoQuoteResponse.status,
+    challengeVersion: demoQuoteBody.x402Version,
+    challengeCountForAgent: demoChallengeRows.length,
+    sourceAmountSOL: "1",
+    paymentReservationCreated: false
+  };
+
   output.result = "PASS";
   output.completedAt = new Date().toISOString();
   await writeFile(join(evidenceDir, "report.json"), JSON.stringify(output, null, 2), "utf8");
