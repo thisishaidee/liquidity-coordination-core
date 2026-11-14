@@ -2181,6 +2181,69 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
   }, 201);
 }
 
+async function getBusinessPaymentIntent(request: Request, env: Env, intentId: string): Promise<Response> {
+  const agent = await authenticate(request, env.DB);
+  if (!agent || agent.status !== "active") return json({ error: "unauthorized" }, 401);
+  const limited = await enforceAgentRateLimit(env, agent.id, "payment_read", 60, 60);
+  if (limited) return limited;
+  const intent = await env.DB.prepare(`
+    SELECT i.id, i.operation_id, i.destination, i.mint, i.requested_atoms, i.payment_atoms,
+           i.fee_payer_wallet_id, i.network_fee_lamports, i.action, i.status,
+           i.policy_version, i.expires_at, i.created_at, i.updated_at
+    FROM business_payment_intents i
+    JOIN operations op ON op.id = i.operation_id AND op.business_id = i.business_id
+    WHERE i.id = ? AND i.business_id = ? AND op.agent_id = ?
+    LIMIT 1
+  `).bind(intentId, agent.business_id, agent.id).first<{
+    id: string; operation_id: string; destination: string; mint: string;
+    requested_atoms: string; payment_atoms: string; fee_payer_wallet_id: string;
+    network_fee_lamports: string; action: string; status: string; policy_version: number;
+    expires_at: string; created_at: string; updated_at: string;
+  }>();
+  if (!intent) return json({ error: "payment_intent_not_found" }, 404);
+  const [legs, reservations] = await Promise.all([
+    env.DB.prepare(`
+      SELECT l.id, l.leg_index, l.kind, l.source_wallet_id, source_wallet.address AS source_address,
+             l.destination_wallet_id, destination_wallet.address AS destination_wallet_address,
+             l.destination_address, l.asset_mint, l.amount_atoms, l.expected_output_atoms,
+             l.received_output_atoms, l.status, l.transaction_hash, l.submitted_slot,
+             l.confirmed_slot, l.failure_reason, l.created_at, l.updated_at
+      FROM operation_funding_legs l
+      LEFT JOIN wallets source_wallet ON source_wallet.id = l.source_wallet_id
+      LEFT JOIN wallets destination_wallet ON destination_wallet.id = l.destination_wallet_id
+      WHERE l.operation_id = ? ORDER BY l.leg_index ASC
+    `).bind(intent.operation_id).all(),
+    env.DB.prepare(`
+      SELECT r.id, r.funding_leg_id, r.wallet_balance_id, b.wallet_id, w.address AS wallet_address,
+             r.amount_atoms, r.token, r.status, r.expires_at, r.reservation_source
+      FROM reservations r
+      JOIN wallet_balances b ON b.id = r.wallet_balance_id
+      JOIN wallets w ON w.id = b.wallet_id
+      WHERE r.operation_id = ? ORDER BY r.created_at ASC
+    `).bind(intent.operation_id).all()
+  ]);
+  return json({
+    intentId: intent.id, operationId: intent.operation_id, action: intent.action, status: intent.status,
+    destination: intent.destination, mint: intent.mint, requestedAtoms: intent.requested_atoms,
+    paymentAtoms: intent.payment_atoms, feePayerWalletId: intent.fee_payer_wallet_id,
+    networkFeeLamports: intent.network_fee_lamports, policyVersion: intent.policy_version,
+    expiresAt: intent.expires_at, createdAt: intent.created_at, updatedAt: intent.updated_at,
+    fundingLegs: (legs.results ?? []).map(row => ({
+      id: row.id, index: row.leg_index, kind: row.kind, sourceWalletId: row.source_wallet_id,
+      sourceAddress: row.source_address, destinationWalletId: row.destination_wallet_id,
+      destinationWalletAddress: row.destination_wallet_address, destinationAddress: row.destination_address,
+      assetMint: row.asset_mint, amountAtoms: row.amount_atoms, expectedOutputAtoms: row.expected_output_atoms,
+      receivedOutputAtoms: row.received_output_atoms, status: row.status, transactionHash: row.transaction_hash,
+      submittedSlot: row.submitted_slot, confirmedSlot: row.confirmed_slot, failureReason: row.failure_reason,
+      createdAt: row.created_at, updatedAt: row.updated_at
+    })),
+    reservations: (reservations.results ?? []).map(row => ({
+      id: row.id, fundingLegId: row.funding_leg_id, walletId: row.wallet_id, walletAddress: row.wallet_address,
+      amountAtoms: row.amount_atoms, token: row.token, status: row.status, expiresAt: row.expires_at,
+      source: row.reservation_source
+    }))
+  });
+}
 async function listBusinessWalletRoles(request: Request, env: Env): Promise<Response> {
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
   const businessId = new URL(request.url).searchParams.get("businessId");
@@ -5144,6 +5207,8 @@ export default {
     if (request.method === "GET" && url.pathname === "/v1/admin/payment-policy") return getBusinessPaymentPolicy(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/payment-policy") return setBusinessPaymentPolicy(request, env);
     if (request.method === "POST" && url.pathname === "/v1/payments/prepare") return createBusinessPaymentIntent(request, env);
+    const paymentIntentMatch = url.pathname.match(/^\/v1\/payments\/([a-zA-Z0-9_-]+)$/);
+    if (request.method === "GET" && paymentIntentMatch) return getBusinessPaymentIntent(request, env, paymentIntentMatch[1]);
     if (request.method === "POST" && url.pathname === "/v1/admin/wallet-roles") return setBusinessWalletRole(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/wallet-ownership/challenge") return createWalletOwnershipChallenge(request, env);
     if (request.method === "POST" && url.pathname === "/v1/admin/wallet-ownership/verify") return verifyWalletOwnership(request, env);
