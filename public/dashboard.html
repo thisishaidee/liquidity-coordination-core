@@ -57,6 +57,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       <button type="button" class="nav-item" data-page="liquidity"><span class="nav-glyph">▤</span>Liquidity</button>
       <button type="button" class="nav-item" data-page="forecasts"><span class="nav-glyph">⌁</span>Forecasts</button>
       <button type="button" class="nav-item" data-page="operations"><span class="nav-glyph">↗</span>Operations</button>
+      <button type="button" class="nav-item" data-page="payments"><span class="nav-glyph">⇄</span>Payments</button>
       <button type="button" class="nav-item" data-page="telegram"><span class="nav-glyph">◎</span>Telegram</button>
       <button type="button" class="nav-item" data-page="settings"><span class="nav-glyph">⚙</span>Settings</button>
     </nav>
@@ -137,6 +138,13 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
         <div class="panel"><div class="panel-head"><div><div class="panel-title">Operation history</div><div class="panel-subtitle">Newest records first · agent-reported completion is not verified settlement</div></div><select id="operationFilter" class="input" style="width:auto;min-width:150px"><option value="">All statuses</option><option>reserved</option><option>awaiting_conversion</option><option>preparing_conversion</option><option>conversion_submitted</option><option>verification_pending</option><option>ready_for_fulfillment</option><option>conversion_settled</option><option>conversion_settled_shortfall</option><option>conversion_unverified</option><option>conversion_failed</option><option>blocked</option><option>completed</option><option>released</option><option>expired</option></select></div><div class="table-wrap"><table><thead><tr><th>Created</th><th>Agent / task</th><th>Amount</th><th>Status</th><th>Approval</th><th>Execution</th><th>Settlement</th></tr></thead><tbody id="operationsTable"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody></table></div><div class="actions" style="justify-content:flex-end;margin-top:15px"><button type="button" class="btn" id="loadMoreOperations" disabled>Load more</button></div></div>
       </section>
 
+      <section class="page" id="page-payments">
+        <div class="page-head"><div><div class="pixel">Treasury execution / 06</div><h1>Payments</h1><p>Review agent payment requests, prepare exact USDC transfers, sign with the registered business wallets and reconcile finalized settlement.</p></div><div class="actions"><button type="button" class="btn" id="paymentsRefresh">Refresh ↻</button></div></div>
+        <div class="note" style="margin-bottom:14px">NERITH never receives private keys. Each required wallet signs the same reviewed transaction. The Worker verifies signatures and the exact transfer before broadcasting. A broadcast is not settlement until finalized reconciliation succeeds.</div>
+        <div id="paymentNotice" class="note" hidden aria-live="polite"></div>
+        <div id="paymentIntentsList" class="stack"><div class="empty">Loading payment requests…</div></div>
+      </section>
+
       <section class="page" id="page-telegram">
         <div class="page-head"><div><div class="pixel">Business notifications / 06</div><h1>Telegram</h1><p>Linked Telegram identities and their current permission. The available API does not expose a recent-message activity feed.</p></div><div class="actions"><a class="btn" href="/control">Manage in Business Setup ↗</a><button type="button" class="btn" id="telegramRefresh">Refresh ↻</button></div></div>
         <div class="panel"><div class="panel-head"><div><div class="panel-title">Linked connections</div><div class="panel-subtitle">Business-scoped Telegram connections</div></div><span id="telegramCount" class="chip">—</span></div><div class="table-wrap"><table><thead><tr><th>Telegram user</th><th>Chat ID</th><th>Telegram permission</th><th>Dashboard role</th><th>Status</th><th>Linked</th></tr></thead><tbody id="telegramTable"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody></table></div></div>
@@ -166,7 +174,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { businessId: "", role: "", workspace: null, agents: [], wallets: [], walletRoles: [], telegram: [], forecast: null, operations: [], nextCursor: null, operationStatus: "", loadErrors: {} };
+  const state = { businessId: "", role: "", workspace: null, agents: [], wallets: [], walletRoles: [], telegram: [], forecast: null, operations: [], paymentIntents: [], nextCursor: null, operationStatus: "", loadErrors: {} };
   const parseDecimalAtoms = (value, decimals=6) => {
     const text=String(value??"0");
     if(!/^\d+(?:\.\d+)?$/.test(text))return 0n;
@@ -220,7 +228,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   function setPage(page) {
     document.querySelectorAll(".page").forEach(el=>el.classList.toggle("active",el.id==="page-"+page));
     document.querySelectorAll("[data-page]").forEach(el=>el.classList.toggle("active",el.dataset.page===page));
-    const titles={overview:"Overview",agents:"Agents",liquidity:"Liquidity",forecasts:"Forecasts",operations:"Operations",telegram:"Telegram",settings:"Settings"};
+    const titles={overview:"Overview",agents:"Agents",liquidity:"Liquidity",forecasts:"Forecasts",operations:"Operations",payments:"Payments",telegram:"Telegram",settings:"Settings"};
     const title=document.querySelector(".topbar-title"); if(title) title.innerHTML='<span class="status-dot"></span>'+titles[page];
     $("mobileDrawer").classList.remove("open"); $("drawerBackdrop").classList.remove("open"); $("mobileMenuToggle").setAttribute("aria-expanded","false");
     window.scrollTo({top:0,behavior:"auto"});
