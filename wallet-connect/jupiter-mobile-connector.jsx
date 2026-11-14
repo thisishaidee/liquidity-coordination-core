@@ -57,12 +57,25 @@ function JupiterMobileBridge() {
         }
         return signature;
       },
-      async prepareX402Payment(requirement, expectedAddress) {
-        const address = adapter.publicKey?.toBase58?.() || "";
-        if (!adapter.connected || address !== expectedAddress) {
+      async prepareX402Payment(requirement, expectedAddress, signer = { kind: "jupiter" }) {
+        const address = expectedAddress;
+        if (signer.kind === "jupiter" && (!adapter.connected || adapter.publicKey?.toBase58?.() !== expectedAddress)) {
           throw new Error("The active Jupiter Mobile session does not match the registered x402 payment wallet.");
         }
-        if (typeof adapter.signTransaction !== "function") {
+        if (signer.kind === "okx" && (!window.NERITHOKX?.connected || window.NERITHOKX.getAddress() !== expectedAddress)) {
+          throw new Error("The active OKX session does not match the registered x402 payment wallet.");
+        }
+        if (signer.kind === "injected" && signer.provider?.publicKey?.toString?.() !== expectedAddress) {
+          throw new Error("The selected injected wallet account changed. Reconnect and request a fresh quote.");
+        }
+        if (signer.kind === "standard" && (!signer.account || signer.account.address !== expectedAddress ||
+            !signer.wallet?.features?.["solana:signTransaction"]?.signTransaction)) {
+          throw new Error("The selected Wallet Standard account cannot sign Solana transactions.");
+        }
+        if (!["jupiter", "okx", "injected", "standard"].includes(signer.kind)) {
+          throw new Error("Unsupported Solana wallet signing method.");
+        }
+        if (signer.kind === "jupiter" && typeof adapter.signTransaction !== "function") {
           throw new Error("Jupiter Mobile did not expose transaction signing for this session.");
         }
         if (!requirement || requirement.scheme !== "exact" || requirement.network !== "solana" ||
@@ -110,23 +123,57 @@ function JupiterMobileBridge() {
         preparedX402Transactions.set(preparationId, {
           transaction: new VersionedTransaction(message),
           address,
+          signer,
           expiresAt
         });
         return { preparationId, expiresAt };
       },
-      async signPreparedX402Payment(preparationId, expectedAddress) {
-        const address = adapter.publicKey?.toBase58?.() || "";
+      async signPreparedX402Payment(preparationId, expectedAddress, signer = { kind: "jupiter" }) {
         const prepared = preparedX402Transactions.get(preparationId);
         if (!prepared) throw new Error("The prepared x402 payment is missing. Request a fresh quote challenge.");
-        if (!adapter.connected || address !== expectedAddress || address !== prepared.address) {
+        if (expectedAddress !== prepared.address || signer.kind !== prepared.signer.kind) {
+          preparedX402Transactions.delete(preparationId);
+          throw new Error("The selected wallet changed after the x402 quote. Request a fresh challenge.");
+        }
+        if (signer.kind === "jupiter" && (!adapter.connected || adapter.publicKey?.toBase58?.() !== expectedAddress)) {
           preparedX402Transactions.delete(preparationId);
           throw new Error("Reconnect Jupiter Mobile to the selected x402 payment wallet, then request a fresh quote.");
+        }
+        if (signer.kind === "okx" && (!window.NERITHOKX?.connected || window.NERITHOKX.getAddress() !== expectedAddress)) {
+          preparedX402Transactions.delete(preparationId);
+          throw new Error("Reconnect OKX Wallet to the selected x402 payment wallet, then request a fresh quote.");
+        }
+        if (signer.kind === "injected" && signer.provider?.publicKey?.toString?.() !== expectedAddress) {
+          preparedX402Transactions.delete(preparationId);
+          throw new Error("The injected wallet account changed. Reconnect and request a fresh quote.");
+        }
+        if (signer.kind === "standard" && (!signer.account || signer.account.address !== expectedAddress ||
+            !signer.wallet?.features?.["solana:signTransaction"]?.signTransaction)) {
+          preparedX402Transactions.delete(preparationId);
+          throw new Error("The selected Wallet Standard account is no longer available.");
         }
         if (Date.now() >= prepared.expiresAt) {
           preparedX402Transactions.delete(preparationId);
           throw new Error("The x402 payment challenge expired. Request a fresh quote before signing.");
         }
-        const signed = await adapter.signTransaction(prepared.transaction);
+        let signed;
+        if (signer.kind === "jupiter") {
+          signed = await adapter.signTransaction(prepared.transaction);
+        } else if (signer.kind === "okx") {
+          signed = await window.NERITHOKX.signTransaction(prepared.transaction, expectedAddress);
+        } else if (signer.kind === "injected") {
+          if (typeof signer.provider.signTransaction !== "function") throw new Error("This injected wallet does not support signing a prepared transaction.");
+          signed = await signer.provider.signTransaction(prepared.transaction);
+        } else {
+          const feature = signer.wallet.features["solana:signTransaction"];
+          const result = await feature.signTransaction({
+            account: signer.account,
+            transaction: prepared.transaction,
+            chain: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
+          });
+          signed = result?.signedTransaction || result?.[0]?.signedTransaction || result?.[0];
+        }
+        if (!signed || typeof signed.serialize !== "function") throw new Error("The selected wallet did not return a signed Solana transaction.");
         preparedX402Transactions.delete(preparationId);
         const bytes = signed.serialize();
         let binary = "";
@@ -146,7 +193,9 @@ function JupiterMobileBridge() {
       }
     });
     window.NERITHJUPITER = api;
+    window.NERITHSOLANA = api;
     window.dispatchEvent(new CustomEvent("nerith:jupiter-ready"));
+    window.dispatchEvent(new CustomEvent("nerith:solana-wallet-signing-ready"));
     return () => {
       if (window.NERITHJUPITER === api) delete window.NERITHJUPITER;
     };
