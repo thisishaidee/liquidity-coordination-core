@@ -12,6 +12,14 @@ Only a business owner/admin session may submit or reconcile a funding leg. An ag
 
 ## Implemented API
 
+- `POST /v1/admin/payment-intents/:intentId/funding-legs/:legId/prepare?businessId=...`
+  - Owner/admin-only. Resolves the immutable funding leg, source wallet, destination, registered fee payer, active reservations and fee-ledger rows from D1.
+  - Requires the configured USDC mint, six-decimal canonical SPL Token Program mint, initialized source/destination ATAs, exact source owner and mint, and sufficient finalized on-chain balances.
+  - Preserves all active USDC and SOL reservation totals plus each wallet's configured minimum remaining balance before returning a transaction.
+  - Returns an unsigned base64 checked-transfer transaction, message digest, recent blockhash lifetime, fee estimate and required signer addresses.
+  - Rejects a missing destination ATA rather than spending unreserved rent. No state is mutated, no wallet is prompted, and nothing is broadcast by this endpoint.
+  - Conversion, Token-2022, arbitrary instructions and multi-leg transaction batches remain unsupported.
+
 - `POST /v1/admin/payment-intents/:intentId/funding-legs/:legId/submit`
   - Body: `{ "signature": "<base58 transaction signature>" }`
   - Resolve the intent, operation, leg, business, registered wallets, and active reservation from D1. Verify the leg belongs to the intent and business.
@@ -78,7 +86,7 @@ If any conditional statement changes zero rows, treat it as a concurrency/state 
 - Pre-migration submitted/replenishing intents with submitted legs lacking ledger rows are marked ambiguous during migration. Their existing holds are deliberately preserved for manual reconciliation rather than inventing fee evidence.
 - Conversion remains excluded until its separate transaction/fee accounting and swap settlement verifier exist.
 
-An earlier candidate commit passed typecheck, unit tests, Wrangler dry-run, the unpaid Hermes 402 evidence check, and the isolated local Worker/D1 integration suite. The current branch also opts into Solana transaction version 1 when reading finalized settlement and x402 transactions; this avoids a v0-only RPC ceiling on a network where v1 transactions are active. The newest CI run is validating this change. These checks validate the candidate implementation, not a funded-wallet transaction or a live paid x402 swap. Do not enable real signing, merge, or deploy until the current head passes CI and the remaining database failure/replay cases and wallet handoff tests are complete.
+An earlier candidate commit passed typecheck, unit tests, Wrangler dry-run, the unpaid Hermes 402 evidence check, and the isolated local Worker/D1 integration suite. The current branch also opts into Solana transaction version 1 when reading finalized settlement and x402 transactions; this avoids a v0-only RPC ceiling on a network where v1 transactions are active. The unsigned USDC funding builder and owner-only prepare endpoint are now implemented with unit tests; the current head's CI and Worker/D1 integration are still pending. These checks validate the candidate implementation, not a funded-wallet transaction or a live paid x402 swap. Do not enable real signing, merge, or deploy until the current head passes CI and the remaining database failure/replay cases and wallet handoff tests are complete.
 
 ## Balance observations
 
