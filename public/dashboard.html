@@ -377,7 +377,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   async function connectSolanaWallet(preferredWallet="") {
     if(preferredWallet==="jupiter"){
       if(!window.NERITHJUPITER?.connect)throw new Error("The Jupiter Mobile connector is still loading. Refresh the dashboard and try again.");
-      if(window.NERITHJUPITER.connected&&typeof window.NERITHJUPITER.disconnect==="function")await window.NERITHJUPITER.disconnect();
+      if(window.NERITHJUPITER.connected&&window.NERITHJUPITER.getAddress?.())return window.NERITHJUPITER.getAddress();
       return await window.NERITHJUPITER.connect();
     }
     const injected=window.okxwallet?.solana;
