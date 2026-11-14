@@ -759,6 +759,9 @@ describe("browser page script syntax", () => {
         expect(html).toContain("A closed AppKit/Wallet Standard adapter must not block injected wallet fallbacks.");
         expect(html).toContain("Retry ownership check");
         expect(html).toContain("Connect the wallet that owns this exact address");
+        expect(html).toContain("const connectedAddress=await connectSolanaWallet()");
+        expect(html).toContain("connectedAddress!==button.dataset.address");
+        expect(html).toContain("Wallet connected. Approve the ownership message in the wallet app.");
         for (const wallet of ["okx", "phantom", "solflare", "backpack", "jupiter", "browser"]) expect(html).toContain('data-wallet-choice="' + wallet + '"');
         expect(html).not.toContain("jup.ag/wallet");
         expect(html).toContain('id="jupiterWalletMount"');
