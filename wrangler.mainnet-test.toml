@@ -13,6 +13,7 @@ NERITH_PUBLIC_URL = "https://nerith-mainnet-testing.haideecoded-e0f.workers.dev"
 ADMIN_ALLOWED_ORIGINS = "https://nerith-mainnet-testing.haideecoded-e0f.workers.dev"
 SOLANA_RPC_URL = "https://solana-rpc.publicnode.com"
 SOLANA_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+SOLANA_CLUSTER = "mainnet"
 
 [[d1_databases]]
 binding = "DB"

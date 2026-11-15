@@ -26,6 +26,7 @@ import { FINALIZED_TRANSACTION_READ_OPTIONS } from "./solana-rpc-options";
 import { buildUsdcFundingTransaction, verifySignedUsdcFundingTransaction } from "./solana-funding-transaction";
 import { Connection, type Blockhash } from "@solana/web3.js";
 import { fetchFinalizedSplTokenBalance } from "./solana-finalized-balance";
+import { getSolanaNetworkConfig } from "./solana-network-config";
 
 interface Env {
   DB: D1Database;
@@ -33,6 +34,7 @@ interface Env {
   ADMIN_ALLOWED_ORIGINS?: string;
   SOLANA_RPC_URL?: string;
   SOLANA_USDC_MINT?: string;
+  SOLANA_CLUSTER?: string;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_BOT_USERNAME?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
@@ -1925,7 +1927,11 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
   const body = await readJson(request);
   if (!body) return json({ error: "invalid_json" }, 400);
   const { taskId, idempotencyKey, destination, feePayerWalletId } = body;
-  const mint = typeof body.mint === "string" ? body.mint : (env.SOLANA_USDC_MINT ?? "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+  const solanaNetwork = getSolanaNetworkConfig(env.SOLANA_CLUSTER);
+  if (env.SOLANA_USDC_MINT && env.SOLANA_USDC_MINT !== solanaNetwork.usdcMint) {
+    return json({ error: "solana_usdc_mint_cluster_mismatch" }, 503);
+  }
+  const mint = typeof body.mint === "string" ? body.mint : (env.SOLANA_USDC_MINT ?? solanaNetwork.usdcMint);
   const networkFeeLamports = typeof body.networkFeeLamports === "string" ? body.networkFeeLamports : "";
   const allowPartialPayment = body.allowPartialPayment === true;
   const slippageBps = body.slippageBps === undefined ? null : body.slippageBps;
@@ -1935,7 +1941,7 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
     typeof idempotencyKey !== "string" || !/^[a-zA-Z0-9._:-]{8,128}$/.test(idempotencyKey) ||
     typeof destination !== "string" || !destination || destination.length > 128 ||
     typeof feePayerWalletId !== "string" || !feePayerWalletId ||
-    mint !== (env.SOLANA_USDC_MINT ?? "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v") ||
+    mint !== (env.SOLANA_USDC_MINT ?? solanaNetwork.usdcMint) ||
     !/^(0|[1-9][0-9]{0,18})$/.test(networkFeeLamports) ||
     BigInt(networkFeeLamports || "0") === 0n ||
     BigInt(networkFeeLamports || "0") > 9_223_372_036_854_775_807n ||
@@ -2222,7 +2228,8 @@ async function prepareFinalPaymentAfterReplenishment(
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
   const businessId = new URL(request.url).searchParams.get("businessId") ?? "";
   if (!businessId) return json({ error: "business_id_required" }, 400);
-  if (!env.SOLANA_RPC_URL) return json({ error: "solana_rpc_not_configured" }, 503);
+  const rpcClusterError = await assertSolanaRpcCluster(env);
+  if (rpcClusterError) return rpcClusterError;
 
   const row = await env.DB.prepare(`
     SELECT i.id AS intent_id, i.status AS intent_status, i.action, i.expires_at,
@@ -2539,6 +2546,8 @@ async function prepareFundingLegTransaction(
   if (!env.SOLANA_RPC_URL || !env.SOLANA_USDC_MINT) {
     return json({ error: "solana_rpc_or_usdc_mint_not_configured" }, 503);
   }
+  const rpcClusterError = await assertSolanaRpcCluster(env);
+  if (rpcClusterError) return rpcClusterError;
 
   const row = await getFundingLegSettlementRow(env, intentId, legId, businessId);
   if (!row) return json({ error: "funding_leg_not_found" }, 404);
@@ -2796,6 +2805,8 @@ async function submitSignedFundingLegTransaction(
   const businessId = new URL(request.url).searchParams.get("businessId") ?? "";
   if (!businessId) return json({ error: "business_id_required" }, 400);
   if (!env.SOLANA_RPC_URL || !env.SOLANA_USDC_MINT) return json({ error: "solana_rpc_or_usdc_mint_not_configured" }, 503);
+  const rpcClusterError = await assertSolanaRpcCluster(env);
+  if (rpcClusterError) return rpcClusterError;
   const body = await readJson(request);
   if (!body || typeof body.transactionBase64 !== "string" ||
       body.transactionBase64.length > 22_000 ||
@@ -2980,7 +2991,8 @@ async function reconcileFundingLegTransaction(
   if (row.leg_status !== "submitted" || !row.transaction_hash) {
     return json({ error: "funding_leg_not_submitted", status: row.leg_status }, 409);
   }
-  if (!env.SOLANA_RPC_URL) return json({ error: "solana_rpc_not_configured" }, 503);
+  const rpcClusterError = await assertSolanaRpcCluster(env);
+  if (rpcClusterError) return rpcClusterError;
   if (row.intent_action === "conversion_required" || row.leg_kind === "conversion") {
     return json({ error: "conversion_settlement_not_supported" }, 409);
   }
@@ -3513,12 +3525,13 @@ async function createWalletOwnershipChallenge(request: Request, env: Env): Promi
   const expiresAt = new Date(issuedAt.getTime() + 5 * 60 * 1000);
   const issuedText = issuedAt.toISOString();
   const expiresText = expiresAt.toISOString();
+  const solanaNetwork = getSolanaNetworkConfig(env.SOLANA_CLUSTER);
   const message = [
     "NERITH WALLET OWNERSHIP PROOF",
     "Origin: " + origin,
     "Business ID: " + body.businessId,
     "Wallet address: " + wallet.address,
-    "Network: solana:mainnet-beta",
+    "Network: " + solanaNetwork.chainId,
     "Nonce: " + nonceText,
     "Issued at: " + issuedText,
     "Expires at: " + expiresText,
@@ -3527,8 +3540,8 @@ async function createWalletOwnershipChallenge(request: Request, env: Env): Promi
     "It does not authorize spending or grant agent execution permission."
   ].join(String.fromCharCode(10));
 
-  await env.DB.prepare("INSERT INTO wallet_ownership_challenges (id, business_id, wallet_id, address, origin, network, message, nonce_hash, issued_at, expires_at) VALUES (?, ?, ?, ?, ?, 'solana:mainnet-beta', ?, ?, ?, ?)")
-    .bind(challengeId, body.businessId, wallet.id, wallet.address, origin, message, await sha256(nonceText), issuedText, expiresText).run();
+  await env.DB.prepare("INSERT INTO wallet_ownership_challenges (id, business_id, wallet_id, address, origin, network, message, nonce_hash, issued_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(challengeId, body.businessId, wallet.id, wallet.address, origin, solanaNetwork.chainId, message, await sha256(nonceText), issuedText, expiresText).run();
   return json({ challengeId, walletId: wallet.id, address: wallet.address, message, expiresAt: expiresText });
 }
 
@@ -3547,7 +3560,7 @@ async function verifyWalletOwnership(request: Request, env: Env): Promise<Respon
     .bind(body.challengeId, body.businessId, body.walletId).first<{ id: string; address: string; origin: string; network: string; message: string; nonce_hash: string; expires_at: string; current_address: string }>();
   if (!challenge) return json({ error: "challenge_expired_or_consumed" }, 409);
   if (challenge.origin !== origin) return json({ error: "challenge_origin_mismatch" }, 403);
-  if (challenge.network !== "solana:mainnet-beta" || challenge.address !== challenge.current_address) return json({ error: "challenge_wallet_mismatch" }, 409);
+  if (challenge.network !== getSolanaNetworkConfig(env.SOLANA_CLUSTER).chainId || challenge.address !== challenge.current_address) return json({ error: "challenge_wallet_mismatch" }, 409);
   const nonceLine = challenge.message.split(String.fromCharCode(10)).find(line => line.startsWith("Nonce: "));
   if (!nonceLine || await sha256(nonceLine.slice(7)) !== challenge.nonce_hash) return json({ error: "challenge_integrity_failure" }, 409);
   if (!(await verifySolanaMessageSignature(challenge.address, challenge.message, body.signature))) return json({ error: "invalid_wallet_signature" }, 400);
@@ -3648,6 +3661,36 @@ async function solanaRpc<T>(rpcUrl: string, method: string, params: unknown[]): 
   throw lastError ?? new Error("Solana RPC request failed");
 }
 
+async function assertSolanaRpcCluster(env: Env): Promise<Response | null> {
+  if (!env.SOLANA_RPC_URL) return json({ error: "solana_rpc_not_configured" }, 503);
+  let network;
+  try {
+    network = getSolanaNetworkConfig(env.SOLANA_CLUSTER);
+  } catch {
+    return json({ error: "invalid_solana_cluster_configuration" }, 503);
+  }
+  if (env.SOLANA_USDC_MINT !== network.usdcMint) {
+    return json({ error: "solana_usdc_mint_cluster_mismatch", configuredChainId: network.chainId }, 503);
+  }
+  if (!/^https:\/\//i.test(env.SOLANA_RPC_URL)) {
+    return json({ error: "solana_rpc_url_invalid" }, 503);
+  }
+  try {
+    const genesisHash = await solanaRpc<string>(env.SOLANA_RPC_URL, "getGenesisHash", []);
+    const rpcChainId = "solana:" + genesisHash.slice(0, 32);
+    if (rpcChainId !== network.chainId) {
+      return json({
+        error: "solana_rpc_cluster_mismatch",
+        configuredChainId: network.chainId,
+        rpcChainId
+      }, 503);
+    }
+    return null;
+  } catch {
+    return json({ error: "solana_rpc_cluster_unavailable" }, 503);
+  }
+}
+
 async function syncSolanaBalances(request: Request, env: Env): Promise<Response> {
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
   const body = await readJson(request);
@@ -3655,17 +3698,10 @@ async function syncSolanaBalances(request: Request, env: Env): Promise<Response>
   const business = await env.DB.prepare("SELECT id FROM businesses WHERE id = ?")
     .bind(body.businessId).first<{ id: string }>();
   if (!business) return json({ error: "business_not_found" }, 404);
-  if (!env.SOLANA_RPC_URL) {
-    return json({
-      error: "solana_rpc_not_configured",
-      message: "A production Solana RPC endpoint is not configured. Add SOLANA_RPC_URL as a Worker secret before syncing wallet balances."
-    }, 503);
-  }
-  const rpcUrl = env.SOLANA_RPC_URL;
-  if (!/^https:\/\//i.test(rpcUrl)) {
-    return json({ error: "solana_rpc_url_invalid", message: "SOLANA_RPC_URL must be an HTTPS mainnet RPC endpoint." }, 503);
-  }
-  const usdcMint = env.SOLANA_USDC_MINT || "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const rpcClusterError = await assertSolanaRpcCluster(env);
+  if (rpcClusterError) return rpcClusterError;
+  const rpcUrl = env.SOLANA_RPC_URL as string;
+  const usdcMint = env.SOLANA_USDC_MINT as string;
 
   const wallets = await env.DB.prepare(
     "SELECT id, address FROM wallets WHERE business_id = ? AND network = 'solana' AND status = 'active'"
@@ -4173,6 +4209,9 @@ async function manageX402Budgets(request: Request, env: Env): Promise<Response> 
 
 async function reconcileX402PaymentAdmin(request: Request, env: Env): Promise<Response> {
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  if (getSolanaNetworkConfig(env.SOLANA_CLUSTER).cluster !== "mainnet") {
+    return json({ error: "x402_mainnet_only", message: "Hermes x402 payments are configured for Solana mainnet only." }, 409);
+  }
   const body = await readJson(request);
   if (!body || typeof body.reservationId !== "string") {
     return json({ error: "invalid_request", message: "Provide reservationId." }, 400);
@@ -4409,6 +4448,9 @@ async function proxyHermes(
 
 async function requestAdminX402DemoQuote(request: Request, env: Env): Promise<Response> {
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  if (getSolanaNetworkConfig(env.SOLANA_CLUSTER).cluster !== "mainnet") {
+    return json({ error: "x402_mainnet_only", message: "Hermes x402 payments are configured for Solana mainnet only." }, 409);
+  }
   const body = await readJson(request);
   if (!body || typeof body.businessId !== "string" ||
       typeof body.operatingWalletAddress !== "string" ||
@@ -5468,6 +5510,8 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
   if (operation.status !== "conversion_submitted" || !operation.transaction_hash || !operation.source_reservation_id) {
     return json({ error: "transaction_not_submitted", status: operation.status }, 409);
   }
+  const rpcClusterError = await assertSolanaRpcCluster(env);
+  if (rpcClusterError) return rpcClusterError;
 
   type SignatureStatus = {
     err: unknown | null;
@@ -6449,6 +6493,20 @@ export default {
       });
     }
     if (request.method === "GET" && url.pathname === "/health") {
+      let solanaNetwork;
+      try {
+        solanaNetwork = getSolanaNetworkConfig(env.SOLANA_CLUSTER);
+        if (env.SOLANA_USDC_MINT && env.SOLANA_USDC_MINT !== solanaNetwork.usdcMint) {
+          return json({ service: "nerith-api", status: "degraded", error: "solana_usdc_mint_cluster_mismatch" }, 503);
+        }
+      } catch {
+        return json({
+          service: "nerith-api",
+          status: "degraded",
+          database: "unknown",
+          error: "invalid_solana_cluster_configuration"
+        }, 503);
+      }
       try {
         const database = await env.DB.prepare("SELECT 1 AS ok").first<{ ok: number }>();
         if (database?.ok !== 1) throw new Error("D1 health query returned no result");
@@ -6458,6 +6516,9 @@ export default {
           version: "0.3.0",
           database: "connected",
           dashboard: true,
+          solanaCluster: solanaNetwork.cluster,
+          solanaChainId: solanaNetwork.chainId,
+          solanaUsdcMint: solanaNetwork.usdcMint,
           telegramConfigured: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_WEBHOOK_SECRET),
           telegramSupportConfigured: Boolean(telegramSupportMarkup(env))
         });

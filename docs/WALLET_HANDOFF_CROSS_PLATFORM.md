@@ -68,3 +68,14 @@ Before marking a wallet/platform combination supported, verify:
 7. Confirm the layout remains usable at mobile, tablet and desktop widths.
 
 No Android-only API should be required by the core signing flow. Platform-specific deep links are optional adapter implementations around the same reviewed transaction and server-verification contract.
+
+
+## 15 November 2026 — cluster-aware wallet handoff update
+
+The candidate now uses the Worker `/health` response as the source of truth for the active Solana cluster. The dashboard must confirm `solanaChainId` before connecting or signing, then passes that chain to the OKX adapter and filters Wallet Standard accounts against it. The Worker validates the RPC genesis hash and cluster-specific USDC mint before balance synchronization, funding preparation, transaction submission and settlement reconciliation.
+
+The ownership-challenge table is normalized by migration 0033 from the legacy `solana:mainnet-beta` label to canonical CAIP-2 identifiers. The migration permits only the configured mainnet and devnet identifiers. The dedicated devnet Worker is configured with its own D1 database and devnet USDC mint.
+
+Jupiter Mobile remains deliberately mainnet-only until its devnet session/network handoff is independently verified. Hermes x402 remains mainnet-only and is rejected by both dashboard and Worker on devnet. This is a safety boundary, not a completed devnet test.
+
+No Android device signing, devnet broadcast, finalized settlement, or two-leg replenishment/payment test has passed yet.

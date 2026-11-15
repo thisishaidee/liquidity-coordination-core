@@ -3,6 +3,15 @@ import { OKXSolanaProvider } from "@okxconnect/solana-provider";
 import { Transaction } from "@solana/web3.js";
 
 const MAINNET_CHAIN = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
+const DEVNET_CHAIN = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
+let activeChain = MAINNET_CHAIN;
+
+function setChain(chain) {
+  if (chain !== MAINNET_CHAIN && chain !== DEVNET_CHAIN) {
+    throw new Error("Unsupported Solana wallet chain.");
+  }
+  activeChain = chain;
+}
 let universalProvider;
 let solanaProvider;
 let initializationPromise;
@@ -38,14 +47,14 @@ async function connect() {
     const connection = provider.connect({
       namespaces: {
         solana: {
-          chains: [MAINNET_CHAIN],
-          defaultChain: MAINNET_CHAIN
+          chains: [activeChain],
+          defaultChain: activeChain
         }
       }
     });
     await connection;
   }
-  const account = solanaProvider.getAccount(MAINNET_CHAIN);
+  const account = solanaProvider.getAccount(activeChain);
   if (!account?.address) throw new Error("OKX Wallet connected without returning a Solana address.");
   window.NERITHOKX_CONNECTED_ADDRESS = account.address;
   return account.address;
@@ -54,11 +63,11 @@ async function connect() {
 async function signMessage(message, expectedAddress) {
   const provider = universalProvider || await initialize();
   if (!provider.connected()) throw new Error("OKX Wallet session is not connected. Reconnect and try again.");
-  const account = solanaProvider.getAccount(MAINNET_CHAIN);
+  const account = solanaProvider.getAccount(activeChain);
   if (!account?.address || account.address !== expectedAddress) {
     throw new Error("The connected OKX account does not match the registered wallet address.");
   }
-  const signed = await solanaProvider.signMessage(message, MAINNET_CHAIN);
+  const signed = await solanaProvider.signMessage(message, activeChain);
   if (signed?.publicKey !== expectedAddress) throw new Error("OKX Wallet signed with a different account.");
   const signature = signed?.signature;
   if (!(signature instanceof Uint8Array) || signature.length !== 64) {
@@ -69,11 +78,11 @@ async function signMessage(message, expectedAddress) {
 async function signTransaction(transaction, expectedAddress) {
   const provider = universalProvider || await initialize();
   if (!provider.connected()) throw new Error("OKX Wallet session is not connected. Reconnect and try again.");
-  const account = solanaProvider.getAccount(MAINNET_CHAIN);
+  const account = solanaProvider.getAccount(activeChain);
   if (!account?.address || account.address !== expectedAddress) {
     throw new Error("The connected OKX account does not match the selected wallet address.");
   }
-  const signed = await solanaProvider.signTransaction(transaction, MAINNET_CHAIN);
+  const signed = await solanaProvider.signTransaction(transaction, activeChain);
   if (!signed || typeof signed.serialize !== "function") {
     throw new Error("OKX Wallet did not return a signed Solana transaction.");
   }
@@ -87,7 +96,7 @@ function hasExpectedSignature(transaction, expectedAddress) {
 
 function canSignFor(expectedAddress) {
   const injectedAddress = window.okxwallet?.solana?.publicKey?.toString?.() || "";
-  const appAddress = universalProvider?.connected() ? solanaProvider?.getAccount(MAINNET_CHAIN)?.address || "" : "";
+  const appAddress = universalProvider?.connected() ? solanaProvider?.getAccount(activeChain)?.address || "" : "";
   return injectedAddress === expectedAddress || appAddress === expectedAddress;
 }
 
@@ -110,7 +119,7 @@ async function signFundingTransaction(transactionBytes, expectedAddress) {
 }
 
 window.NERITHOKX = Object.freeze({
-  initialize, connect, signMessage, signTransaction, signFundingTransaction, canSignFor,
+  initialize, connect, signMessage, signTransaction, signFundingTransaction, canSignFor, setChain,
   get connected() { return Boolean(universalProvider?.connected() || window.okxwallet?.solana?.publicKey); },
-  getAddress() { return window.okxwallet?.solana?.publicKey?.toString?.() || (universalProvider?.connected() ? solanaProvider.getAccount(MAINNET_CHAIN)?.address || "" : ""); }
+  getAddress() { return window.okxwallet?.solana?.publicKey?.toString?.() || (universalProvider?.connected() ? solanaProvider.getAccount(activeChain)?.address || "" : ""); }
 });
