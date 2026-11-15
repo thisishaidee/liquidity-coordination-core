@@ -125,5 +125,5 @@ The first CI run exposed two real issues: a TypeScript narrowing error after the
 - Public dashboard and workspace setup routes resolve. The dashboard correctly requires an authenticated business session.
 - Telegram is intentionally unconfigured in this isolated environment. No production Telegram credentials or production D1 bindings were copied.
 - The first automated post-deploy check received an HTML response immediately after deployment propagation; a subsequent deployment and live fetch returned the expected JSON health response. A retry loop was added to the deploy workflow to avoid false failures during propagation.
-- `ADMIN_BOOTSTRAP_TOKEN` is not yet configured on the isolated Worker. This secret must be set by the account owner in Cloudflare before creating a devnet test workspace. No secret value has been generated, stored, or exposed.
+- `ADMIN_BOOTSTRAP_TOKEN` is not yet configured on the isolated Worker. This secret must be set by the account owner in Cloudflare before creating a devnet test workspace. No secret value was stored in Cloudflare or exposed in the repository or chat.
 - No wallet has been connected, no message signed, no transaction prepared/broadcast, and no funds moved.
