@@ -78,3 +78,16 @@ The candidate CI still uses mutable GitHub Action major tags and `npm install`; 
 7. Only then prepare a production release plan and decide whether PR #52 can be marked ready and merged.
 
 **Current release status: production health is green; candidate code is testable in isolation; Android devnet wallet execution is not yet ready; real payment execution remains unproven.**
+
+
+### Additional finding — OKX/Jupiter connectors are not in the funding-leg signing loop
+
+A source-level trace of `public/dashboard.html` shows:
+- Dashboard startup initializes `window.NERITHOKX`; the page also loads the Jupiter/Reown connector.
+- `connectSolanaWallet()` can connect the injected OKX provider, OKX App Connect, or Jupiter Mobile for wallet connection/ownership proof.
+- The payment funding-leg path calls `signFundingTransaction()`, which iterates only `standardSolanaWallets` and invokes only the Wallet Standard `solana:signTransaction` feature.
+- It does not call `window.okxwallet.solana.signTransaction`, `window.NERITHOKX.signTransaction`, or `window.NERITHJUPITER.signTransaction` for funding legs. Those named connectors are wired into the separate x402 payment path, not the checked-USDC funding-leg path.
+
+This creates a real adapter gap: an injected OKX/Jupiter connection can appear connected and may complete the ownership message challenge, but the subsequent funding-leg transaction signing code may not use that same connector. Unless the wallet independently registers a Wallet Standard adapter in the page, the signer loop cannot use it. This is consistent with the distinction between “wallet connected” and “funding transaction can be signed”; it is not proof of an RPC or D1 failure.
+
+**Required fix before Android testing:** unify connection and transaction signing behind one adapter contract. The funding signer must support the explicitly selected injected OKX provider and OKX App Connect path, preserve the exact prepared message digest after each signer response, verify that the returned signer public key matches the required signer address, and fail closed on account mismatch/cancellation. Add tests for the single-wallet fee-payer/source-owner case and the two-distinct-wallet case. Jupiter support should only be claimed for funding legs after its adapter is wired into this same flow and tested. Do not route signing to the x402-specific prepared-transaction map as a shortcut; funding legs and x402 use different transaction policies and verification rules.
