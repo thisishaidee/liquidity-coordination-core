@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import worker from "../src/index";
 
 type QueryRecord = { sql: string; values: unknown[] };
-type TestEnv = { DB: D1Database; ADMIN_BOOTSTRAP_TOKEN?: string; TELEGRAM_BOT_TOKEN?: string; TELEGRAM_WEBHOOK_SECRET?: string; SOLANA_CLUSTER?: string };
+type TestEnv = { DB: D1Database; ADMIN_BOOTSTRAP_TOKEN?: string; TELEGRAM_BOT_TOKEN?: string; TELEGRAM_WEBHOOK_SECRET?: string; SOLANA_CLUSTER?: string; SOLANA_USDC_MINT?: string };
 
 function makeEnv(options: {
   businessExists?: boolean;
@@ -75,6 +75,20 @@ describe("admin dashboard read endpoints", () => {
       status: "ok",
       solanaCluster: "devnet",
       solanaChainId: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
+    });
+  });
+
+  it("fails health closed when the configured USDC mint belongs to another cluster", async () => {
+    const { env } = makeEnv();
+    const response = await call("/health", {
+      ...env,
+      SOLANA_CLUSTER: "devnet",
+      SOLANA_USDC_MINT: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      status: "degraded",
+      error: "solana_usdc_mint_cluster_mismatch"
     });
   });
 
