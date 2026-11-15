@@ -26,7 +26,7 @@ import { FINALIZED_TRANSACTION_READ_OPTIONS } from "./solana-rpc-options";
 import { buildUsdcFundingTransaction, verifySignedUsdcFundingTransaction } from "./solana-funding-transaction";
 import { Connection, type Blockhash } from "@solana/web3.js";
 import { fetchFinalizedSplTokenBalance } from "./solana-finalized-balance";
-import { getSolanaNetworkConfig } from "./solana-network-config";
+import { getSolanaNetworkConfig, isHermesX402Enabled } from "./solana-network-config";
 
 interface Env {
   DB: D1Database;
@@ -4209,7 +4209,7 @@ async function manageX402Budgets(request: Request, env: Env): Promise<Response> 
 
 async function reconcileX402PaymentAdmin(request: Request, env: Env): Promise<Response> {
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
-  if (getSolanaNetworkConfig(env.SOLANA_CLUSTER).cluster !== "mainnet") {
+  if (!isHermesX402Enabled(env.SOLANA_CLUSTER)) {
     return json({ error: "x402_mainnet_only", message: "Hermes x402 payments are configured for Solana mainnet only." }, 409);
   }
   const body = await readJson(request);
