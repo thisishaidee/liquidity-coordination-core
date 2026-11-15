@@ -80,14 +80,15 @@ The candidate CI still uses mutable GitHub Action major tags and `npm install`; 
 **Current release status: production health is green; candidate code is testable in isolation; Android devnet wallet execution is not yet ready; real payment execution remains unproven.**
 
 
-### Additional finding — OKX/Jupiter connectors are not in the funding-leg signing loop
+### Additional finding — OKX/Jupiter funding signer gap addressed in PR #52
 
-A source-level trace of `public/dashboard.html` shows:
-- Dashboard startup initializes `window.NERITHOKX`; the page also loads the Jupiter/Reown connector.
-- `connectSolanaWallet()` can connect the injected OKX provider, OKX App Connect, or Jupiter Mobile for wallet connection/ownership proof.
-- The payment funding-leg path calls `signFundingTransaction()`, which iterates only `standardSolanaWallets` and invokes only the Wallet Standard `solana:signTransaction` feature.
-- It does not call `window.okxwallet.solana.signTransaction`, `window.NERITHOKX.signTransaction`, or `window.NERITHJUPITER.signTransaction` for funding legs. Those named connectors are wired into the separate x402 payment path, not the checked-USDC funding-leg path.
+The first source-level review found that the payment funding-leg signer only iterated Wallet Standard providers, even though the page separately initialized OKX and Jupiter adapters. That could allow wallet connection/ownership proof to succeed while the funding transaction could not be signed by that same adapter.
 
-This creates a real adapter gap: an injected OKX/Jupiter connection can appear connected and may complete the ownership message challenge, but the subsequent funding-leg transaction signing code may not use that same connector. Unless the wallet independently registers a Wallet Standard adapter in the page, the signer loop cannot use it. This is consistent with the distinction between “wallet connected” and “funding transaction can be signed”; it is not proof of an RPC or D1 failure.
+A candidate fix has now been committed directly to PR #52's branch:
+- `scripts/okx-wallet-connector.js` now exposes `canSignFor` and `signFundingTransaction`, supporting both the injected OKX provider and OKX App Connect. It deserializes the exact prepared transaction, checks the expected signer slot, and preserves partial signatures.
+- `wallet-connect/jupiter-mobile-connector.jsx` now exposes equivalent funding-leg signing methods for the currently connected Jupiter account.
+- `public/dashboard.html` now calls those adapters for each required funding-leg signer after the Wallet Standard path, then re-checks the prepared message digest before submission.
+- `test/responsive-layout.test.ts` now has regression assertions that the dashboard calls both adapters and that the generated bundles expose their signer methods.
+- `docs/WALLET_HANDOFF_CROSS_PLATFORM.md` now distinguishes implementation support from device-verified support.
 
-**Required fix before Android testing:** unify connection and transaction signing behind one adapter contract. The funding signer must support the explicitly selected injected OKX provider and OKX App Connect path, preserve the exact prepared message digest after each signer response, verify that the returned signer public key matches the required signer address, and fail closed on account mismatch/cancellation. Add tests for the single-wallet fee-payer/source-owner case and the two-distinct-wallet case. Jupiter support should only be claimed for funding legs after its adapter is wired into this same flow and tested. Do not route signing to the x402-specific prepared-transaction map as a shortcut; funding legs and x402 use different transaction policies and verification rules.
+The change is on `feat/solana-wallet-ownership-proof` and is still candidate code. GitHub Actions run `43663894209` is currently validating it; the unpaid Hermes 402 probe passed, while typecheck, automated tests, Worker dry-run and local Worker/D1 replay are still running. No Android wallet signing or funded transaction has been tested yet. This is not a claim that OKX/Jupiter device handoff is now verified.
