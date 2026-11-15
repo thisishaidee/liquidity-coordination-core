@@ -98,3 +98,16 @@ A candidate fix has now been committed directly to PR #52's branch:
 - `docs/WALLET_HANDOFF_CROSS_PLATFORM.md` now distinguishes implementation support from device-verified support.
 
 The change is on `feat/solana-wallet-ownership-proof` and is still candidate code. GitHub Actions run `43663894209` is currently validating it; the unpaid Hermes 402 probe passed, while typecheck, automated tests, Worker dry-run and local Worker/D1 replay are still running. No Android wallet signing or funded transaction has been tested yet. This is not a claim that OKX/Jupiter device handoff is now verified.
+
+
+### Additional network-safety work — canonical mainnet/devnet separation
+
+PR #52 now also contains:
+- `SOLANA_CLUSTER` configuration with canonical CAIP-2 identifiers for mainnet and devnet and the matching USDC mint for each cluster.
+- Migration 0033, which converts legacy ownership challenges from `solana:mainnet-beta` to the canonical mainnet chain ID and permits the devnet chain ID. It temporarily drops and restores the wallet identity-change trigger while rebuilding the constrained table.
+- A dashboard preflight that reads `/health` before wallet connection/signing, selects the Worker-configured chain, and filters Wallet Standard accounts accordingly.
+- An OKX adapter that uses the configured chain. Jupiter Mobile remains explicitly mainnet-only until devnet handoff is tested.
+- Mainnet-only Hermes x402 gates in both UI and Worker.
+- An RPC preflight that checks `getGenesisHash` against the configured chain and checks the USDC mint before balance sync, funding preparation, transaction submission and settlement reconciliation.
+
+The first CI run exposed two real issues: a TypeScript narrowing error after the RPC preflight and a SQLite trigger dependency when rebuilding the ownership-challenge table. Both were corrected. A brittle x402 route test was replaced by a direct unit test of the explicit mainnet-only policy. CI run `43665281655` is now validating the revised branch; the unpaid Hermes 402 evidence has passed, while typecheck/tests and local D1 replay are still in progress. No remote devnet Worker deployment or wallet transaction has occurred.
