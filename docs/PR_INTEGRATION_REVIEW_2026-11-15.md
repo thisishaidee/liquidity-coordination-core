@@ -114,3 +114,16 @@ The first CI run exposed two real issues: a TypeScript narrowing error after the
 
 
 **Latest CI status:** run `43665493544` has passed the verification job (typecheck, full automated tests and Wrangler dry-run) and the unpaid Hermes 402 evidence job. The isolated local Worker/D1 replay is still running; it has not yet reported a final result. No Worker deployment or signed/broadcast transaction has been performed.
+
+
+### Isolated remote devnet deployment — 15 November 2026
+
+- Dedicated D1 database `nerith-devnet-testing` (`e5d9ea84-e4f9-48fc-95c8-d78b19ffc13f`) was confirmed empty before migration.
+- All migrations 0001–0033 were applied to that isolated database. A read-only query confirmed all 33 migration names in `d1_migrations`.
+- Worker `nerith-devnet-testing` was deployed successfully to `https://nerith-devnet-testing.haideecoded-e0f.workers.dev`.
+- Live `/health` returned `status=ok`, `database=connected`, `solanaCluster=devnet`, the canonical devnet CAIP-2 chain ID, and the devnet USDC mint.
+- Public dashboard and workspace setup routes resolve. The dashboard correctly requires an authenticated business session.
+- Telegram is intentionally unconfigured in this isolated environment. No production Telegram credentials or production D1 bindings were copied.
+- The first automated post-deploy check received an HTML response immediately after deployment propagation; a subsequent deployment and live fetch returned the expected JSON health response. A retry loop was added to the deploy workflow to avoid false failures during propagation.
+- `ADMIN_BOOTSTRAP_TOKEN` is not yet configured on the isolated Worker. This secret must be set by the account owner in Cloudflare before creating a devnet test workspace. No secret value has been generated, stored, or exposed.
+- No wallet has been connected, no message signed, no transaction prepared/broadcast, and no funds moved.
