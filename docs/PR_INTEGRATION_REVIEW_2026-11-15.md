@@ -1,0 +1,80 @@
+# NERITH PR integration review — 15 November 2026
+
+**Review base:** `main` at `a8307d4ba7742717b9d9893d1e66c8554f636501`  
+**Candidates:** PR #51 `feat/autonomous-liquidity-foundation`; PR #52 `feat/solana-wallet-ownership-proof`  
+**Scope:** ancestry, overlapping schema/core/UI changes, wallet adapters, devnet test readiness, payment release gates.  
+**Actions:** read-only review. No PR merged, no production D1 writes, no production deploy, no wallet signatures or broadcasts.
+
+## 1. Integration decision
+
+**PR #52 is the superset candidate. Do not merge PR #51 and PR #52 independently.**
+
+Evidence:
+- Both branches contain byte-identical `migrations/0025_wallet_role_assignments.sql`.
+- Both modify `src/core.ts`, `src/index.ts`, `src/admin-auth.ts`, `src/business-dashboard.ts`, `public/dashboard.html`, and the same tests.
+- Comparing PR #51's head with PR #52's head reports PR #52 ahead by 469 commits and behind by one commit. The sole commit on PR #51 not present in PR #52 is `8d000acb2d75a5bd30ef07fbd36935a830f28771`, titled **“Fix wallet role API table formatting”**. Its only change is a README Markdown line-break/table formatting correction; it adds no runtime, schema, wallet or payment behavior.
+- PR #52 therefore already contains the substantive wallet-role/planner foundation from PR #51 plus the ownership proof, payment intent, funding-leg and settlement work. PR #51 should be treated as superseded, not stacked or merged after #52.
+
+Suggested repository housekeeping after the candidate has been fully validated: close PR #51 with a superseded-by-PR-52 explanation, or leave it open until the final PR #52 release review is complete. No need to cherry-pick the README-only formatting commit.
+
+## 2. Wallet and payment code review
+
+The candidate separates address ownership proof from spending authority and keeps the browser wallet as signer. The Worker verifies the signed legacy transaction against the immutable funding leg before broadcast. Settlement is separate and requires finalized RPC evidence. The implementation rejects extra instructions in the funding-leg transaction and checks the exact checked-USDC transfer, source/destination ATAs, mint, amount, decimals, fee payer and signatures.
+
+The architecture document correctly states that:
+- address proof is not beneficial-ownership proof or spending authority;
+- the current Ed25519 message challenge does not support PDA/Squads vault ownership;
+- USDC delegate authority is not arbitrary swap authority;
+- conversion, final USDC payment and Hermes x402 API fees are distinct operations;
+- no global NERITH hot signer or autonomous production signer is approved.
+
+**No funded transaction is proven.** Passing tests, Worker dry-run, local D1 integration and an unpaid Hermes 402 challenge do not establish real wallet signing, broadcast, finality, paid x402 settlement or successful two-leg replenishment/payment. Keep the candidate unapproved for production funds until device signing and finalized devnet settlement are demonstrated.
+
+## 3. Android/devnet blocker found
+
+The remote devnet test setup is not currently ready for an Android wallet round-trip:
+
+- Cloudflare lists D1 database `nerith-devnet-testing` (`e5d9ea84-e4f9-48fc-95c8-d78b19ffc13f`), but a read-only query confirms it has no application tables or migration ledger yet.
+- Cloudflare's Worker list does not contain a `nerith-devnet-testing` Worker. The configured devnet test Worker has therefore not been deployed.
+- `wrangler.devnet.remote.toml` points at `https://nerith-devnet-testing.workers.dev` and `https://nerith-devnet-testing.pages.dev`, but those routes have not been established in Cloudflare. The config does not set `workers_dev = true`; the worker hostname must not be assumed live.
+- The current OKX connector hardcodes the Solana mainnet chain identifier. The Jupiter/Reown bridge also hardcodes mainnet chain metadata, the mainnet USDC mint and `https://api.mainnet-beta.solana.com`. Those adapters cannot be used as a genuine devnet signing test simply by pointing the Worker at devnet RPC.
+- The mainnet-test Worker and database are separate and healthy, but they are explicitly mainnet testing resources, not a devnet substitute.
+
+Required before mobile devnet QA:
+1. Make the wallet adapter cluster-aware (network, chain identifier, RPC and USDC mint all selected from a validated environment configuration; no silent mainnet fallback).
+2. Provision/deploy the dedicated devnet Worker and apply migrations only to its dedicated D1 database.
+3. Set the exact devnet test origin and allowed-origin configuration, verify the public health endpoint, and confirm the deployed Worker is bound to the devnet D1 UUID.
+4. Test Android connect, ownership message signing, transaction signing, signed-byte return, Worker verification, broadcast and finalized settlement with devnet test tokens.
+5. Test reserve replenishment and final payment as two distinct finalized transactions. Record each signature and reconcile both from finalized RPC.
+
+Do not use the mainnet-test Worker for this devnet sequence, and do not send real funds to the test environment.
+
+## 4. Cloudflare D1 evidence
+
+A direct read-only query to the isolated mainnet-test D1 succeeds:
+- Migration ledger contains `0001_initial.sql` through `0032_funding_leg_fee_ledger.sql`.
+- Current test data: 1 business, 1 agent, 2 wallets, 0 operations and 0 business payment intents.
+
+The devnet D1 exists but is empty/unmigrated.
+
+The production database appears in Cloudflare's D1 database listing, and production Worker health reports its runtime database connection as healthy. However, the D1 management query endpoint still returns HTTP 404 / error 7404 for the production database UUID. The exact production migration ledger and active reservation state therefore remain unverified. Do not infer production has migrations 0025–0032.
+
+## 5. Deployment safety
+
+The current CI workflow deploy job runs on pushes to `main`, applies pending production D1 migrations remotely, and then deploys the Worker. Merging PR #52 would therefore trigger a production schema/deploy path after CI passes. Because production migration state and active reservation state remain unverified, do not merge or deploy this candidate yet.
+
+Before release, add a production migration preflight/snapshot and explicit review of active, submitted, failed and ambiguous reservations. Preserve all ambiguous holds. Keep migration application and Worker deployment as separately observable steps with a tested rollback/forward-recovery plan.
+
+The candidate CI still uses mutable GitHub Action major tags and `npm install`; the branch's own security audit correctly records supply-chain hardening as an open medium-priority item. This is not the immediate blocker to isolated devnet testing, but should be addressed before production funds are enabled.
+
+## 6. Next implementation sequence
+
+1. Keep PR #52 as the sole integration candidate; do not merge PR #51 separately.
+2. Refactor wallet adapters to support an explicit devnet configuration without changing the existing mainnet defaults for production.
+3. Provision the remote devnet Worker against the already-created empty devnet D1 database; apply candidate migrations only there.
+4. Run the full Android signing and finalized-settlement test matrix.
+5. Verify the Telegram webhook/approval/notification round-trip separately; current health configuration is not proof of webhook registration or delivery.
+6. Re-check production D1 migration and reservation state through an authorized working path.
+7. Only then prepare a production release plan and decide whether PR #52 can be marked ready and merged.
+
+**Current release status: production health is green; candidate code is testable in isolation; Android devnet wallet execution is not yet ready; real payment execution remains unproven.**
