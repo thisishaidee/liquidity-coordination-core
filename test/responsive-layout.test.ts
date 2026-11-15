@@ -89,6 +89,16 @@ describe("responsive page source contracts", () => {
     expect(businessDashboardHtml).toContain(".wallet-role-help{margin-top:9px;color:var(--muted);font-size:10px;line-height:1.6;overflow-wrap:anywhere;word-break:break-word}");
   });
 
+  it("loads the Worker-selected Solana cluster before wallet signing", () => {
+    expect(businessDashboardHtml).toContain("async function ensureSolanaNetworkConfig()");
+    expect(businessDashboardHtml).toContain('fetch("/health"');
+    expect(businessDashboardHtml).toContain("payload.solanaChainId");
+    expect(businessDashboardHtml).toContain("window.NERITHOKX?.setChain?.(activeSolanaChain)");
+    expect(businessDashboardHtml).toContain("window.NERITHJUPITER?.setChain?.(activeSolanaChain)");
+    expect(businessDashboardHtml).toContain("SOLANA_DEVNET_CHAIN");
+    expect(businessDashboardHtml).toContain("Hermes x402 payment is currently mainnet-only");
+  });
+
   it("routes funding-leg signing through the connected OKX and Jupiter wallet adapters", () => {
     expect(businessDashboardHtml).toContain('window.NERITHOKX?.canSignFor?.(signerAddress)');
     expect(businessDashboardHtml).toContain('window.NERITHOKX.signFundingTransaction(transaction, signerAddress)');
