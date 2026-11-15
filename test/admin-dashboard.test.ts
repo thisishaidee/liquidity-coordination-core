@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import worker from "../src/index";
 
 type QueryRecord = { sql: string; values: unknown[] };
-type TestEnv = { DB: D1Database; ADMIN_BOOTSTRAP_TOKEN?: string; TELEGRAM_BOT_TOKEN?: string; TELEGRAM_WEBHOOK_SECRET?: string };
+type TestEnv = { DB: D1Database; ADMIN_BOOTSTRAP_TOKEN?: string; TELEGRAM_BOT_TOKEN?: string; TELEGRAM_WEBHOOK_SECRET?: string; SOLANA_CLUSTER?: string };
 
 function makeEnv(options: {
   businessExists?: boolean;
@@ -26,6 +26,7 @@ function makeEnv(options: {
           if (sql.includes("FROM admin_sessions")) {
             return (options.cookieSessionValid ? { business_id: options.sessionBusinessId ?? "biz_1", role: "owner", telegram_user_id: null } : null) as T | null;
           }
+          if (sql.includes("SELECT 1 AS ok")) return { ok: 1 } as T;
           if (sql.includes("FROM businesses")) {
             return (options.businessExists === false ? null : { id: values[0] }) as T | null;
           }
@@ -58,6 +59,34 @@ async function call(path: string, env: TestEnv, headers: HeadersInit = {}) {
 }
 
 describe("admin dashboard read endpoints", () => {
+  it("publishes the configured canonical Solana chain in health", async () => {
+    const { env } = makeEnv();
+    const mainnet = await call("/health", env);
+    expect(mainnet.status).toBe(200);
+    expect(await mainnet.json()).toMatchObject({
+      status: "ok",
+      solanaCluster: "mainnet",
+      solanaChainId: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
+    });
+
+    const devnet = await call("/health", { ...env, SOLANA_CLUSTER: "devnet" });
+    expect(devnet.status).toBe(200);
+    expect(await devnet.json()).toMatchObject({
+      status: "ok",
+      solanaCluster: "devnet",
+      solanaChainId: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
+    });
+  });
+
+  it("fails health closed for an unsupported Solana cluster", async () => {
+    const { env } = makeEnv();
+    const response = await call("/health", { ...env, SOLANA_CLUSTER: "localnet" });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      status: "degraded",
+      error: "invalid_solana_cluster_configuration"
+    });
+  });
   it("lists payment intents only inside the authenticated business session", async () => {
     const { env, queries } = makeEnv({ cookieSessionValid: true, sessionBusinessId: "biz_1" });
     const response = await call("/v1/admin/payment-intents?businessId=biz_1", env, sessionHeaders);
