@@ -2,7 +2,7 @@
 
 ## Status
 
-The current branch implements Wallet Standard discovery for ownership challenges and the business Payments dashboard. The dashboard now prepares unsigned checked-USDC transfers, sequentially requests `solana:signTransaction` signatures from each required mainnet account, and submits the signed bytes plus the prepared message digest to the Worker. The Worker verifies the exact transaction and broadcasts only after validation. The finalized RPC reconciliation remains separate. No Android, iOS, desktop or Telegram Mini App device test has passed. Do not advertise any wallet/platform combination as device-verified until its full sign-and-return flow has passed a device test.
+The current branch implements Wallet Standard discovery plus explicit OKX and Jupiter Mobile adapter paths for ownership challenges and the business Payments dashboard. The dashboard prepares unsigned checked-USDC transfers, requests each required signer sequentially, preserves previously collected signatures, and submits the signed bytes plus the prepared message digest to the Worker. The Worker verifies the exact transaction and broadcasts only after validation. The finalized RPC reconciliation remains separate. The funding-leg signer now calls the OKX and Jupiter adapter methods when the connected account matches the required signer; this is implementation coverage, not device verification. No Android, iOS, desktop or Telegram Mini App device test has passed. Do not advertise any wallet/platform combination as device-verified until its full sign-and-return flow has passed a device test.
 
 ## Telegram transaction execution
 
@@ -10,7 +10,7 @@ Telegram is intended to be a first-class transaction surface. The Bot handles re
 
 ## Platform requirement
 
-Wallet handoff is platform-neutral. Android is an early test target because the project is being developed and validated on an Android device; it is not the product's platform boundary. The table below describes target adapter strategies, not verified implementations. The current dashboard signing path uses Wallet Standard only; WalletConnect and platform-specific deep-link adapters remain future work.
+Wallet handoff is platform-neutral. Android is an early test target because the project is being developed and validated on an Android device; it is not the product's platform boundary. The table below describes target adapter strategies, not verified implementations. The dashboard signing path supports Wallet Standard plus the explicit OKX and Jupiter Mobile adapters. WalletConnect-specific session handling and platform-specific deep-link adapters remain future work.
 
 | Surface | Connection strategy | Required return path |
 |---|---|---|
