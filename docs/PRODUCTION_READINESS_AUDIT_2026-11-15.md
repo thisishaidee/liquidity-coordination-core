@@ -123,7 +123,7 @@ This environment is isolated from the production D1 binding and has no Telegram 
 
 The current `main` branch contains migrations `0001` through `0024`. PR #52 adds migrations `0025` through `0032`. The isolated test D1 confirms all 32 candidate migrations are applied.
 
-The Cloudflare D1 listing shows the production database UUID and the Worker runtime health query confirms D1 is connected. However, direct Cloudflare D1 management API reads/queries against that listed production UUID returned a not-found response during this audit, so the exact production `d1_migrations` state could not be independently read through that API call. Do not assume migrations 0025–0032 exist in production; they are not in main and PR #52 explicitly says they have not been applied.
+The production D1 UUID was initially mistyped in the first read-only query, which caused the 404. A fresh exact-name Cloudflare listing returned the correct UUID `1b3d32d5-6e1c-490d-a550-c06baf8b918e`. A read-only query against that exact database succeeded and confirmed the production migration ledger is `0001_initial.sql` through `0024_telegram_dashboard_signin.sql`; migrations 0025–0032 are not applied. Production currently has 1 business, 1 agent, 2 active business wallets, 4 balance snapshots, 1 blocked operation with no transaction hash, and 0 reservation rows (therefore 0 active or submitted reservations). The existing balances are zero and their latest snapshots are dated 12 November 2026. The candidate's new payment-intent/funding-leg tables do not exist in production yet. This resolves the prior API 404; the runtime health endpoint and management query are now consistent.
 
 ## 7. Prioritized findings
 
