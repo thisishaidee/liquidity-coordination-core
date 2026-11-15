@@ -317,14 +317,33 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   // Wallet Standard discovery supports injected desktop and mobile wallet providers
   // without binding the dashboard to a single wallet brand.
   const standardSolanaWallets=new Set();
-  const supportedSolanaMainnetChains=new Set([
-    "solana:mainnet",
-    "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
-  ]);
-  const supportsSolanaMainnet=chains=>Array.isArray(chains)&&chains.some(chain=>supportedSolanaMainnetChains.has(chain));
+  const SOLANA_MAINNET_CHAIN="solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
+  const SOLANA_DEVNET_CHAIN="solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
+  const knownSolanaChains=new Set([SOLANA_MAINNET_CHAIN,SOLANA_DEVNET_CHAIN,"solana:mainnet"]);
+  let activeSolanaChain=SOLANA_MAINNET_CHAIN;
+  let solanaNetworkConfigPromise=null;
+  const supportsActiveSolanaChain=chains=>Array.isArray(chains)&&chains.some(chain=>
+    chain===activeSolanaChain||(activeSolanaChain===SOLANA_MAINNET_CHAIN&&chain==="solana:mainnet"));
+  const supportsAnySolanaChain=chains=>Array.isArray(chains)&&chains.some(chain=>knownSolanaChains.has(chain));
+  async function ensureSolanaNetworkConfig(){
+    if(!solanaNetworkConfigPromise){
+      solanaNetworkConfigPromise=(async()=>{
+        const response=await fetch("/health",{credentials:"same-origin",cache:"no-store",headers:{accept:"application/json"}});
+        const payload=await response.json().catch(()=>({}));
+        if(!response.ok||payload.status!=="ok")throw new Error("NERITH could not confirm the configured Solana network. Refresh the dashboard and retry.");
+        if(!knownSolanaChains.has(payload.solanaChainId))throw new Error("NERITH received an unsupported Solana network configuration. Wallet signing is disabled.");
+        activeSolanaChain=payload.solanaChainId;
+        window.NERITHOKX?.setChain?.(activeSolanaChain);
+        window.NERITHJUPITER?.setChain?.(activeSolanaChain);
+        return activeSolanaChain;
+      })().catch(error=>{solanaNetworkConfigPromise=null;throw error;});
+    }
+    return solanaNetworkConfigPromise;
+  }
+  window.addEventListener("nerith:jupiter-ready",()=>window.NERITHJUPITER?.setChain?.(activeSolanaChain));
   const standardWalletApi=Object.freeze({
     register:(...wallets)=>{
-      const accepted=wallets.filter(wallet=>wallet&&supportsSolanaMainnet(wallet.chains)&&
+      const accepted=wallets.filter(wallet=>wallet&&supportsAnySolanaChain(wallet.chains)&&
         wallet.features&&!standardSolanaWallets.has(wallet));
       accepted.forEach(wallet=>standardSolanaWallets.add(wallet));
       return ()=>accepted.forEach(wallet=>standardSolanaWallets.delete(wallet));
@@ -354,7 +373,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       return {kind:"okx",label:"OKX Wallet"};
     }
     for(const wallet of standardSolanaWallets) {
-      const account=(wallet.accounts||[]).find(item=>item.address===address&&supportsSolanaMainnet(item.chains));
+      const account=(wallet.accounts||[]).find(item=>item.address===address&&supportsActiveSolanaChain(item.chains));
       const signFeature=wallet.features?.["solana:signTransaction"];
       const versions=signFeature?.supportedTransactionVersions;
       const supportsLegacy=Array.isArray(versions)?versions.includes("legacy"):Boolean(versions?.has?.("legacy"));
@@ -375,6 +394,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     throw new Error("The selected fee wallet is not connected with transaction-signing permission. Reconnect it, then request a fresh quote.");
   }
   async function connectSolanaWallet(preferredWallet="",expectedAddress="") {
+    await ensureSolanaNetworkConfig();
     if(preferredWallet==="jupiter"){
       if(!window.NERITHJUPITER?.connect)throw new Error("The Jupiter Mobile connector is still loading. Refresh the dashboard and try again.");
       return await window.NERITHJUPITER.connect(expectedAddress);
@@ -398,7 +418,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       if(typeof connectFeature?.connect!=="function")continue;
       try{
         const connected=await connectFeature.connect();
-        const account=(connected?.accounts||[]).find(item=>supportsSolanaMainnet(item.chains));
+        const account=(connected?.accounts||[]).find(item=>supportsActiveSolanaChain(item.chains));
         if(account?.address)return account.address;
       }catch(error){
         // A closed Wallet Standard adapter must not block other wallet providers.
@@ -455,11 +475,11 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       const connectFeature=wallet.features["standard:connect"];
       const signMessageFeature=wallet.features["solana:signMessage"];
       if(typeof connectFeature?.connect!=="function"||typeof signMessageFeature?.signMessage!=="function")continue;
-      let account=(wallet.accounts||[]).find(item=>item.address===address&&supportsSolanaMainnet(item.chains));
+      let account=(wallet.accounts||[]).find(item=>item.address===address&&supportsActiveSolanaChain(item.chains));
       if(!account) {
         try{
           const connected=await connectFeature.connect();
-          account=(connected?.accounts||[]).find(item=>item.address===address&&supportsSolanaMainnet(item.chains));
+          account=(connected?.accounts||[]).find(item=>item.address===address&&supportsActiveSolanaChain(item.chains));
         }catch(error){continue;}
       }
       if(!account)continue;
@@ -705,6 +725,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
     return Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2,"0")).join("");
   }
   async function signFundingTransaction(prepared) {
+    await ensureSolanaNetworkConfig();
     let transaction = base64ToBytes(prepared.transactionBase64);
     if (await sha256Hex(extractLegacyMessageBytes(transaction)) !== prepared.messageSha256) {
       throw new Error("The unsigned transaction does not match the Worker-prepared message digest.");
@@ -725,10 +746,10 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
           }
           connectedAccountsByWallet.set(wallet, accounts);
         }
-        const account = accounts.find(item => item.address === signerAddress && supportsSolanaMainnet(item.chains) &&
+        const account = accounts.find(item => item.address === signerAddress && supportsActiveSolanaChain(item.chains) &&
           Array.isArray(item.features) && item.features.includes("solana:signTransaction"));
         if (!account) continue;
-        const chain = account.chains.find(value => supportedSolanaMainnetChains.has(value)) || "solana:mainnet";
+        const chain = account.chains.find(value => (value===activeSolanaChain||(activeSolanaChain===SOLANA_MAINNET_CHAIN&&value==="solana:mainnet"))) || activeSolanaChain;
         const output = await sign.signTransaction({ account, transaction, chain });
         const signedTransaction = output?.[0]?.signedTransaction;
         if (!(signedTransaction instanceof Uint8Array) || signedTransaction.length < 100 || signedTransaction.length > 16384) {
@@ -1040,6 +1061,8 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
       if (!connector || typeof connector.prepareX402Payment !== "function") {
         throw new Error("The Solana transaction-signing module is still loading. Refresh the dashboard and try again.");
       }
+      await ensureSolanaNetworkConfig();
+      if(activeSolanaChain!==SOLANA_MAINNET_CHAIN)throw new Error("Hermes x402 payment is currently mainnet-only. No devnet payment was signed.");
       const signer = getX402WalletSigner(body.paymentWalletAddress);
       $("x402DemoStatus").textContent = "HTTP 402 received. Preparing the exact USDC transfer for " + signer.label + "…";
       const prepared = await connector.prepareX402Payment(requirement, body.paymentWalletAddress, signer);
