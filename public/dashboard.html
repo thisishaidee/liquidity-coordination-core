@@ -741,7 +741,31 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
         signedByWallet = true;
         break;
       }
-      if (!signedByWallet) throw new Error("No connected Wallet Standard account was found for required signer " + signerAddress + ". Connect the matching business wallet and retry.");
+      if (!signedByWallet && window.NERITHOKX?.canSignFor?.(signerAddress) &&
+          typeof window.NERITHOKX.signFundingTransaction === "function") {
+        const signedTransaction = await window.NERITHOKX.signFundingTransaction(transaction, signerAddress);
+        if (!(signedTransaction instanceof Uint8Array) || signedTransaction.length < 100 || signedTransaction.length > 16384) {
+          throw new Error("OKX Wallet returned an invalid signed funding transaction.");
+        }
+        if (await sha256Hex(extractLegacyMessageBytes(signedTransaction)) !== prepared.messageSha256) {
+          throw new Error("OKX Wallet changed the prepared funding transaction. Signing was stopped.");
+        }
+        transaction = signedTransaction;
+        signedByWallet = true;
+      }
+      if (!signedByWallet && window.NERITHJUPITER?.canSignFor?.(signerAddress) &&
+          typeof window.NERITHJUPITER.signFundingTransaction === "function") {
+        const signedTransaction = await window.NERITHJUPITER.signFundingTransaction(transaction, signerAddress);
+        if (!(signedTransaction instanceof Uint8Array) || signedTransaction.length < 100 || signedTransaction.length > 16384) {
+          throw new Error("Jupiter Mobile returned an invalid signed funding transaction.");
+        }
+        if (await sha256Hex(extractLegacyMessageBytes(signedTransaction)) !== prepared.messageSha256) {
+          throw new Error("Jupiter Mobile changed the prepared funding transaction. Signing was stopped.");
+        }
+        transaction = signedTransaction;
+        signedByWallet = true;
+      }
+      if (!signedByWallet) throw new Error("No connected wallet adapter can sign for required business wallet " + signerAddress + ". Connect or switch to the matching account and retry.");
     }
     return transaction;
   }
