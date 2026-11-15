@@ -32,7 +32,8 @@ jobs:
       - run: npm install
       - run: npm run typecheck
       - run: npm test
-      - run: npm run build:dashboard
+      - name: Validate the isolated devnet Worker bundle before touching remote D1
+        run: npx wrangler deploy --dry-run --outdir=dist --config wrangler.devnet.remote.toml
       - name: Apply migrations to isolated devnet D1 only
         run: npx wrangler d1 migrations apply nerith-devnet-testing --remote --config wrangler.devnet.remote.toml
         env:
