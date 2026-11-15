@@ -1927,7 +1927,8 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
   const body = await readJson(request);
   if (!body) return json({ error: "invalid_json" }, 400);
   const { taskId, idempotencyKey, destination, feePayerWalletId } = body;
-  const mint = typeof body.mint === "string" ? body.mint : (env.SOLANA_USDC_MINT ?? "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+  const solanaNetwork = getSolanaNetworkConfig(env.SOLANA_CLUSTER);
+  const mint = typeof body.mint === "string" ? body.mint : (env.SOLANA_USDC_MINT ?? solanaNetwork.usdcMint);
   const networkFeeLamports = typeof body.networkFeeLamports === "string" ? body.networkFeeLamports : "";
   const allowPartialPayment = body.allowPartialPayment === true;
   const slippageBps = body.slippageBps === undefined ? null : body.slippageBps;
@@ -1937,7 +1938,7 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
     typeof idempotencyKey !== "string" || !/^[a-zA-Z0-9._:-]{8,128}$/.test(idempotencyKey) ||
     typeof destination !== "string" || !destination || destination.length > 128 ||
     typeof feePayerWalletId !== "string" || !feePayerWalletId ||
-    mint !== (env.SOLANA_USDC_MINT ?? "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v") ||
+    mint !== (env.SOLANA_USDC_MINT ?? solanaNetwork.usdcMint) ||
     !/^(0|[1-9][0-9]{0,18})$/.test(networkFeeLamports) ||
     BigInt(networkFeeLamports || "0") === 0n ||
     BigInt(networkFeeLamports || "0") > 9_223_372_036_854_775_807n ||
@@ -2224,7 +2225,8 @@ async function prepareFinalPaymentAfterReplenishment(
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
   const businessId = new URL(request.url).searchParams.get("businessId") ?? "";
   if (!businessId) return json({ error: "business_id_required" }, 400);
-  if (!env.SOLANA_RPC_URL) return json({ error: "solana_rpc_not_configured" }, 503);
+  const rpcClusterError = await assertSolanaRpcCluster(env);
+  if (rpcClusterError) return rpcClusterError;
 
   const row = await env.DB.prepare(`
     SELECT i.id AS intent_id, i.status AS intent_status, i.action, i.expires_at,
@@ -2541,6 +2543,8 @@ async function prepareFundingLegTransaction(
   if (!env.SOLANA_RPC_URL || !env.SOLANA_USDC_MINT) {
     return json({ error: "solana_rpc_or_usdc_mint_not_configured" }, 503);
   }
+  const rpcClusterError = await assertSolanaRpcCluster(env);
+  if (rpcClusterError) return rpcClusterError;
 
   const row = await getFundingLegSettlementRow(env, intentId, legId, businessId);
   if (!row) return json({ error: "funding_leg_not_found" }, 404);
@@ -2798,6 +2802,8 @@ async function submitSignedFundingLegTransaction(
   const businessId = new URL(request.url).searchParams.get("businessId") ?? "";
   if (!businessId) return json({ error: "business_id_required" }, 400);
   if (!env.SOLANA_RPC_URL || !env.SOLANA_USDC_MINT) return json({ error: "solana_rpc_or_usdc_mint_not_configured" }, 503);
+  const rpcClusterError = await assertSolanaRpcCluster(env);
+  if (rpcClusterError) return rpcClusterError;
   const body = await readJson(request);
   if (!body || typeof body.transactionBase64 !== "string" ||
       body.transactionBase64.length > 22_000 ||
@@ -2982,7 +2988,8 @@ async function reconcileFundingLegTransaction(
   if (row.leg_status !== "submitted" || !row.transaction_hash) {
     return json({ error: "funding_leg_not_submitted", status: row.leg_status }, 409);
   }
-  if (!env.SOLANA_RPC_URL) return json({ error: "solana_rpc_not_configured" }, 503);
+  const rpcClusterError = await assertSolanaRpcCluster(env);
+  if (rpcClusterError) return rpcClusterError;
   if (row.intent_action === "conversion_required" || row.leg_kind === "conversion") {
     return json({ error: "conversion_settlement_not_supported" }, 409);
   }
@@ -5495,6 +5502,8 @@ async function getSwapStatus(request: Request, env: Env, operationId: string): P
   if (operation.status !== "conversion_submitted" || !operation.transaction_hash || !operation.source_reservation_id) {
     return json({ error: "transaction_not_submitted", status: operation.status }, 409);
   }
+  const rpcClusterError = await assertSolanaRpcCluster(env);
+  if (rpcClusterError) return rpcClusterError;
 
   type SignatureStatus = {
     err: unknown | null;
