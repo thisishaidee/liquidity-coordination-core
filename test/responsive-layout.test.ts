@@ -3,6 +3,8 @@ import { landingHtml } from "../src/landing";
 import { controlHtml } from "../src/control";
 import { businessDashboardHtml } from "../src/business-dashboard";
 import { dashboardHtml } from "../src/dashboard";
+import { okxWalletConnectorJs } from "../src/okx-wallet-connector";
+import { jupiterMobileConnectorJs } from "../src/jupiter-mobile-connector";
 
 describe("responsive page source contracts", () => {
   const pages = [
@@ -85,6 +87,17 @@ describe("responsive page source contracts", () => {
     expect(businessDashboardHtml).toContain("sha256Hex(extractLegacyMessageBytes(signedTransaction)) !== prepared.messageSha256");
     expect(businessDashboardHtml).toContain('["planned","blocked","reserved"].includes(leg.status)');
     expect(businessDashboardHtml).toContain(".wallet-role-help{margin-top:9px;color:var(--muted);font-size:10px;line-height:1.6;overflow-wrap:anywhere;word-break:break-word}");
+  });
+
+  it("routes funding-leg signing through the connected OKX and Jupiter wallet adapters", () => {
+    expect(businessDashboardHtml).toContain('window.NERITHOKX?.canSignFor?.(signerAddress)');
+    expect(businessDashboardHtml).toContain('window.NERITHOKX.signFundingTransaction(transaction, signerAddress)');
+    expect(businessDashboardHtml).toContain('window.NERITHJUPITER?.canSignFor?.(signerAddress)');
+    expect(businessDashboardHtml).toContain('window.NERITHJUPITER.signFundingTransaction(transaction, signerAddress)');
+    expect(okxWalletConnectorJs).toContain("signFundingTransaction");
+    expect(okxWalletConnectorJs).toContain("canSignFor");
+    expect(jupiterMobileConnectorJs).toContain("signFundingTransaction");
+    expect(jupiterMobileConnectorJs).toContain("canSignFor");
   });
 
   it("declares business-dashboard action buttons as non-submit controls", () => {
