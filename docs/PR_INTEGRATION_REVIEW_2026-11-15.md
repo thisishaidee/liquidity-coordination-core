@@ -111,3 +111,6 @@ PR #52 now also contains:
 - An RPC preflight that checks `getGenesisHash` against the configured chain and checks the USDC mint before balance sync, funding preparation, transaction submission and settlement reconciliation.
 
 The first CI run exposed two real issues: a TypeScript narrowing error after the RPC preflight and a SQLite trigger dependency when rebuilding the ownership-challenge table. Both were corrected. A brittle x402 route test was replaced by a direct unit test of the explicit mainnet-only policy. CI run `43665281655` is now validating the revised branch; the unpaid Hermes 402 evidence has passed, while typecheck/tests and local D1 replay are still in progress. No remote devnet Worker deployment or wallet transaction has occurred.
+
+
+**Latest CI status:** run `43665493544` has passed the verification job (typecheck, full automated tests and Wrangler dry-run) and the unpaid Hermes 402 evidence job. The isolated local Worker/D1 replay is still running; it has not yet reported a final result. No Worker deployment or signed/broadcast transaction has been performed.
