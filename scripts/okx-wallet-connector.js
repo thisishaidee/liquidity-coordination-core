@@ -1,5 +1,6 @@
 import { OKXUniversalProvider } from "@okxconnect/universal-provider";
 import { OKXSolanaProvider } from "@okxconnect/solana-provider";
+import { Transaction } from "@solana/web3.js";
 
 const MAINNET_CHAIN = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
 let universalProvider;
@@ -70,7 +71,7 @@ async function signTransaction(transaction, expectedAddress) {
   if (!provider.connected()) throw new Error("OKX Wallet session is not connected. Reconnect and try again.");
   const account = solanaProvider.getAccount(MAINNET_CHAIN);
   if (!account?.address || account.address !== expectedAddress) {
-    throw new Error("The connected OKX account does not match the selected x402 payment wallet.");
+    throw new Error("The connected OKX account does not match the selected wallet address.");
   }
   const signed = await solanaProvider.signTransaction(transaction, MAINNET_CHAIN);
   if (!signed || typeof signed.serialize !== "function") {
@@ -79,4 +80,37 @@ async function signTransaction(transaction, expectedAddress) {
   return signed;
 }
 
-window.NERITHOKX = Object.freeze({ initialize, connect, signMessage, signTransaction, get connected() { return Boolean(universalProvider?.connected()); }, getAddress() { return universalProvider?.connected() ? solanaProvider.getAccount(MAINNET_CHAIN)?.address || "" : ""; } });
+function hasExpectedSignature(transaction, expectedAddress) {
+  const entry = transaction.signatures?.find(item => item.publicKey?.toBase58?.() === expectedAddress);
+  return entry?.signature instanceof Uint8Array && entry.signature.some(byte => byte !== 0);
+}
+
+function canSignFor(expectedAddress) {
+  const injectedAddress = window.okxwallet?.solana?.publicKey?.toString?.() || "";
+  const appAddress = universalProvider?.connected() ? solanaProvider?.getAccount(MAINNET_CHAIN)?.address || "" : "";
+  return injectedAddress === expectedAddress || appAddress === expectedAddress;
+}
+
+async function signFundingTransaction(transactionBytes, expectedAddress) {
+  if (!(transactionBytes instanceof Uint8Array) || transactionBytes.length < 100 || transactionBytes.length > 16384) {
+    throw new Error("The prepared funding transaction bytes are invalid.");
+  }
+  const transaction = Transaction.from(transactionBytes);
+  let signed;
+  const injected = window.okxwallet?.solana;
+  if (injected?.publicKey?.toString?.() === expectedAddress && typeof injected.signTransaction === "function") {
+    signed = await injected.signTransaction(transaction);
+  } else {
+    signed = await signTransaction(transaction, expectedAddress);
+  }
+  if (!signed || typeof signed.serialize !== "function" || !hasExpectedSignature(signed, expectedAddress)) {
+    throw new Error("OKX Wallet did not return a transaction signed by the required business wallet.");
+  }
+  return new Uint8Array(signed.serialize({ requireAllSignatures: false, verifySignatures: false }));
+}
+
+window.NERITHOKX = Object.freeze({
+  initialize, connect, signMessage, signTransaction, signFundingTransaction, canSignFor,
+  get connected() { return Boolean(universalProvider?.connected() || window.okxwallet?.solana?.publicKey); },
+  getAddress() { return window.okxwallet?.solana?.publicKey?.toString?.() || (universalProvider?.connected() ? solanaProvider.getAccount(MAINNET_CHAIN)?.address || "" : ""); }
+});
