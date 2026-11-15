@@ -319,11 +319,11 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
   const standardSolanaWallets=new Set();
   const SOLANA_MAINNET_CHAIN="solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
   const SOLANA_DEVNET_CHAIN="solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
-  const knownSolanaChains=new Set([SOLANA_MAINNET_CHAIN,SOLANA_DEVNET_CHAIN,"solana:mainnet"]);
+  const knownSolanaChains=new Set([SOLANA_MAINNET_CHAIN,SOLANA_DEVNET_CHAIN,"solana:mainnet","solana:devnet"]);
   let activeSolanaChain=SOLANA_MAINNET_CHAIN;
   let solanaNetworkConfigPromise=null;
   const supportsActiveSolanaChain=chains=>Array.isArray(chains)&&chains.some(chain=>
-    chain===activeSolanaChain||(activeSolanaChain===SOLANA_MAINNET_CHAIN&&chain==="solana:mainnet"));
+    chain===activeSolanaChain||(activeSolanaChain===SOLANA_MAINNET_CHAIN&&chain==="solana:mainnet")||(activeSolanaChain===SOLANA_DEVNET_CHAIN&&chain==="solana:devnet"));
   const supportsAnySolanaChain=chains=>Array.isArray(chains)&&chains.some(chain=>knownSolanaChains.has(chain));
   async function ensureSolanaNetworkConfig(){
     if(!solanaNetworkConfigPromise){
@@ -749,7 +749,7 @@ button,input,select{font:inherit}button,a{touch-action:manipulation}a{color:inhe
         const account = accounts.find(item => item.address === signerAddress && supportsActiveSolanaChain(item.chains) &&
           Array.isArray(item.features) && item.features.includes("solana:signTransaction"));
         if (!account) continue;
-        const chain = account.chains.find(value => (value===activeSolanaChain||(activeSolanaChain===SOLANA_MAINNET_CHAIN&&value==="solana:mainnet"))) || activeSolanaChain;
+        const chain = account.chains.find(value => (value===activeSolanaChain||(activeSolanaChain===SOLANA_MAINNET_CHAIN&&value==="solana:mainnet")||(activeSolanaChain===SOLANA_DEVNET_CHAIN&&value==="solana:devnet"))) || activeSolanaChain;
         const output = await sign.signTransaction({ account, transaction, chain });
         const signedTransaction = output?.[0]?.signedTransaction;
         if (!(signedTransaction instanceof Uint8Array) || signedTransaction.length < 100 || signedTransaction.length > 16384) {
