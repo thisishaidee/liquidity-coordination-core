@@ -1,5 +1,7 @@
 -- Normalize wallet ownership challenges to canonical Solana CAIP-2 chain IDs
 -- and allow the dedicated devnet Worker to verify devnet wallets.
+DROP TRIGGER IF EXISTS trg_wallet_ownership_reset_on_identity_change;
+
 CREATE TABLE wallet_ownership_challenges_v2 (
   id TEXT PRIMARY KEY,
   business_id TEXT NOT NULL REFERENCES businesses(id),
@@ -41,3 +43,20 @@ CREATE INDEX IF NOT EXISTS idx_wallet_ownership_challenges_wallet_created
 CREATE INDEX IF NOT EXISTS idx_wallet_ownership_challenges_expiry
   ON wallet_ownership_challenges(expires_at)
   WHERE consumed_at IS NULL;
+
+-- Restore the identity-change invalidation trigger after rebuilding the challenge table.
+CREATE TRIGGER IF NOT EXISTS trg_wallet_ownership_reset_on_identity_change
+AFTER UPDATE OF address, network, business_id, scope ON wallets
+WHEN NEW.address <> OLD.address
+  OR NEW.network <> OLD.network
+  OR NEW.business_id <> OLD.business_id
+  OR NEW.scope <> OLD.scope
+BEGIN
+  UPDATE wallets
+  SET ownership_verified_at = NULL, ownership_verified_origin = NULL
+  WHERE id = NEW.id;
+  UPDATE wallet_role_assignments
+  SET enabled = 0, updated_at = datetime('now')
+  WHERE wallet_id = NEW.id AND role <> 'api_payment';
+  DELETE FROM wallet_ownership_challenges WHERE wallet_id = NEW.id;
+END;
