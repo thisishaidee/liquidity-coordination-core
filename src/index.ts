@@ -2316,7 +2316,7 @@ async function prepareFinalPaymentAfterReplenishment(
   let balance: { amountAtoms: string; commitment: "finalized" };
   try {
     balance = await fetchFinalizedSplTokenBalance(
-      env.SOLANA_RPC_URL, row.payment_wallet_address, mint, 6
+      env.SOLANA_RPC_URL as string, row.payment_wallet_address, mint, 6
     );
   } catch {
     return json({
@@ -3015,7 +3015,7 @@ async function reconcileFundingLegTransaction(
 
   let lookup;
   try {
-    lookup = await fetchFinalizedSolanaTransaction(env.SOLANA_RPC_URL, row.transaction_hash);
+    lookup = await fetchFinalizedSolanaTransaction(env.SOLANA_RPC_URL as string, row.transaction_hash);
   } catch {
     return json({ intentId, fundingLegId: legId, status: "submitted", confirmed: false,
       pending: true, reason: "Solana RPC is temporarily unavailable. The reservation remains active." }, 503);
