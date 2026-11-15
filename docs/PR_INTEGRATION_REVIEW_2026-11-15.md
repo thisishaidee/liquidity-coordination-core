@@ -59,6 +59,12 @@ The devnet D1 exists but is empty/unmigrated.
 
 The production D1 UUID was initially mistyped in the first query, causing the 404. Cloudflare's exact-name listing returned `1b3d32d5-6e1c-490d-a550-c06baf8b918e`; read-only queries against that database now succeed. Production has migrations `0001–0024` only; migrations `0025–0032` are not applied. Current production data is 1 business, 1 agent, 2 active business wallets, 4 zero-value balance snapshots, 1 blocked operation with no transaction hash, and 0 reservation rows. The new payment-intent and funding-leg tables are absent, as expected before candidate release.
 
+A read-only preview of the exact `0025_wallet_role_assignments.sql` backfill mapping against the two existing production wallets yields:
+- the existing `api_payment` wallet maps to enabled role `api_payment`;
+- the existing `operating` wallet maps to enabled role `operating`.
+
+This is the expected migration outcome for the current production records. The isolated mainnet-test database's two wallet rows were seeded after its migration ledger had already reached 0032, so its role-assignment table is empty; that isolated fixture does not exercise the existing-wallet backfill path. Add an explicit migration test that inserts legacy wallets before applying migration 0025, then verifies both role rows are backfilled.
+
 ## 5. Deployment safety
 
 The current CI workflow deploy job runs on pushes to `main`, applies pending production D1 migrations remotely, and then deploys the Worker. Merging PR #52 would therefore trigger a production schema/deploy path after CI passes. Production migration state is now verified, and the reservation table is empty. This removes the earlier unknown-ledger/active-hold blocker, but does not make the candidate production-ready: the existing blocked operation must be preserved, the candidate migrations still need a reviewed preflight against the live schema, and real Android wallet signing/finalized payment settlement remain unproven. Do not merge or deploy this candidate until those release gates pass.
