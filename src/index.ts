@@ -26,6 +26,7 @@ import { FINALIZED_TRANSACTION_READ_OPTIONS } from "./solana-rpc-options";
 import { buildUsdcFundingTransaction, verifySignedUsdcFundingTransaction } from "./solana-funding-transaction";
 import { Connection, type Blockhash } from "@solana/web3.js";
 import { fetchFinalizedSplTokenBalance } from "./solana-finalized-balance";
+import { getSolanaNetworkConfig } from "./solana-network-config";
 
 interface Env {
   DB: D1Database;
@@ -33,6 +34,7 @@ interface Env {
   ADMIN_ALLOWED_ORIGINS?: string;
   SOLANA_RPC_URL?: string;
   SOLANA_USDC_MINT?: string;
+  SOLANA_CLUSTER?: string;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_BOT_USERNAME?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
@@ -3513,12 +3515,13 @@ async function createWalletOwnershipChallenge(request: Request, env: Env): Promi
   const expiresAt = new Date(issuedAt.getTime() + 5 * 60 * 1000);
   const issuedText = issuedAt.toISOString();
   const expiresText = expiresAt.toISOString();
+  const solanaNetwork = getSolanaNetworkConfig(env.SOLANA_CLUSTER);
   const message = [
     "NERITH WALLET OWNERSHIP PROOF",
     "Origin: " + origin,
     "Business ID: " + body.businessId,
     "Wallet address: " + wallet.address,
-    "Network: solana:mainnet-beta",
+    "Network: " + solanaNetwork.chainId,
     "Nonce: " + nonceText,
     "Issued at: " + issuedText,
     "Expires at: " + expiresText,
@@ -3527,8 +3530,8 @@ async function createWalletOwnershipChallenge(request: Request, env: Env): Promi
     "It does not authorize spending or grant agent execution permission."
   ].join(String.fromCharCode(10));
 
-  await env.DB.prepare("INSERT INTO wallet_ownership_challenges (id, business_id, wallet_id, address, origin, network, message, nonce_hash, issued_at, expires_at) VALUES (?, ?, ?, ?, ?, 'solana:mainnet-beta', ?, ?, ?, ?)")
-    .bind(challengeId, body.businessId, wallet.id, wallet.address, origin, message, await sha256(nonceText), issuedText, expiresText).run();
+  await env.DB.prepare("INSERT INTO wallet_ownership_challenges (id, business_id, wallet_id, address, origin, network, message, nonce_hash, issued_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(challengeId, body.businessId, wallet.id, wallet.address, origin, solanaNetwork.chainId, message, await sha256(nonceText), issuedText, expiresText).run();
   return json({ challengeId, walletId: wallet.id, address: wallet.address, message, expiresAt: expiresText });
 }
 
@@ -3547,7 +3550,7 @@ async function verifyWalletOwnership(request: Request, env: Env): Promise<Respon
     .bind(body.challengeId, body.businessId, body.walletId).first<{ id: string; address: string; origin: string; network: string; message: string; nonce_hash: string; expires_at: string; current_address: string }>();
   if (!challenge) return json({ error: "challenge_expired_or_consumed" }, 409);
   if (challenge.origin !== origin) return json({ error: "challenge_origin_mismatch" }, 403);
-  if (challenge.network !== "solana:mainnet-beta" || challenge.address !== challenge.current_address) return json({ error: "challenge_wallet_mismatch" }, 409);
+  if (challenge.network !== getSolanaNetworkConfig(env.SOLANA_CLUSTER).chainId || challenge.address !== challenge.current_address) return json({ error: "challenge_wallet_mismatch" }, 409);
   const nonceLine = challenge.message.split(String.fromCharCode(10)).find(line => line.startsWith("Nonce: "));
   if (!nonceLine || await sha256(nonceLine.slice(7)) !== challenge.nonce_hash) return json({ error: "challenge_integrity_failure" }, 409);
   if (!(await verifySolanaMessageSignature(challenge.address, challenge.message, body.signature))) return json({ error: "invalid_wallet_signature" }, 400);
@@ -6449,6 +6452,17 @@ export default {
       });
     }
     if (request.method === "GET" && url.pathname === "/health") {
+      let solanaNetwork;
+      try {
+        solanaNetwork = getSolanaNetworkConfig(env.SOLANA_CLUSTER);
+      } catch {
+        return json({
+          service: "nerith-api",
+          status: "degraded",
+          database: "unknown",
+          error: "invalid_solana_cluster_configuration"
+        }, 503);
+      }
       try {
         const database = await env.DB.prepare("SELECT 1 AS ok").first<{ ok: number }>();
         if (database?.ok !== 1) throw new Error("D1 health query returned no result");
@@ -6458,6 +6472,8 @@ export default {
           version: "0.3.0",
           database: "connected",
           dashboard: true,
+          solanaCluster: solanaNetwork.cluster,
+          solanaChainId: solanaNetwork.chainId,
           telegramConfigured: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_WEBHOOK_SECRET),
           telegramSupportConfigured: Boolean(telegramSupportMarkup(env))
         });
