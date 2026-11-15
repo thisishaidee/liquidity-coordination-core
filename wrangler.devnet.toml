@@ -11,6 +11,8 @@ NERITH_SUPPORT_URL = "http://localhost:8787"
 NERITH_PUBLIC_URL = "http://localhost:8787"
 ADMIN_ALLOWED_ORIGINS = "http://localhost:8787"
 SOLANA_CLUSTER = "devnet"
+SOLANA_RPC_URL = "https://api.devnet.solana.com"
+SOLANA_USDC_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
 
 [[d1_databases]]
 binding = "DB"
