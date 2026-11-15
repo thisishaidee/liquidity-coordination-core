@@ -57,3 +57,12 @@ These resources are isolated from the production Worker and production D1. Never
 - Every tested transaction has a recorded signature and independently verified finalized status.
 
 **Not yet proven:** Android OKX signing, Android Wallet Standard handoff, any devnet broadcast, finality, or the two-leg replenishment/payment sequence. No production transaction is part of this test plan.
+
+
+## Deployment status update — 15 November 2026
+
+The dedicated remote Worker has now been deployed successfully at `https://nerith-devnet-testing.haideecoded-e0f.workers.dev`. All 33 migrations are applied to the isolated D1 database and were confirmed by a read-only query. Live health verification returned the expected devnet chain ID, devnet USDC mint, and connected database. The dashboard and workspace setup pages both resolve.
+
+The isolated Worker intentionally has no Telegram bot credentials. Its `ADMIN_BOOTSTRAP_TOKEN` secret is still unset; the account owner must add a strong secret in Cloudflare before creating a test workspace. Do not copy the production token or production Telegram secrets.
+
+**Still outstanding:** authenticated workspace setup, Android wallet connection, ownership-message signature, RPC genesis preflight, devnet USDC funding transaction, signed broadcast, finalized settlement, and the separate replenishment/final-payment sequence. No funds have moved.
