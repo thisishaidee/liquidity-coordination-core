@@ -95,7 +95,7 @@ describe("admin dashboard read endpoints", () => {
   it("blocks Hermes x402 quote and reconciliation routes on devnet", async () => {
     const { env } = makeEnv({ cookieSessionValid: true, sessionBusinessId: "biz_1" });
     const headers = {
-      cookie: sessionCookie,
+      ...bearer,
       origin: "https://nerith.test",
       "content-type": "application/json"
     };
