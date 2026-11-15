@@ -127,3 +127,6 @@ The first CI run exposed two real issues: a TypeScript narrowing error after the
 - The first automated post-deploy check received an HTML response immediately after deployment propagation; a subsequent deployment and live fetch returned the expected JSON health response. A retry loop was added to the deploy workflow to avoid false failures during propagation.
 - `ADMIN_BOOTSTRAP_TOKEN` is not yet configured on the isolated Worker. This secret must be set by the account owner in Cloudflare before creating a devnet test workspace. No secret value was stored in Cloudflare or exposed in the repository or chat.
 - No wallet has been connected, no message signed, no transaction prepared/broadcast, and no funds moved.
+
+
+The guarded deployment workflow `Deploy isolated Solana devnet Worker` completed successfully in run [#43686879139](https://github.com/thisishaidee/nerith/actions/runs/43686879139): typecheck, automated tests, Wrangler dry-run, remote isolated migrations, deployment, and post-deploy health verification all passed. A subsequent live fetch again confirmed `status=ok` and the expected devnet chain/mint. A read-only Cloudflare check confirms 33 migration-ledger entries and no Worker secrets configured yet.
