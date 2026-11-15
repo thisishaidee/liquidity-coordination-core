@@ -57,11 +57,11 @@ A direct read-only query to the isolated mainnet-test D1 succeeds:
 
 The devnet D1 exists but is empty/unmigrated.
 
-The production database appears in Cloudflare's D1 database listing, and production Worker health reports its runtime database connection as healthy. However, the D1 management query endpoint still returns HTTP 404 / error 7404 for the production database UUID. The exact production migration ledger and active reservation state therefore remain unverified. Do not infer production has migrations 0025–0032.
+The production D1 UUID was initially mistyped in the first query, causing the 404. Cloudflare's exact-name listing returned `1b3d32d5-6e1c-490d-a550-c06baf8b918e`; read-only queries against that database now succeed. Production has migrations `0001–0024` only; migrations `0025–0032` are not applied. Current production data is 1 business, 1 agent, 2 active business wallets, 4 zero-value balance snapshots, 1 blocked operation with no transaction hash, and 0 reservation rows. The new payment-intent and funding-leg tables are absent, as expected before candidate release.
 
 ## 5. Deployment safety
 
-The current CI workflow deploy job runs on pushes to `main`, applies pending production D1 migrations remotely, and then deploys the Worker. Merging PR #52 would therefore trigger a production schema/deploy path after CI passes. Because production migration state and active reservation state remain unverified, do not merge or deploy this candidate yet.
+The current CI workflow deploy job runs on pushes to `main`, applies pending production D1 migrations remotely, and then deploys the Worker. Merging PR #52 would therefore trigger a production schema/deploy path after CI passes. Production migration state is now verified, and the reservation table is empty. This removes the earlier unknown-ledger/active-hold blocker, but does not make the candidate production-ready: the existing blocked operation must be preserved, the candidate migrations still need a reviewed preflight against the live schema, and real Android wallet signing/finalized payment settlement remain unproven. Do not merge or deploy this candidate until those release gates pass.
 
 Before release, add a production migration preflight/snapshot and explicit review of active, submitted, failed and ambiguous reservations. Preserve all ambiguous holds. Keep migration application and Worker deployment as separately observable steps with a tested rollback/forward-recovery plan.
 
