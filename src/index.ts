@@ -1928,6 +1928,9 @@ async function createBusinessPaymentIntent(request: Request, env: Env): Promise<
   if (!body) return json({ error: "invalid_json" }, 400);
   const { taskId, idempotencyKey, destination, feePayerWalletId } = body;
   const solanaNetwork = getSolanaNetworkConfig(env.SOLANA_CLUSTER);
+  if (env.SOLANA_USDC_MINT && env.SOLANA_USDC_MINT !== solanaNetwork.usdcMint) {
+    return json({ error: "solana_usdc_mint_cluster_mismatch" }, 503);
+  }
   const mint = typeof body.mint === "string" ? body.mint : (env.SOLANA_USDC_MINT ?? solanaNetwork.usdcMint);
   const networkFeeLamports = typeof body.networkFeeLamports === "string" ? body.networkFeeLamports : "";
   const allowPartialPayment = body.allowPartialPayment === true;
@@ -3660,7 +3663,12 @@ async function solanaRpc<T>(rpcUrl: string, method: string, params: unknown[]): 
 
 async function assertSolanaRpcCluster(env: Env): Promise<Response | null> {
   if (!env.SOLANA_RPC_URL) return json({ error: "solana_rpc_not_configured" }, 503);
-  const network = getSolanaNetworkConfig(env.SOLANA_CLUSTER);
+  let network;
+  try {
+    network = getSolanaNetworkConfig(env.SOLANA_CLUSTER);
+  } catch {
+    return json({ error: "invalid_solana_cluster_configuration" }, 503);
+  }
   if (env.SOLANA_USDC_MINT !== network.usdcMint) {
     return json({ error: "solana_usdc_mint_cluster_mismatch", configuredChainId: network.chainId }, 503);
   }
