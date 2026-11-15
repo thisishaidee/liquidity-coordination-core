@@ -3651,6 +3651,31 @@ async function solanaRpc<T>(rpcUrl: string, method: string, params: unknown[]): 
   throw lastError ?? new Error("Solana RPC request failed");
 }
 
+async function assertSolanaRpcCluster(env: Env): Promise<Response | null> {
+  if (!env.SOLANA_RPC_URL) return json({ error: "solana_rpc_not_configured" }, 503);
+  const network = getSolanaNetworkConfig(env.SOLANA_CLUSTER);
+  if (env.SOLANA_USDC_MINT !== network.usdcMint) {
+    return json({ error: "solana_usdc_mint_cluster_mismatch", configuredChainId: network.chainId }, 503);
+  }
+  if (!/^https:\/\//i.test(env.SOLANA_RPC_URL)) {
+    return json({ error: "solana_rpc_url_invalid" }, 503);
+  }
+  try {
+    const genesisHash = await solanaRpc<string>(env.SOLANA_RPC_URL, "getGenesisHash", []);
+    const rpcChainId = "solana:" + genesisHash.slice(0, 32);
+    if (rpcChainId !== network.chainId) {
+      return json({
+        error: "solana_rpc_cluster_mismatch",
+        configuredChainId: network.chainId,
+        rpcChainId
+      }, 503);
+    }
+    return null;
+  } catch {
+    return json({ error: "solana_rpc_cluster_unavailable" }, 503);
+  }
+}
+
 async function syncSolanaBalances(request: Request, env: Env): Promise<Response> {
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
   const body = await readJson(request);
@@ -3658,17 +3683,10 @@ async function syncSolanaBalances(request: Request, env: Env): Promise<Response>
   const business = await env.DB.prepare("SELECT id FROM businesses WHERE id = ?")
     .bind(body.businessId).first<{ id: string }>();
   if (!business) return json({ error: "business_not_found" }, 404);
-  if (!env.SOLANA_RPC_URL) {
-    return json({
-      error: "solana_rpc_not_configured",
-      message: "A production Solana RPC endpoint is not configured. Add SOLANA_RPC_URL as a Worker secret before syncing wallet balances."
-    }, 503);
-  }
-  const rpcUrl = env.SOLANA_RPC_URL;
-  if (!/^https:\/\//i.test(rpcUrl)) {
-    return json({ error: "solana_rpc_url_invalid", message: "SOLANA_RPC_URL must be an HTTPS mainnet RPC endpoint." }, 503);
-  }
-  const usdcMint = env.SOLANA_USDC_MINT || "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const rpcClusterError = await assertSolanaRpcCluster(env);
+  if (rpcClusterError) return rpcClusterError;
+  const rpcUrl = env.SOLANA_RPC_URL as string;
+  const usdcMint = env.SOLANA_USDC_MINT as string;
 
   const wallets = await env.DB.prepare(
     "SELECT id, address FROM wallets WHERE business_id = ? AND network = 'solana' AND status = 'active'"
@@ -6461,6 +6479,9 @@ export default {
       let solanaNetwork;
       try {
         solanaNetwork = getSolanaNetworkConfig(env.SOLANA_CLUSTER);
+        if (env.SOLANA_USDC_MINT && env.SOLANA_USDC_MINT !== solanaNetwork.usdcMint) {
+          return json({ service: "nerith-api", status: "degraded", error: "solana_usdc_mint_cluster_mismatch" }, 503);
+        }
       } catch {
         return json({
           service: "nerith-api",
@@ -6480,6 +6501,7 @@ export default {
           dashboard: true,
           solanaCluster: solanaNetwork.cluster,
           solanaChainId: solanaNetwork.chainId,
+          solanaUsdcMint: solanaNetwork.usdcMint,
           telegramConfigured: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_WEBHOOK_SECRET),
           telegramSupportConfigured: Boolean(telegramSupportMarkup(env))
         });
