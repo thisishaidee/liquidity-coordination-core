@@ -46,8 +46,6 @@ jobs:
         run: |
           node --input-type=module <<'NODE'
           const url = "https://nerith-devnet-testing.haideecoded-e0f.workers.dev/health";
-          const response = await fetch(url, { signal: AbortSignal.timeout(20000) });
-          const body = await response.json();
           const expected = {
             service: "nerith-api",
             status: "ok",
@@ -56,11 +54,28 @@ jobs:
             solanaChainId: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
             solanaUsdcMint: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
           };
-          for (const [key, value] of Object.entries(expected)) {
-            if (body[key] !== value) {
-              console.error("Devnet health mismatch:", key, body[key]);
-              process.exit(1);
+          let lastFailure = "No health response received";
+          for (let attempt = 1; attempt <= 8; attempt++) {
+            try {
+              const response = await fetch(url, {
+                headers: { accept: "application/json" },
+                signal: AbortSignal.timeout(15000)
+              });
+              const raw = await response.text();
+              let body;
+              try { body = JSON.parse(raw); }
+              catch { throw new Error(`HTTP ${response.status} returned non-JSON: ${raw.slice(0, 160)}`); }
+              if (!response.ok) throw new Error(`HTTP ${response.status}: ${JSON.stringify(body)}`);
+              for (const [key, value] of Object.entries(expected)) {
+                if (body[key] !== value) throw new Error(`Health mismatch for ${key}: ${body[key]}`);
+              }
+              console.log("Isolated devnet health passed:", JSON.stringify(body));
+              process.exit(0);
+            } catch (error) {
+              lastFailure = String(error);
+              console.log(`Health attempt ${attempt}/8 not ready: ${lastFailure}`);
+              await new Promise(resolve => setTimeout(resolve, attempt * 1500));
             }
           }
-          console.log("Isolated devnet health passed:", JSON.stringify(body));
+          throw new Error("Isolated devnet health failed after retries: " + lastFailure);
           NODE
