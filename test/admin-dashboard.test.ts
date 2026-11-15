@@ -78,6 +78,24 @@ describe("admin dashboard read endpoints", () => {
     });
   });
 
+  it("blocks Hermes x402 quote and reconciliation routes on devnet", async () => {
+    const { env } = makeEnv({ cookieSessionValid: true, sessionBusinessId: "biz_1" });
+    const headers = {
+      cookie: sessionCookie,
+      origin: "https://nerith.test",
+      "content-type": "application/json"
+    };
+    for (const path of ["/v1/admin/x402/demo/quote", "/v1/admin/x402/reconcile"]) {
+      const response = await worker.fetch(new Request("https://nerith.test" + path, {
+        method: "POST",
+        headers,
+        body: "{}"
+      }), { ...env, SOLANA_CLUSTER: "devnet" } as TestEnv);
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ error: "x402_mainnet_only" });
+    }
+  });
+
   it("fails health closed for an unsupported Solana cluster", async () => {
     const { env } = makeEnv();
     const response = await call("/health", { ...env, SOLANA_CLUSTER: "localnet" });
