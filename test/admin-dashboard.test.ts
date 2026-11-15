@@ -104,7 +104,7 @@ describe("admin dashboard read endpoints", () => {
         method: "POST",
         headers,
         body: "{}"
-      }), { ...env, SOLANA_CLUSTER: "devnet" } as TestEnv);
+      }), { ...env, ADMIN_BOOTSTRAP_TOKEN: token, SOLANA_CLUSTER: "devnet" } as TestEnv);
       expect(response.status).toBe(409);
       expect(await response.json()).toMatchObject({ error: "x402_mainnet_only" });
     }
