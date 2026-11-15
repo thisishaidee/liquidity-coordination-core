@@ -84,6 +84,29 @@ function JupiterMobileBridge({ jupiterAdapter }) {
         }
         return signature;
       },
+      canSignFor(expectedAddress) {
+        return Boolean(adapter.connected && adapter.publicKey?.toBase58?.() === expectedAddress);
+      },
+      async signFundingTransaction(transactionBytes, expectedAddress) {
+        if (!(transactionBytes instanceof Uint8Array) || transactionBytes.length < 100 || transactionBytes.length > 16384) {
+          throw new Error("The prepared funding transaction bytes are invalid.");
+        }
+        await api.connect(expectedAddress);
+        if (!adapter.connected || adapter.publicKey?.toBase58?.() !== expectedAddress) {
+          throw new Error("Jupiter Mobile is not connected to the required business wallet.");
+        }
+        if (typeof adapter.signTransaction !== "function") {
+          throw new Error("Jupiter Mobile does not support Solana transaction signing in this session.");
+        }
+        const transaction = Transaction.from(transactionBytes);
+        const signed = await adapter.signTransaction(transaction);
+        const signature = signed?.signatures?.find(item => item.publicKey?.toBase58?.() === expectedAddress)?.signature;
+        if (!signed || typeof signed.serialize !== "function" ||
+            !(signature instanceof Uint8Array) || signature.every(byte => byte === 0)) {
+          throw new Error("Jupiter Mobile did not return a transaction signed by the required business wallet.");
+        }
+        return new Uint8Array(signed.serialize({ requireAllSignatures: false, verifySignatures: false }));
+      },
       async prepareX402Payment(requirement, expectedAddress, signer = { kind: "jupiter" }) {
         const address = expectedAddress;
         if (signer.kind === "jupiter" && (!adapter.connected || adapter.publicKey?.toBase58?.() !== expectedAddress)) {
