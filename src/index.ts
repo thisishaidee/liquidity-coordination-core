@@ -4176,6 +4176,9 @@ async function manageX402Budgets(request: Request, env: Env): Promise<Response> 
 
 async function reconcileX402PaymentAdmin(request: Request, env: Env): Promise<Response> {
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  if (getSolanaNetworkConfig(env.SOLANA_CLUSTER).cluster !== "mainnet") {
+    return json({ error: "x402_mainnet_only", message: "Hermes x402 payments are configured for Solana mainnet only." }, 409);
+  }
   const body = await readJson(request);
   if (!body || typeof body.reservationId !== "string") {
     return json({ error: "invalid_request", message: "Provide reservationId." }, 400);
@@ -4412,6 +4415,9 @@ async function proxyHermes(
 
 async function requestAdminX402DemoQuote(request: Request, env: Env): Promise<Response> {
   if (!(await isAdmin(request, env))) return json({ error: "unauthorized" }, 401);
+  if (getSolanaNetworkConfig(env.SOLANA_CLUSTER).cluster !== "mainnet") {
+    return json({ error: "x402_mainnet_only", message: "Hermes x402 payments are configured for Solana mainnet only." }, 409);
+  }
   const body = await readJson(request);
   if (!body || typeof body.businessId !== "string" ||
       typeof body.operatingWalletAddress !== "string" ||
