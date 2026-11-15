@@ -1,11 +1,13 @@
 export const SOLANA_NETWORKS = Object.freeze({
   mainnet: Object.freeze({
     cluster: "mainnet",
-    chainId: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
+    chainId: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+    usdcMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
   }),
   devnet: Object.freeze({
     cluster: "devnet",
-    chainId: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
+    chainId: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+    usdcMint: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
   })
 });
 
