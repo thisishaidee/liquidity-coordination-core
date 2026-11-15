@@ -12,7 +12,7 @@
 - No production database binding, production Worker secret, or Telegram bot token is copied into this environment.
 - The production Worker and database are not changed by this workflow.
 
-The isolated test Worker is deployed at `https://nerith-mainnet-testing.haideecoded-e0f.workers.dev`. Its `/health` endpoint has returned `status=ok`, `database=connected`, and `telegramConfigured=false`. The dedicated D1 database has all 32 migrations applied and currently contains zero businesses and zero agents. The deployment workflow runs typecheck and the full test suite before applying migrations and deploying the Worker.
+The isolated test Worker is deployed at `https://nerith-mainnet-testing.haideecoded-e0f.workers.dev`. Its `/health` endpoint has returned `status=ok`, `database=connected`, and `telegramConfigured=false`. At the time of this test record, the dedicated D1 database had migrations 0001–0032 applied and contained zero businesses and zero agents. Candidate migration 0033 now normalizes ownership challenge network IDs; it has not yet been applied to the isolated mainnet-test database. The deployment workflow runs typecheck and the full test suite before applying migrations and deploying the Worker.
 
 ## One-time test access setup
 
