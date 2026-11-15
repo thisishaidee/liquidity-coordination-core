@@ -6,6 +6,13 @@ import { join } from "node:path";
 
 const baseUrl = "http://127.0.0.1:8787";
 const wranglerCli = join(process.cwd(), "node_modules", "wrangler", "bin", "wrangler.js");
+
+async function fetchWorker(path, init = {}) {
+  return fetch(baseUrl + path, {
+    ...init,
+    signal: init.signal ?? AbortSignal.timeout(15_000)
+  });
+}
 const evidenceDir = "artifacts/worker-x402";
 const output = {
   startedAt: new Date().toISOString(),
@@ -77,7 +84,7 @@ async function waitForWorker(child, getLogs) {
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error("Wrangler dev exited early: " + getLogs().slice(-3000));
     try {
-      const response = await fetch(baseUrl + "/health", { signal: AbortSignal.timeout(2500) });
+      const response = await fetchWorker("/health", { signal: AbortSignal.timeout(2500) });
       if (response.ok) {
         const body = await response.json();
         if (body.service === "nerith-api" && body.database === "connected") return body;
@@ -629,13 +636,13 @@ const businessPaymentIntentCount = queryD1(`SELECT COUNT(*) AS count FROM busine
     feePayerWalletId: managedPaymentWalletId,
     networkFeeLamports: "5000"
   };
-  const invalidDestinationResponse = await fetch(baseUrl + "/v1/payments/prepare", {
+  const invalidDestinationResponse = await fetchWorker("/v1/payments/prepare", {
     method: "POST", headers: paymentAuthHeaders,
     body: JSON.stringify({ ...directPaymentPayload, taskId: "invalid-destination-" + suffix,
       idempotencyKey: "invalid-destination-" + suffix, destination: "not-a-solana-address" })
   });
   if (invalidDestinationResponse.status !== 400) throw new Error("Invalid Solana destination was not rejected before payment preparation.");
-  const directPaymentResponse = await fetch(baseUrl + "/v1/payments/prepare", {
+  const directPaymentResponse = await fetchWorker("/v1/payments/prepare", {
     method: "POST", headers: paymentAuthHeaders, body: JSON.stringify(directPaymentPayload)
   });
   const directPaymentBody = await directPaymentResponse.json();
@@ -665,22 +672,22 @@ const businessPaymentIntentCount = queryD1(`SELECT COUNT(*) AS count FROM busine
       directFeeLedger[0].maximum_fee_lamports !== "5000" || !directFeeLedger[0].funding_leg_id) {
     throw new Error("Direct payment did not create exactly one per-leg fee ledger entry.");
   }
-  const directReplayResponse = await fetch(baseUrl + "/v1/payments/prepare", {
+  const directReplayResponse = await fetchWorker("/v1/payments/prepare", {
     method: "POST", headers: paymentAuthHeaders, body: JSON.stringify(directPaymentPayload)
   });
   const directReplayBody = await directReplayResponse.json();
   if (directReplayResponse.status !== 200 || directReplayBody.reused !== true || directReplayBody.intentId !== directPaymentBody.intentId) {
     throw new Error("Business payment idempotent replay did not return the original intent.");
   }
-  const directConflictResponse = await fetch(baseUrl + "/v1/payments/prepare", {
+  const directConflictResponse = await fetchWorker("/v1/payments/prepare", {
     method: "POST", headers: paymentAuthHeaders, body: JSON.stringify({ ...directPaymentPayload, amount: "0.6" })
   });
   if (directConflictResponse.status !== 409) throw new Error("Payment idempotency key accepted a changed request payload.");
-  const unverifiedCompleteResponse = await fetch(baseUrl + "/v1/operations/" + directPaymentBody.operationId + "/complete", {
+  const unverifiedCompleteResponse = await fetchWorker("/v1/operations/" + directPaymentBody.operationId + "/complete", {
     method: "POST", headers: paymentAuthHeaders
   });
   if (unverifiedCompleteResponse.status !== 409) throw new Error("Agent-reported completion bypassed on-chain payment confirmation.");
-  const releaseDirectPaymentResponse = await fetch(baseUrl + "/v1/operations/" + directPaymentBody.operationId + "/release", {
+  const releaseDirectPaymentResponse = await fetchWorker("/v1/operations/" + directPaymentBody.operationId + "/release", {
     method: "POST", headers: paymentAuthHeaders
   });
   if (releaseDirectPaymentResponse.status !== 200) throw new Error("Direct payment reservations could not be safely released: " + await releaseDirectPaymentResponse.text());
@@ -693,7 +700,7 @@ const businessPaymentIntentCount = queryD1(`SELECT COUNT(*) AS count FROM busine
     throw new Error("Payment release did not cancel the intent and release both USDC and SOL fee holds.");
   }
 
-  const multiWalletPaymentResponse = await fetch(baseUrl + "/v1/payments/prepare", {
+  const multiWalletPaymentResponse = await fetchWorker("/v1/payments/prepare", {
     method: "POST", headers: paymentAuthHeaders, body: JSON.stringify({
       taskId: "multi-wallet-payment-" + suffix,
       idempotencyKey: "multi-idem-" + suffix,
@@ -706,7 +713,7 @@ const businessPaymentIntentCount = queryD1(`SELECT COUNT(*) AS count FROM busine
       multiWalletPaymentBody.status !== "replenishing" || multiWalletPaymentBody.fundingLegs?.filter(leg => leg.kind === "reserve_replenishment").length !== 2) {
     throw new Error("Multi-wallet payment preparation did not create two replenishment legs: " + JSON.stringify(multiWalletPaymentBody));
   }
-  const paymentIntentDetailResponse = await fetch(baseUrl + "/v1/payments/" + multiWalletPaymentBody.intentId, {
+  const paymentIntentDetailResponse = await fetchWorker("/v1/payments/" + multiWalletPaymentBody.intentId, {
     method: "GET", headers: paymentAuthHeaders
   });
   const paymentIntentDetail = await paymentIntentDetailResponse.json();
@@ -765,7 +772,7 @@ const businessPaymentIntentCount = queryD1(`SELECT COUNT(*) AS count FROM busine
   }
   const unreservedFinalLeg = queryD1(`SELECT status FROM operation_funding_legs WHERE operation_id = '${multiWalletPaymentBody.operationId}' AND kind = 'final_payment'`, "verifyFinalPaymentWaitsForReplenishment");
   if (unreservedFinalLeg[0]?.status !== "planned") throw new Error("Final payment was not held behind replenishment confirmation.");
-  const releaseMultiWalletPaymentResponse = await fetch(baseUrl + "/v1/operations/" + multiWalletPaymentBody.operationId + "/release", {
+  const releaseMultiWalletPaymentResponse = await fetchWorker("/v1/operations/" + multiWalletPaymentBody.operationId + "/release", {
     method: "POST", headers: paymentAuthHeaders
   });
   if (releaseMultiWalletPaymentResponse.status !== 200) throw new Error("Multi-wallet payment reservations could not be released.");
@@ -792,7 +799,7 @@ const businessPaymentIntentCount = queryD1(`SELECT COUNT(*) AS count FROM busine
   };
 
 
-  const liquidityResponse = await fetch(baseUrl + "/v1/liquidity/requests", {
+  const liquidityResponse = await fetchWorker("/v1/liquidity/requests", {
     method: "POST",
     headers: authHeaders,
     body: JSON.stringify({
@@ -822,7 +829,7 @@ const businessPaymentIntentCount = queryD1(`SELECT COUNT(*) AS count FROM busine
     sourceAmount: "1",
     slippageBps: 50
   };
-  const quoteResponse = await fetch(baseUrl + "/v1/conversions/quote", {
+  const quoteResponse = await fetchWorker("/v1/conversions/quote", {
     method: "POST",
     headers: authHeaders,
     body: JSON.stringify(quoteRequest)
@@ -925,7 +932,7 @@ const businessPaymentIntentCount = queryD1(`SELECT COUNT(*) AS count FROM busine
     throw new Error("D1 persistence/safety verification failed: " + JSON.stringify(databaseChecks));
   }
 
-  const demoQuoteResponse = await fetch(baseUrl + "/v1/admin/x402/demo/quote", {
+  const demoQuoteResponse = await fetchWorker("/v1/admin/x402/demo/quote", {
     method: "POST",
     headers: adminHeaders,
     body: JSON.stringify({
