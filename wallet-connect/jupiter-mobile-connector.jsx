@@ -6,7 +6,9 @@ import { Connection, ComputeBudgetProgram, PublicKey, Transaction } from "@solan
 import { createTransferCheckedInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 
 const REOWN_PROJECT_ID = "13a7a3c0065f86dab70a544edc8ed07d";
-const MAINNET_ADDRESS_PREFIX = "solana:";
+const MAINNET_CHAIN = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
+const DEVNET_CHAIN = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
+let activeChain = MAINNET_CHAIN;
 const preparedX402Transactions = new Map();
 
 function JupiterWalletRoot() {
@@ -45,7 +47,14 @@ function JupiterMobileBridge({ jupiterAdapter }) {
     if (!jupiterAdapter) return;
     const adapter = jupiterAdapter;
     const api = Object.freeze({
+      setChain(chain) {
+        if (chain !== MAINNET_CHAIN && chain !== DEVNET_CHAIN) throw new Error("Unsupported Solana wallet chain.");
+        activeChain = chain;
+      },
       async connect(expectedAddress = "") {
+        if (activeChain !== MAINNET_CHAIN) {
+          throw new Error("Jupiter Mobile signing is currently enabled for mainnet only. Use OKX or a compatible Wallet Standard devnet wallet for devnet testing.");
+        }
         const currentAddress = adapter.publicKey?.toBase58?.() || "";
         if (adapter.connected && currentAddress && (!expectedAddress || currentAddress === expectedAddress)) {
           return currentAddress;
@@ -85,9 +94,12 @@ function JupiterMobileBridge({ jupiterAdapter }) {
         return signature;
       },
       canSignFor(expectedAddress) {
-        return Boolean(adapter.connected && adapter.publicKey?.toBase58?.() === expectedAddress);
+        return Boolean(activeChain === MAINNET_CHAIN && adapter.connected && adapter.publicKey?.toBase58?.() === expectedAddress);
       },
       async signFundingTransaction(transactionBytes, expectedAddress) {
+        if (activeChain !== MAINNET_CHAIN) {
+          throw new Error("Jupiter Mobile funding signing is currently enabled for mainnet only.");
+        }
         if (!(transactionBytes instanceof Uint8Array) || transactionBytes.length < 100 || transactionBytes.length > 16384) {
           throw new Error("The prepared funding transaction bytes are invalid.");
         }
