@@ -1,5 +1,65 @@
 import { describe, expect, it } from "vitest";
-import { evaluateLiquidity, formatTokenAmount, parseTokenAmount } from "../src/core";
+import { evaluateLiquidity, formatTokenAmount, parseTokenAmount, planUsdcReplenishment } from "../src/core";
+
+
+describe("multi-wallet USDC replenishment planning", () => {
+  it("does not plan a transfer when the payment wallet already covers the request", () => {
+    const plan = planUsdcReplenishment("payment", 800n, 900n, [
+      { walletId: "reserve", availableAtoms: 5_000n, eligible: true }
+    ]);
+    expect(plan.status).toBe("covered");
+    expect(plan.shortfallAtoms).toBe(0n);
+    expect(plan.legs).toEqual([]);
+  });
+
+  it("chooses the smallest single eligible reserve that covers the shortfall", () => {
+    const plan = planUsdcReplenishment("payment", 800n, 300n, [
+      { walletId: "large", availableAtoms: 2_000n, eligible: true },
+      { walletId: "best-fit", availableAtoms: 700n, eligible: true },
+      { walletId: "not-authorized", availableAtoms: 900n, eligible: false },
+      { walletId: "payment", availableAtoms: 9_000n, eligible: true }
+    ]);
+    expect(plan.status).toBe("covered");
+    expect(plan.shortfallAtoms).toBe(500n);
+    expect(plan.legs).toEqual([{ sourceWalletId: "best-fit", amountAtoms: 500n }]);
+  });
+
+  it("splits a shortfall across eligible reserves while preserving reserve floors", () => {
+    const plan = planUsdcReplenishment("payment", 1_000n, 200n, [
+      { walletId: "reserve-a", availableAtoms: 600n, minimumRemainingAtoms: 200n, eligible: true },
+      { walletId: "reserve-b", availableAtoms: 500n, minimumRemainingAtoms: 100n, eligible: true }
+    ]);
+    expect(plan.status).toBe("covered");
+    expect(plan.shortfallAtoms).toBe(800n);
+    expect(plan.legs).toEqual([
+      { sourceWalletId: "reserve-a", amountAtoms: 400n },
+      { sourceWalletId: "reserve-b", amountAtoms: 400n }
+    ]);
+    expect(plan.totalPlannedAtoms).toBe(800n);
+  });
+
+  it("reports a partial plan without pretending the shortfall is funded", () => {
+    const plan = planUsdcReplenishment("payment", 1_000n, 100n, [
+      { walletId: "reserve-a", availableAtoms: 300n, minimumRemainingAtoms: 100n, eligible: true },
+      { walletId: "reserve-b", availableAtoms: 500n, minimumRemainingAtoms: 400n, eligible: true }
+    ]);
+    expect(plan.status).toBe("insufficient_authorized_usdc");
+    expect(plan.totalPlannedAtoms).toBe(300n);
+    expect(plan.legs).toEqual([
+      { sourceWalletId: "reserve-a", amountAtoms: 200n },
+      { sourceWalletId: "reserve-b", amountAtoms: 100n }
+    ]);
+  });
+
+  it("honours per-source transfer caps and rejects invalid amounts", () => {
+    const plan = planUsdcReplenishment("payment", 700n, 200n, [
+      { walletId: "reserve", availableAtoms: 2_000n, maximumTransferAtoms: 250n, eligible: true }
+    ]);
+    expect(plan.status).toBe("insufficient_authorized_usdc");
+    expect(plan.totalPlannedAtoms).toBe(250n);
+    expect(() => planUsdcReplenishment("payment", 0n, 0n, [])).toThrow();
+  });
+});
 
 describe("amount precision", () => {
   it("parses USDC amounts into exact six-decimal atoms", () => {

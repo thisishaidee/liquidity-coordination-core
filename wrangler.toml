@@ -7,6 +7,7 @@ compatibility_date = "2026-11-11"
 NERITH_SUPPORT_URL = "https://neritth.pages.dev"
 NERITH_PUBLIC_URL = "https://neritth.pages.dev"
 ADMIN_ALLOWED_ORIGINS = "https://neritth.pages.dev"
+SOLANA_CLUSTER = "mainnet"
 
 [[d1_databases]]
 binding = "DB"

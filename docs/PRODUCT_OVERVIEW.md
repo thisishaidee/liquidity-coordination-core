@@ -6,6 +6,24 @@ NERITH is an API-first coordination layer for businesses that operate autonomous
 
 NERITH is not a wallet, a custody service, a trading terminal, or an autonomous funds executor. The business retains control of its wallets and signing keys.
 
+## Agreed next architecture milestone
+
+The next milestone is documented in [AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md](AUTONOMOUS_LIQUIDITY_ARCHITECTURE.md). Draft PR #52 adds the additive multi-wallet role schema, business-scoped role APIs, a responsive dashboard role-management surface, deterministic USDC replenishment planning, wallet ownership verification and payment-intent preparation. These changes are branch-only and are not current production functionality until reviewed, merged and deployed with the D1 migration. The planner does not reserve balances or execute inter-wallet replenishment. The Worker still does not autonomously sign or broadcast transactions.
+
+## Multi-leg funding and atomic reservation status
+
+The draft adds an operation funding-leg table linked to the existing reservation ledger, plus managed USDC and SOL-fee reservation modes. The `/v1/payments/prepare` API evaluates a business payment request, creates an immutable payment intent and its operation, and inserts the planned funding legs and required reservations in one D1 batch. Managed rows are guarded by D1 triggers for business scope, verified wallet control, enabled roles, reserve floors, transfer caps, available balance and bounded atom values. A failed leg rolls back the batch. SOL network fees are held separately from USDC payment liquidity. When reserve replenishment is required, the final-payment leg remains planned until replenishment is confirmed. This is an internal ledger hold, not an on-chain transfer.
+
+## Deterministic payment policy status
+
+The draft includes a deterministic payment-intent policy evaluator connected to payment preparation. It also includes a pure SPL-token settlement verifier for exact finalized transfer reconciliation, including signer, token-account ownership, mint, amount and balance-delta checks. This verifier is unit-tested but is not yet wired to a transaction submission or RPC reconciliation endpoint. It applies business and wallet scope, ownership verification, asset/destination allowlists, amount and daily caps, balance freshness, reserve floors, transfer caps, SOL network-fee payer policy, idempotency replay checks, and conditional conversion/slippage requirements. Database guards re-check the mutable allowlists and daily cap when the intent is inserted. Payment preparation does not build, sign or broadcast a Solana transaction. Conversion-required intents remain in owner-approval state; conversion and final-payment execution are not implemented.
+
+## Wallet ownership verification status
+
+The draft ownership-proof increment adds a five-minute, single-use Solana message challenge bound to the allowed NERITH web origin, business, registered wallet address and mainnet network. The Worker verifies the Ed25519 signature against the public key decoded from the registered base58 address. It stores a hash of the signature, not the signature itself.
+
+This proof establishes address control only. It does not establish beneficial ownership, grant wallet roles automatically, authorize spending, or prove that a wallet is safe to use for every purpose. Business membership, role assignment and execution authority remain separate controls. Existing unverified liquidity roles are disabled by the draft migration until address control is verified. The implementation remains branch-only and is not live production functionality.
+
 ## The problem
 
 An autonomous agent can complete its reasoning and still fail because it does not have the right asset in the right wallet at the right time. A business may have enough value overall but have it split across wallets, held in the wrong token, or already committed to other work. A normal balance check does not answer whether a specific task can safely proceed.
@@ -22,7 +40,7 @@ A business can explicitly allow an agent to use an eligible business-scope opera
 
 ### 2. Wallet registry and balance snapshots
 
-NERITH registers Solana wallet addresses and classifies wallets by scope and purpose:
+NERITH's production registry currently classifies Solana wallets by scope and legacy purpose. Draft PR #52 adds a separate business-scoped role-assignment layer without changing that legacy purpose column:
 
 - **Operating wallet:** liquidity available for business tasks and possible conversion.
 - **API-payment wallet:** a separate business wallet used by the x402 client to pay the Swap.io API. It is excluded from operating liquidity and forecasts.
@@ -39,7 +57,7 @@ NERITH evaluates fresh, authorized wallet snapshots and returns one of three bro
 - **Awaiting conversion:** USDC is short, but an eligible SOL source may be converted to cover the shortfall.
 - **Blocked:** the request cannot be safely covered by the currently eligible liquidity.
 
-Reservations are ledger holds, not blockchain transfers, escrow, or proof of payment. The V1 allocator intentionally does not combine balances from multiple wallets. This avoids pretending that separate reservations are atomic when they are not.
+Reservations are ledger holds, not blockchain transfers, escrow, or proof of payment. The current production V1 allocator still does not combine balances from multiple wallets. The draft branch now uses the database-level atomic reservation primitive through the agent-authenticated payment-preparation API. The API returns an intent and reservation plan, not an executable or signed transaction.
 
 Reservations expire automatically through a one-minute Worker cron. Agents can also release or complete an operation. An agent-reported completion is not proof that an external payment occurred.
 

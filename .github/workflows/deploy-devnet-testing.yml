@@ -1,0 +1,81 @@
+name: Deploy isolated Solana devnet Worker
+
+on:
+  push:
+    branches:
+      - feat/solana-wallet-ownership-proof
+    paths:
+      - ".github/workflows/deploy-devnet-testing.yml"
+      - "src/**"
+      - "migrations/**"
+      - "public/dashboard.html"
+      - "scripts/**"
+      - "package.json"
+      - "wrangler.devnet.remote.toml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nerith-isolated-devnet
+  cancel-in-progress: false
+
+jobs:
+  deploy-devnet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install
+      - run: npm run typecheck
+      - run: npm test
+      - name: Validate the isolated devnet Worker bundle before touching remote D1
+        run: npx wrangler deploy --dry-run --outdir=dist --config wrangler.devnet.remote.toml
+      - name: Apply migrations to isolated devnet D1 only
+        run: npx wrangler d1 migrations apply nerith-devnet-testing --remote --config wrangler.devnet.remote.toml
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      - name: Deploy isolated devnet Worker only
+        run: npx wrangler deploy --config wrangler.devnet.remote.toml
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      - name: Verify isolated devnet health and chain configuration
+        run: |
+          node --input-type=module <<'NODE'
+          const url = "https://nerith-devnet-testing.haideecoded-e0f.workers.dev/health";
+          const expected = {
+            service: "nerith-api",
+            status: "ok",
+            database: "connected",
+            solanaCluster: "devnet",
+            solanaChainId: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+            solanaUsdcMint: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+          };
+          let lastFailure = "No health response received";
+          for (let attempt = 1; attempt <= 8; attempt++) {
+            try {
+              const response = await fetch(url, {
+                headers: { accept: "application/json" },
+                signal: AbortSignal.timeout(15000)
+              });
+              const raw = await response.text();
+              let body;
+              try { body = JSON.parse(raw); }
+              catch { throw new Error(`HTTP ${response.status} returned non-JSON: ${raw.slice(0, 160)}`); }
+              if (!response.ok) throw new Error(`HTTP ${response.status}: ${JSON.stringify(body)}`);
+              for (const [key, value] of Object.entries(expected)) {
+                if (body[key] !== value) throw new Error(`Health mismatch for ${key}: ${body[key]}`);
+              }
+              console.log("Isolated devnet health passed:", JSON.stringify(body));
+              process.exit(0);
+            } catch (error) {
+              lastFailure = String(error);
+              console.log(`Health attempt ${attempt}/8 not ready: ${lastFailure}`);
+              await new Promise(resolve => setTimeout(resolve, attempt * 1500));
+            }
+          }
+          throw new Error("Isolated devnet health failed after retries: " + lastFailure);
+          NODE
