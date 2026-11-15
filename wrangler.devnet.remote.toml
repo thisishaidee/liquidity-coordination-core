@@ -3,6 +3,7 @@
 # Never replace the DB UUID or allowed origin with production values.
 
 name = "nerith-devnet-testing"
+account_id = "ce0ffaff7491ff502fa23f17606a138a"
 main = "src/index.ts"
 compatibility_date = "2026-11-11"
 workers_dev = true
