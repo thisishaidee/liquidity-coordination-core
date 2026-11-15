@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { getSolanaNetworkConfig } from "../src/solana-network-config";
+import { getSolanaNetworkConfig, isHermesX402Enabled } from "../src/solana-network-config";
 
 describe("Solana network configuration", () => {
   it("defaults to canonical Solana mainnet CAIP-2", () => {
@@ -32,5 +32,13 @@ describe("wallet challenge network migration", () => {
     expect(migration).toContain("'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'");
     expect(migration).toContain("'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'");
     expect(migration).toContain("DROP TABLE wallet_ownership_challenges");
+  });
+});
+
+describe("Hermes x402 cluster policy", () => {
+  it("allows Hermes x402 only on mainnet", () => {
+    expect(isHermesX402Enabled()).toBe(true);
+    expect(isHermesX402Enabled("mainnet")).toBe(true);
+    expect(isHermesX402Enabled("devnet")).toBe(false);
   });
 });
