@@ -20,3 +20,7 @@ export function getSolanaNetworkConfig(cluster?: string) {
   }
   return SOLANA_NETWORKS[normalized as SolanaCluster];
 }
+
+export function isHermesX402Enabled(cluster?: string): boolean {
+  return getSolanaNetworkConfig(cluster).cluster === "mainnet";
+}
