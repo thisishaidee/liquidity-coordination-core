@@ -5,14 +5,16 @@ describe("Solana network configuration", () => {
   it("defaults to canonical Solana mainnet CAIP-2", () => {
     expect(getSolanaNetworkConfig()).toEqual({
       cluster: "mainnet",
-      chainId: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
+      chainId: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+      usdcMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
     });
   });
 
   it("resolves the isolated devnet chain identifier", () => {
     expect(getSolanaNetworkConfig("devnet")).toEqual({
       cluster: "devnet",
-      chainId: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
+      chainId: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+      usdcMint: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
     });
   });
 
